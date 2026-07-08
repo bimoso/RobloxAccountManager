@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc fd565ba5c1095dadbf94e97d9fd74c575092abf109f8f6371b932c3577f0663d # shrinks to existing = {}, update = {"masterVolume": Number(-939.6072741638125)}

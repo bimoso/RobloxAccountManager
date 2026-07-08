@@ -1,0 +1,25 @@
+{
+  "productName": "RobloxAccountManager",
+  "version": "1.0.0",
+  "identifier": "com.robloxaccountmanager.app",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null,
+      "capabilities": ["default"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.png", "icons/icon.ico"],
+    "resources": {
+      "../src/RobloxNative.exe": "RobloxNative.exe",
+      "../src/RobloxNative.cs": "RobloxNative.cs"
+    }
+  }
+}
