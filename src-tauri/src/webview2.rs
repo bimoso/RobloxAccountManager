@@ -1,6 +1,6 @@
 //! WebView2 runtime presence check (Task 19.4, Requirement 12.7).
 //!
-//! Unlike the Electron_Build, which bundles its own Chromium, the Tauri_Build
+//! Unlike the legacy JS build, which bundles its own Chromium, the Tauri_Build
 //! renders its UI through the operating system's WebView component. On Windows
 //! that component is the **Microsoft Edge WebView2 runtime**. If that runtime is
 //! absent the window can never render, and Tauri/wry would otherwise fail deep in

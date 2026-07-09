@@ -1,7 +1,7 @@
 //! RobloxAccountManager Tauri backend library crate.
 //!
-//! This crate replaces the Electron_Build's Node.js main process (`src/main.js`).
-//! It is organized one Rust module per logical section of `main.js` (see the
+//! This crate replaces the legacy JS build's Node.js main process (the legacy JS backend).
+//! It is organized one Rust module per logical section of the legacy JS backend (see the
 //! design document's module layout). This file (`lib.rs`) owns application
 //! wiring: the shared [`AppState`] and the Tauri app builder in [`run`].
 //!
@@ -16,27 +16,27 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::Mutex as AsyncMutex;
 
 /// Serde data models for the Account_Store and Settings_Store (`accounts.json`
-/// / `settings.json`), mirroring the Electron_Build's on-disk JSON shapes.
+/// / `settings.json`), mirroring the legacy JS build's on-disk JSON shapes.
 pub mod models;
 
 /// Shared Windows-platform gate (`ensure_windows`/`is_windows`), ported from the
-/// Electron_Build's `process.platform !== 'win32'` guards. Every Windows-only
+/// legacy JS build's `process.platform !== 'win32'` guards. Every Windows-only
 /// entry point (Roblox launch/kill, Native_Helper invocation, "Open in Browser")
 /// short-circuits through this so a non-Windows OS gets a graceful
 /// "unavailable on this platform" report rather than undefined behavior
 /// (Requirement 8.4).
 pub mod platform;
 
-/// Field encryption ported from `main.js`'s encryption section. Currently
+/// Field encryption ported from the legacy JS backend's encryption section. Currently
 /// provides the raw Windows DPAPI primitives (`safe:` format); the scrypt/legacy
 /// formats, passphrase verifier, and tag dispatch are added by later tasks.
 pub mod encryption;
 
-/// Session logging: the `send_log` equivalent of `main.js`'s `sendLog`, emitting
+/// Session logging: the `send_log` equivalent of the legacy JS backend's `sendLog`, emitting
 /// `log://entry` events to the Renderer_UI (redaction is added in Task 4.2).
 pub mod logging;
 
-/// Account_Store persistence (`accounts.json`), ported from `main.js`'s
+/// Account_Store persistence (`accounts.json`), ported from the legacy JS backend's
 /// `loadAccounts`/`saveAccounts` and the `accounts:*` IPC handlers. Currently
 /// provides the read path (`load_from_file`/`load_from_dir`) with read-failure
 /// classification and per-entry decrypt-error surfacing; save/add/update/remove/
@@ -45,20 +45,20 @@ pub mod accounts;
 
 /// Encryption-input resolution for the command layer: resolves
 /// `passphrase_mode` / `safe_storage_ready` / `device_key` from the
-/// Settings_Store + platform (ports `main.js`'s `passphraseMode`,
+/// Settings_Store + platform (ports the legacy JS backend's `passphraseMode`,
 /// `safeStorageReady`, `getOrCreateDeviceKey`), so the store commands can thread
 /// them into `encryption.rs` without those lower layers reading settings.
 pub mod crypto_context;
 
-/// Settings_Store persistence ported from `main.js`'s `loadSettings`/
+/// Settings_Store persistence ported from the legacy JS backend's `loadSettings`/
 /// `saveSettings` section. Currently provides the `load` read path (applying
-/// recognized fields, defaulting absent ones with the Electron runtime defaults,
+/// recognized fields, defaulting absent ones with the legacy JS runtime runtime defaults,
 /// preserving unrecognized fields, and distinguishing corruption from
 /// permission/IO errors); save and the genhistory/fflag/fps helpers are added by
 /// later tasks.
 pub mod settings;
 
-/// Roblox game client process management, ported from `main.js`'s Roblox
+/// Roblox game client process management, ported from the legacy JS backend's Roblox
 /// session-control section. Provides the pure, synchronous launch-target parser
 /// (`parse_launch_target` → [`roblox_process::LauncherRequest`], Task 10.1) and
 /// the launch-credential pipeline (Task 10.2): the launch-queue serialization
@@ -72,7 +72,7 @@ pub mod settings;
 /// paths and command registration are added by later tasks.
 pub mod roblox_process;
 
-/// Native_Helper (`RobloxNative.exe`) integration, ported from `main.js`'s
+/// Native_Helper (`RobloxNative.exe`) integration, ported from the legacy JS backend's
 /// native-helper section. Provides `ensure_native_helper` (the three-step
 /// bundled-exe → cached-compile → `csc.exe`-fallback resolution with a 30-second
 /// timeout, Task 9.1) and the `tokio::time::timeout`-guarded process lifecycle
@@ -84,7 +84,7 @@ pub mod roblox_process;
 /// in [`run`].
 pub mod native_helper;
 
-/// Roblox HTTPS API calls ported from `main.js`'s Roblox networking section:
+/// Roblox HTTPS API calls ported from the legacy JS backend's Roblox networking section:
 /// client version, cookie validation (`fetch_user_info`), game name resolution,
 /// and the share-link/private-server resolution chain (`resolve_share_link`,
 /// `get_access_code`, `follow_redirect`). Uses `reqwest`. The command wrappers
@@ -92,10 +92,10 @@ pub mod native_helper;
 /// registered with the Tauri builder in [`run`] (Task 11.3).
 pub mod roblox_api;
 
-/// Account_Browser_Launcher (`browser_launcher.rs`), ported from `main.js`'s
+/// Account_Browser_Launcher (`browser_launcher.rs`), ported from the legacy JS backend's
 /// account-browser-launcher subsystem. Currently provides the Donut_Browser_API
 /// plain-HTTP transport (`donut_request`, `reqwest`-based, `Authorization: Bearer`,
-/// 5-second timeout, reproducing `donut-http.js`'s three-way
+/// 5-second timeout, reproducing the legacy Donut HTTP helper's three-way
 /// `unreachable`/`http`/success classification) plus the `get_donut_base_url` /
 /// `get_donut_token` resolvers (Task 13.1), the availability preflight and Donut
 /// profile lifecycle (13.2), the CDP login/cookie-injection flows (13.3/13.4),
@@ -114,25 +114,25 @@ pub mod browser_launcher;
 /// [`accounts::store_dir`] exactly like the `accounts_*` commands.
 pub mod commands;
 
-/// Packages_Store persistence (`packages.json`), ported from `main.js`'s
+/// Packages_Store persistence (`packages.json`), ported from the legacy JS backend's
 /// `loadPackages`/`savePackages` and the `packages:*` IPC handlers. Packages are
 /// named, secret-free groups of accounts, so this store is deliberately
 /// permissive (a missing/unreadable/corrupt file reads as `[]`, matching the
-/// Electron_Build). Currently provides the load/save logic
+/// legacy JS build). Currently provides the load/save logic
 /// (`load_from_file`/`load_from_dir` and `save_to_file`/`save_to_dir`); the
 /// `packages_load`/`packages_save` command wrappers are added by Task 14.2.
 pub mod packages;
 
 /// Window-control and external-open command layer (Task 16.1), ported from
-/// `main.js`'s `window-minimize` / `window-maximize` / `window-close` /
+/// the legacy JS backend's `window-minimize` / `window-maximize` / `window-close` /
 /// `open-external` IPC handlers. Hosts the `window_minimize` / `window_maximize`
 /// / `window_close` / `open_external` `#[tauri::command]` wrappers (registered in
 /// [`run`]); `open_external` uses the `tauri-plugin-opener` plugin as the Tauri v2
-/// replacement for Electron's `shell.openExternal`.
+/// replacement for legacy JS runtime's `shell.openExternal`.
 pub mod window;
 
 /// WebView2 runtime presence check (Task 19.4, Requirement 12.7). Unlike the
-/// Electron_Build's bundled Chromium, the Tauri_Build renders through the OS
+/// legacy JS build's bundled Chromium, the Tauri_Build renders through the OS
 /// WebView component — the Microsoft Edge WebView2 runtime on Windows. This
 /// module detects that runtime at startup (via [`tauri::webview_version`]) and,
 /// when it is absent, reports a clear, actionable error to the user (stderr +
@@ -144,7 +144,7 @@ pub mod webview2;
 /// Roblox launch flow.
 ///
 /// `cached_at` is the epoch-millisecond timestamp at which the value was stored,
-/// mirroring `main.js`'s `{ token, ts }` / `{ ticket, ts }` cache entries: every
+/// mirroring the legacy JS backend's `{ token, ts }` / `{ ticket, ts }` cache entries: every
 /// freshness/TTL check in the launch flow is expressed as `now - cached_at <
 /// SOME_TTL`, and the auth-ticket path additionally needs the original store time
 /// to compute the `TICKET_MIN_GAP` back-off, so the store time (not a
@@ -158,7 +158,7 @@ pub struct CachedToken {
 /// Shared, long-lived backend state, registered with Tauri via `app.manage(...)`
 /// and injected into command handlers as `tauri::State<'_, AppState>`.
 ///
-/// These are the direct Rust equivalents of `main.js`'s module-level mutable
+/// These are the direct Rust equivalents of the legacy JS backend's module-level mutable
 /// variables (the in-memory-only session-tracking maps and process handles).
 /// Maps read only from synchronous contexts use `std::sync::Mutex`; maps touched
 /// from async command handlers use `tokio::sync::Mutex` so a handler never blocks
@@ -177,7 +177,7 @@ pub struct AppState {
     pub miss_counts: Arc<AsyncMutex<HashMap<String, u32>>>,
 
     /// `_watchTimer`: whether the single shared watch/poll loop task is currently
-    /// running. Mirrors `main.js`'s `_watchTimer` (a non-null timer handle means
+    /// running. Mirrors the legacy JS backend's `_watchTimer` (a non-null timer handle means
     /// "the poll is running"): the loop is started on the first armed account and
     /// stops itself once no accounts remain watched, so at most one poll task ever
     /// runs regardless of how many accounts are launched.
@@ -187,7 +187,7 @@ pub struct AppState {
     /// ([`browser_launcher::BrowserSession`], carrying the session `state`, the
     /// backing Donut profile id / CDP port, and — once `open` — the live
     /// connected browser + tracked page). Not persisted: it describes only the
-    /// current process's live CDP connections, exactly like `main.js`'s
+    /// current process's live CDP connections, exactly like the legacy JS backend's
     /// `_browserSessions` map.
     pub browser_sessions: Arc<AsyncMutex<HashMap<String, browser_launcher::BrowserSession>>>,
 
@@ -209,7 +209,7 @@ pub struct AppState {
     /// `_csrfCache`: cookie -> cached CSRF token (5-minute TTL). Keyed per
     /// cookie because a CSRF token is only valid for the session cookie it was
     /// minted against, so distinct accounts must not share one entry — matching
-    /// `main.js`'s `_csrfCache = new Map()` keyed by cookie.
+    /// the legacy JS backend's `_csrfCache = new Map()` keyed by cookie.
     pub csrf_cache: Arc<AsyncMutex<HashMap<String, CachedToken>>>,
 
     /// Cached per-account auth tickets (25-second TTL).
@@ -218,7 +218,7 @@ pub struct AppState {
     /// The cancel `Sender` for an in-progress cookie-capture login window, held
     /// while `roblox_open_login` awaits `run_login_flow` and cleared afterward.
     /// `login_cancel` takes and fires it to trip the flow's `cancel_rx`,
-    /// replacing the Electron_Build's `ipcMain.once('login:cancel', ...)`. `None`
+    /// replacing the legacy JS build's `legacy one-shot IPC listener('login:cancel', ...)`. `None`
     /// whenever no login is in progress.
     pub login_cancel_tx: Arc<AsyncMutex<Option<tokio::sync::oneshot::Sender<()>>>>,
 }
@@ -264,7 +264,7 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppState::default())
         .setup(|app| {
-            // Tauri has no equivalent of Electron's `webPreferences.preload`, and
+            // Tauri has no equivalent of legacy JS runtime's `webPreferences.preload`, and
             // `src/index.html` only loads `renderer.js` (it must stay byte-for-byte
             // unchanged, Requirement 10.3). So the adapted `preload.js` — which
             // builds the flat `window.api.*` surface `renderer.js` consumes — is
@@ -334,6 +334,7 @@ pub fn run() {
             native_helper::multiinstance_status,
             native_helper::antiafk_status,
             browser_launcher::browser_open,
+            browser_launcher::browser_open_batch,
             browser_launcher::browser_copy_cookie,
             browser_launcher::roblox_open_login,
             browser_launcher::login_cancel,

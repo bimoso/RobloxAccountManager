@@ -1,6 +1,6 @@
 'use strict';
 
-// IPC_Surface completeness checklist (Task 16.7, electron-to-tauri-migration).
+// IPC_Surface completeness checklist.
 //
 // Validates Requirements 10.1, 10.2, 10.4, 10.5: every `window.api` member the
 // Renderer_UI depends on must have an equivalent Tauri backend counterpart —
@@ -16,9 +16,9 @@
 // diffs the referenced-vs-registered sets, failing with an explicit list of any
 // unmatched member.
 //
-// The parsing is deliberately text-based (no Tauri/Electron runtime, no Rust
-// toolchain): preload.js is a classic script that can't run outside a browser,
-// and the Rust command/event registrations are stable source-level facts.
+// The parsing is deliberately text-based (no Tauri runtime, no Rust toolchain):
+// preload.js is a classic script that can't run outside a browser, and the Rust
+// command/event registrations are stable source-level facts.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');

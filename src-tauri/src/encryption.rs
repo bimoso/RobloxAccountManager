@@ -1,11 +1,11 @@
-//! Field encryption, ported from `main.js`'s encryption section.
+//! Field encryption, ported from the legacy JS backend's encryption section.
 //!
-//! This module reproduces every on-disk encryption format the Electron_Build
+//! This module reproduces every on-disk encryption format the legacy JS build
 //! produces or consumes, so existing `accounts.json`/`settings.json` values keep
 //! decrypting without any migration (Requirement 11.3). Each format is
 //! identified by a short prefix tag on the stored string:
 //!
-//! | tag     | primitive                                    | Electron source        |
+//! | tag     | primitive                                    | legacy JS runtime source        |
 //! |---------|----------------------------------------------|------------------------|
 //! | `safe:` | Windows DPAPI, current-user scope, no entropy | `safeStorage`          |
 //! | `gs:`   | AES-256-GCM, scrypt-derived key              | `encryptGCM` + scrypt  |
@@ -13,17 +13,17 @@
 //! | `cbc:`  | AES-256-CBC (read-only)                      | `decryptCBC`           |
 //!
 //! This task (3.1) implements only the `safe:` primitive at the raw byte layer:
-//! [`dpapi_protect`] and [`dpapi_unprotect`]. Electron's
+//! [`dpapi_protect`] and [`dpapi_unprotect`]. legacy JS runtime's
 //! `safeStorage.encryptString(p)` returns the raw DPAPI blob, which a higher
 //! layer base64-encodes and prefixes with `safe:` (see `encryptField` in
-//! `main.js`); `decryptString` is the inverse. The `safe:` tag prefix + base64
+//! the legacy JS backend); `decryptString` is the inverse. The `safe:` tag prefix + base64
 //! dispatch lives in `encrypt_field`/`decrypt_field` (task 3.4), so these
 //! functions deliberately operate on raw bytes only.
 //!
 //! Windows DPAPI (`CryptProtectData`) is called with `pOptionalEntropy = null`
-//! and no flags, exactly matching Chromium/Electron's `safeStorage`, which also
+//! and no flags, exactly matching Chromium/legacy JS runtime's `safeStorage`, which also
 //! passes no additional entropy. Because DPAPI ties the blob to the current user
-//! account, a blob produced by the Electron_Build decrypts here and vice versa.
+//! account, a blob produced by the legacy JS build decrypts here and vice versa.
 
 use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
 use aes_gcm::aead::{AeadInPlace, KeyInit};
@@ -33,16 +33,16 @@ use base64::Engine;
 use sha2::Sha512;
 use std::sync::Mutex;
 
-/// Hardcoded key-derivation salt, carried over verbatim from `main.js`'s
+/// Hardcoded key-derivation salt, carried over verbatim from the legacy JS backend's
 /// `const SALT = 'robloxaccountmanager-v1-salt-2025'`. Any deviation would break
 /// byte-for-byte decryption of existing data (Requirement 11.3).
 const SALT: &[u8] = b"robloxaccountmanager-v1-salt-2025";
-/// PBKDF2 iteration count, from `main.js`'s `const ITERATIONS = 210_000`.
+/// PBKDF2 iteration count, from the legacy JS backend's `const ITERATIONS = 210_000`.
 const ITERATIONS: u32 = 210_000;
-/// Derived-key length in bytes (AES-256), from `main.js`'s `const KEY_LEN = 32`.
+/// Derived-key length in bytes (AES-256), from the legacy JS backend's `const KEY_LEN = 32`.
 const KEY_LEN: usize = 32;
 /// scrypt cost parameter `N = 65536 = 2^16`; the `scrypt` crate takes the base-2
-/// logarithm (`log_n = 16`) instead of `N` directly. From `main.js`'s
+/// logarithm (`log_n = 16`) instead of `N` directly. From the legacy JS backend's
 /// `SCRYPT_PARAMS = { N: 65536, r: 8, p: 1 }`.
 const SCRYPT_LOG_N: u8 = 16;
 /// scrypt block-size parameter `r`, from `SCRYPT_PARAMS.r = 8`.
@@ -54,7 +54,7 @@ const SCRYPT_P: u32 = 1;
 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
 /// Derive the current-format (`gs:`) key from a passphrase using scrypt with the
-/// exact parameters the Electron_Build uses (`N=2^16, r=8, p=1`, 32-byte output,
+/// exact parameters the legacy JS build uses (`N=2^16, r=8, p=1`, 32-byte output,
 /// hardcoded salt), mirroring `deriveScryptKey` /
 /// `crypto.scryptSync(p, SALT, KEY_LEN, { N: 65536, r: 8, p: 1 })`. Returns
 /// `Err` rather than panicking if the parameters are somehow rejected.
@@ -85,7 +85,7 @@ pub fn derive_legacy_key(passphrase: &str) -> [u8; KEY_LEN] {
 /// `tag` is the format prefix (`"gs"` for scrypt-keyed, `"gcm"` for legacy-keyed);
 /// the caller supplies the matching key. The tag prefix / format dispatch across
 /// the four on-disk formats is layered on top in task 3.4, so this function is
-/// confined to producing the exact inner byte layout Electron writes.
+/// confined to producing the exact inner byte layout legacy JS runtime writes.
 pub fn encrypt_gcm(plaintext: &str, key: &[u8; KEY_LEN], tag: &str) -> Result<String, String> {
     // 12-byte random IV, matching Node's `crypto.randomBytes(12)`.
     let mut iv = [0u8; 12];
@@ -198,7 +198,7 @@ use windows::Win32::Security::Cryptography::{
 };
 
 /// Encrypt raw bytes with Windows DPAPI (current-user scope, no entropy),
-/// producing the raw DPAPI blob — the byte-for-byte equivalent of Electron's
+/// producing the raw DPAPI blob — the byte-for-byte equivalent of legacy JS runtime's
 /// `safeStorage.encryptString(p)` return value (before its base64/`safe:`
 /// wrapping). Returns `Err` with a descriptive message on any FFI failure.
 #[cfg(windows)]
@@ -229,7 +229,7 @@ pub fn dpapi_protect(plaintext: &[u8]) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Decrypt a raw DPAPI blob produced by [`dpapi_protect`] (or by Electron's
+/// Decrypt a raw DPAPI blob produced by [`dpapi_protect`] (or by legacy JS runtime's
 /// `safeStorage.encryptString`) back to the original bytes — the equivalent of
 /// `safeStorage.decryptString`. Returns `Err` with a descriptive message on any
 /// FFI failure (e.g. the blob was produced under a different user account).
@@ -293,7 +293,7 @@ pub fn dpapi_unprotect(_blob: &[u8]) -> Result<Vec<u8>, String> {
 
 // ── Passphrase verifier + per-boot key session ───────────────────────────────
 //
-// This section ports `main.js`'s per-boot key session (`_sessionPass`,
+// This section ports the legacy JS backend's per-boot key session (`_sessionPass`,
 // `_cachedKey`, `_cachedLegacyKey`, `VERIFY_TOKEN`, `bootId`, `makeVerifier`,
 // `verifyPass`, `initEncryption`, `getEncryptionKey`, `getLegacyKey`,
 // `invalidateKeyCache`).
@@ -304,7 +304,7 @@ pub fn dpapi_unprotect(_blob: &[u8]) -> Result<Vec<u8>, String> {
 // plaintext equals `VERIFY_TOKEN`. The unlocked passphrase is held in memory for
 // the current process/boot and its two derived keys are cached lazily.
 //
-// Layering note: in `main.js` these functions read `loadSettings()` directly for
+// Layering note: in the legacy JS backend these functions read `loadSettings()` directly for
 // `keyVerifier`, `passphraseMode()`, and the machine-bound `getOrCreateDeviceKey()`.
 // Here `encryption.rs` sits *below* `settings.rs` in the module dependency graph
 // (`SET --> ENC`), so it must not call into the settings store. Instead the
@@ -312,16 +312,16 @@ pub fn dpapi_unprotect(_blob: &[u8]) -> Result<Vec<u8>, String> {
 // stored `verifier` string, and [`get_encryption_key`]/[`get_legacy_key`] take
 // the caller's already-resolved `passphrase_mode` flag and machine-bound
 // `device_key`. This inverts the dependency without changing the caching or
-// accept/reject semantics the Electron_Build exhibits.
+// accept/reject semantics the legacy JS build exhibits.
 
 /// The fixed plaintext sealed under the passphrase key to form the stored
-/// verifier, carried over verbatim from `main.js`'s
+/// verifier, carried over verbatim from the legacy JS backend's
 /// `const VERIFY_TOKEN = 'robloxaccountmanager-verify-v1'`. A passphrase is accepted iff
 /// decrypting the stored `keyVerifier` with its derived key yields this exact
 /// token.
 pub const VERIFY_TOKEN: &str = "robloxaccountmanager-verify-v1";
 
-/// The in-memory per-boot key session — the Rust equivalent of `main.js`'s
+/// The in-memory per-boot key session — the Rust equivalent of the legacy JS backend's
 /// module-level `_sessionPass` / `_cachedKey` / `_cachedLegacyKey`, plus the
 /// `boot_id` the cached passphrase belongs to so a stale pass from a previous
 /// boot is never reused (the design's "per-boot session cache tied to
@@ -338,7 +338,7 @@ struct KeySession {
 }
 
 /// Process-wide key session. `Mutex::new` is `const`, so this initializes to the
-/// locked state with no cached keys, matching `main.js`'s initial
+/// locked state with no cached keys, matching the legacy JS backend's initial
 /// `_sessionPass = null` / `_cachedKey = null` / `_cachedLegacyKey = null`.
 static KEY_SESSION: Mutex<KeySession> = Mutex::new(KeySession {
     boot_id: 0,
@@ -355,7 +355,7 @@ fn session() -> std::sync::MutexGuard<'static, KeySession> {
     KEY_SESSION.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Compute the boot identity, reproducing `main.js`'s
+/// Compute the boot identity, reproducing the legacy JS backend's
 /// `bootId() { return Math.round(Date.now() / 1000 - os.uptime()); }`.
 ///
 /// `os.uptime()` is seconds since boot; on Windows the equivalent is
@@ -410,7 +410,7 @@ pub fn make_verifier(passphrase: &str) -> Result<String, String> {
 /// Returns `true` iff `verifier` is a `gs:` blob that decrypts under the
 /// passphrase's scrypt key to exactly [`VERIFY_TOKEN`]; every failure mode (empty
 /// verifier, wrong passphrase, malformed/garbage blob, derivation failure) yields
-/// `false`, exactly like the Electron_Build's `try { ... } catch { return false }`.
+/// `false`, exactly like the legacy JS build's `try { ... } catch { return false }`.
 ///
 /// This function is a pure read: it never touches [`KEY_SESSION`], so a rejected
 /// (or accepted) passphrase check performs no partial mutation of cached state
@@ -426,11 +426,11 @@ pub fn verify_pass(passphrase: &str, verifier: &str) -> bool {
 }
 
 /// Initialize the per-boot key session at startup, mirroring the session-restore
-/// half of `main.js`'s `initEncryption()`.
+/// half of the legacy JS backend's `initEncryption()`.
 ///
 /// It records the current [`boot_id`] and discards any cached passphrase that
 /// belongs to a *different* boot (so a stale session never leaks across a
-/// reboot), leaving the derived-key caches cleared. In the Electron_Build the
+/// reboot), leaving the derived-key caches cleared. In the legacy JS build the
 /// session cache is file-backed but currently disabled (`readSessionKey()`
 /// returns `null`), so there is nothing to silently restore and the session
 /// starts locked; the format-migration half of `initEncryption` (rewriting a
@@ -449,7 +449,7 @@ pub fn init_encryption() {
 }
 
 /// Record an unlocked passphrase for this boot, mirroring the
-/// `_sessionPass = pass; invalidateKeyCache();` step performed by the Electron
+/// `_sessionPass = pass; invalidateKeyCache();` step performed by the legacy JS runtime
 /// `enc:unlock` / `enc:setKey` handlers after a successful verify. The derived-key
 /// caches are cleared so the next [`get_encryption_key`]/[`get_legacy_key`]
 /// re-derives under the new passphrase. Callers must verify the passphrase
@@ -474,17 +474,17 @@ pub fn clear_session_pass() {
 }
 
 /// Return the currently unlocked passphrase for this boot, if any — the
-/// equivalent of `main.js`'s `getStoredPassphrase()` (`return _sessionPass;`).
+/// equivalent of the legacy JS backend's `getStoredPassphrase()` (`return _sessionPass;`).
 pub fn session_pass() -> Option<String> {
     session().session_pass.clone()
 }
 
-/// Clear only the two derived-key caches, mirroring `main.js`'s
+/// Clear only the two derived-key caches, mirroring the legacy JS backend's
 /// `invalidateKeyCache() { _cachedKey = null; _cachedLegacyKey = null; }`.
 ///
 /// Crucially this does **not** clear `session_pass`: after invalidation an
 /// unlocked session stays unlocked and simply re-derives its key on the next
-/// access, exactly as the Electron_Build behaves.
+/// access, exactly as the legacy JS build behaves.
 pub fn invalidate_key_cache() {
     let mut s = session();
     s.cached_key = None;
@@ -556,19 +556,19 @@ pub fn get_legacy_key(
 
 // ── Tag dispatch, field encryption, account encryption ───────────────────────
 //
-// This section ports `main.js`'s `isEncrypted`, `encryptField`, `decryptField`,
+// This section ports the legacy JS backend's `isEncrypted`, `encryptField`, `decryptField`,
 // `encryptAccount`, and `decryptAccount`. Two structural differences from
-// `main.js`, both forced by the module layering (`SET --> ENC`: `encryption.rs`
+// the legacy JS backend, both forced by the module layering (`SET --> ENC`: `encryption.rs`
 // sits *below* `settings.rs` and must not read the settings store):
 //
 //   1. The settings-derived inputs `encryptField`/`decryptField` read directly in
-//      `main.js` — `passphraseMode()`, `safeStorageReady()`, and the machine-bound
+//      the legacy JS backend — `passphraseMode()`, `safeStorageReady()`, and the machine-bound
 //      device key (`getOrCreateDeviceKey()`) — are threaded in here as the
 //      `passphrase_mode`, `safe_storage_ready`, and `device_key` parameters,
 //      exactly as [`get_encryption_key`] already does. The unlocked passphrase is
 //      still read from the process-wide [`KEY_SESSION`] via [`session_pass`].
 //
-//   2. `main.js`'s `decryptField` swallows every failure into `null`
+//   2. the legacy JS backend's `decryptField` swallows every failure into `null`
 //      (`try { ... } catch { return null }`). The migration must instead *surface*
 //      an identifying error for a value it cannot decrypt (Requirement 11.4/11.7),
 //      so [`decrypt_field`] returns `Result<Option<String>, String>`: `Ok(None)`
@@ -577,7 +577,7 @@ pub fn get_legacy_key(
 //      `Err(_)` is a hard decryption failure carrying its cause. The tag-dispatch
 //      table itself is reproduced exactly.
 
-/// Format-tag test, mirroring `main.js`'s
+/// Format-tag test, mirroring the legacy JS backend's
 /// `isEncrypted(v) = typeof v === 'string' && (v.startsWith('safe:') || ... )`.
 /// Returns `true` iff `value` carries one of the four on-disk format tags.
 pub fn is_encrypted(value: &str) -> bool {
@@ -601,7 +601,7 @@ pub fn is_encrypted(value: &str) -> bool {
 ///   2. otherwise passphrase mode but locked -> `Err("locked")` (never write with a
 ///      key that cannot be verified);
 ///   3. otherwise `safe_storage_ready` -> `safe:` + base64 of the raw DPAPI blob,
-///      byte-for-byte matching Electron's
+///      byte-for-byte matching legacy JS runtime's
 ///      `'safe:' + safeStorage.encryptString(p).toString('base64')`;
 ///   4. otherwise machine-bound `gs:` (scrypt key resolved from `device_key`).
 ///
@@ -702,14 +702,14 @@ where
 /// | (none)   | passed through unchanged                     |
 ///
 /// Return mapping (see the module layering note for why this returns a `Result`
-/// where `main.js` returns `null`):
+/// where the legacy JS backend returns `null`):
 ///   * empty input -> `Ok(None)` (mirrors `if (!ct) return null`);
 ///   * `safe:` when `safe_storage_ready` is false -> `Ok(None)` (mirrors the
 ///     `if (!safeStorageReady()) return null` guard);
 ///   * a value with no recognized tag -> `Ok(Some(value))` (mirrors `return ct`);
 ///   * a successful decrypt -> `Ok(Some(plaintext))`;
 ///   * a locked session or any decrypt/parse failure -> `Err(_)` carrying the
-///     cause (where `main.js` would have caught and returned `null`).
+///     cause (where the legacy JS backend would have caught and returned `null`).
 ///
 /// `passphrase_mode` and `device_key` are the settings-derived inputs used to
 /// resolve the scrypt / legacy keys (locked -> `Err`).
@@ -773,7 +773,7 @@ pub fn decrypt_field(
 /// untouched). `donut_profile_id` / `donut_profile_pending_delete` are left as
 /// they are (stored unencrypted, like `id`/`username`); the `Account` struct
 /// already carries their defaults, so the `applyAccountDonutDefaults` step is a
-/// no-op at the type level. The `_enc = true` marker the Electron_Build writes is
+/// no-op at the type level. The `_enc = true` marker the legacy JS build writes is
 /// reproduced in the `extra` catch-all so the on-disk JSON shape matches.
 ///
 /// The `encrypt_field` call includes the verify-before-persist pass, so an
@@ -791,7 +791,7 @@ pub fn encrypt_account(
         o.cookie = encrypt_field(&o.cookie, passphrase_mode, safe_storage_ready, device_key)
             .map_err(|e| format!("account '{}' ({}): {}", o.id, o.nickname, e))?;
     }
-    // Mirror `o._enc = true;` so the persisted JSON keeps the Electron marker.
+    // Mirror `o._enc = true;` so the persisted JSON keeps the legacy JS runtime marker.
     o.extra
         .insert("_enc".to_string(), serde_json::Value::Bool(true));
     Ok(o)
@@ -806,7 +806,7 @@ pub fn encrypt_account(
 /// return o;
 /// ```
 ///
-/// The cookie is decrypted only when non-empty. `main.js` coalesces a failed
+/// The cookie is decrypted only when non-empty. the legacy JS backend coalesces a failed
 /// decrypt to `''` (`?? ''`) and relies on its callers to detect the failure by
 /// noticing a previously non-empty cookie is now empty. The migration surfaces
 /// that condition directly: a non-empty cookie that does not decrypt yields an
@@ -998,7 +998,7 @@ mod session_tests {
     }
 
     #[test]
-    fn verify_token_matches_electron_constant() {
+    fn verify_token_matches_legacy_constant() {
         assert_eq!(VERIFY_TOKEN, "robloxaccountmanager-verify-v1");
     }
 
@@ -1120,7 +1120,7 @@ mod session_tests {
 
         invalidate_key_cache();
 
-        // Session stays unlocked (session_pass preserved), matching main.js.
+        // Session stays unlocked (session_pass preserved), matching legacy JS backend.
         assert_eq!(session_pass().as_deref(), Some("still-unlocked"));
         // Keys are re-derivable (still returns Some because the pass is present).
         assert!(get_encryption_key(true, None).unwrap().is_some());
@@ -1255,7 +1255,7 @@ mod session_tests {
     fn decrypt_field_locked_gs_surfaces_error() {
         let _g = guard();
         // Passphrase mode, locked: a gs: value cannot be decrypted -> Err
-        // (where main.js would have caught and returned null).
+        // (where legacy JS backend would have caught and returned null).
         let err = decrypt_field("gs:AQID:BQY=:Bwg=", true, false, None).unwrap_err();
         assert!(err.contains("locked"), "expected a locked error, got: {err}");
     }
@@ -1321,7 +1321,7 @@ mod session_tests {
         assert_eq!(k_second, derive_scrypt_key("second-pass").unwrap());
     }
 
-    // Feature: electron-to-tauri-migration, Property 11: Passphrase verification accepts exactly the matching passphrase and never partially mutates on reject
+    // Feature: native-tauri-backend, Property 11: Passphrase verification accepts exactly the matching passphrase and never partially mutates on reject
     //
     // Validates: Requirements 3.3
     //
@@ -1434,7 +1434,7 @@ mod proptest_encryption {
 
     type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
 
-    // Feature: electron-to-tauri-migration, Property 19: Every supported encryption format round-trips and cross-decrypts correctly
+    // Feature: native-tauri-backend, Property 19: Every supported encryption format round-trips and cross-decrypts correctly
     //
     // Validates: Requirements 11.3
     #[test]
@@ -1471,7 +1471,7 @@ mod proptest_encryption {
             // cbc: read-only format (encrypt is never implemented in the port).
             // Construct a Node-compatible blob in-test — AES-256-CBC + PKCS#7
             // under the legacy key, laid out as cbc:<b64 iv>:<b64 ciphertext> —
-            // exactly how the Electron_Build wrote cbc: values, and confirm
+            // exactly how the legacy JS build wrote cbc: values, and confirm
             // decrypt_cbc recovers the original plaintext.
             let mut iv = [0u8; 16];
             getrandom::getrandom(&mut iv).unwrap();
@@ -1521,28 +1521,28 @@ mod proptest_encryption {
 
 // ── Golden ciphertext fixtures (Task 3.8, Requirement 11.3) ───────────────────
 //
-// These are GENUINE Electron_Build-format ciphertext blobs, produced by running
+// These are GENUINE legacy JS build-format ciphertext blobs, produced by running
 // Node's `crypto` with the *exact* salt / iteration count / scrypt parameters /
-// key length / digest that `src/main.js` uses (`SALT = 'robloxaccountmanager-v1-salt-2025'`,
+// key length / digest that the legacy JS backend uses (`SALT = 'robloxaccountmanager-v1-salt-2025'`,
 // PBKDF2 210_000 iters SHA-512, scrypt N=2^16 r=8 p=1, 32-byte keys), via the
 // same `encryptGCM(p, k, tag)` layout (`<tag>:b64(iv):b64(authTag):b64(ct)`) and
 // the same `cbc:b64(iv):b64(ct)` layout `decryptCBC` reads. The blobs below were
 // captured from that Node script (then the script was deleted) and are pinned
 // here as static constants, so these tests prove byte-for-byte cross-decryption:
 // the Rust `decrypt_gcm`/`decrypt_cbc` must recover the exact plaintext the
-// Electron_Build sealed, for a `gs:`, a `gcm:`, and a `cbc:` value.
+// legacy JS build sealed, for a `gs:`, a `gcm:`, and a `cbc:` value.
 //
 // The random IV in each blob means these exact bytes are not reproducible, but
-// they are still authentic Electron-format ciphertext for a known passphrase and
+// they are still authentic legacy JS runtime-format ciphertext for a known passphrase and
 // known plaintext — which is precisely what a golden fixture needs to be.
 //
 // `safe:` (DPAPI) has no portable static fixture: a `safe:` blob is bound to the
 // Windows user/machine that produced it (`CryptProtectData`), so a blob captured
 // on one machine will not decrypt on another and cannot be committed as a stable
-// constant. Electron's `safeStorage` on Windows *is* DPAPI with no extra entropy,
+// constant. legacy JS runtime's `safeStorage` on Windows *is* DPAPI with no extra entropy,
 // identical to this crate's `dpapi_protect`/`dpapi_unprotect`, so the `safe:`
 // cross-compatibility coverage is a `#[cfg(windows)]` round-trip through
-// `dpapi_protect` → `dpapi_unprotect` (see `safe_dpapi_round_trip_is_electron_compatible`).
+// `dpapi_protect` → `dpapi_unprotect` (see `safe_dpapi_round_trip_is_legacy_compatible`).
 #[cfg(test)]
 mod golden_fixture_tests {
     use super::*;
@@ -1555,16 +1555,16 @@ mod golden_fixture_tests {
     const GOLDEN_PLAINTEXT: &str =
         "_|WARNING:-DO-NOT-SHARE-THIS.--Sharing-this-will-allow-someone-to-log-in-as-you.--.ROBLOSECURITY=SAMPLE_TOKEN_1234567890abcdef";
 
-    /// Genuine Electron_Build `gs:` blob (AES-256-GCM, scrypt-derived key).
+    /// Genuine legacy JS build `gs:` blob (AES-256-GCM, scrypt-derived key).
     const GOLDEN_GS: &str = "gs:V0Z4XoX+F/I8HYFC:tYI3Pa6MMdoUA26suC8cOQ==:ch2xMD6Ahjj3xLa2XHSOy0S5ml0dCpTx7xSkiiFQN1QvJukFJwGJZIJDjsfEBLoq7iSx3fTzXkrPjA1EccMrMYnEnyGqduktDYwJA80nu0crn6rhcbcA8T+JUQ8r4b10bik5x+qxpcENUv85B+8R6wWRNn23bPaK505ukMth";
-    /// Genuine Electron_Build `gcm:` blob (AES-256-GCM, legacy PBKDF2-SHA512 key).
+    /// Genuine legacy JS build `gcm:` blob (AES-256-GCM, legacy PBKDF2-SHA512 key).
     const GOLDEN_GCM: &str = "gcm:c+8Yd24lAYaPRlO4:NNF3DNPYsuwiUlzb04o+gg==:YuYFtZsCM+1m9krEobmG7AMXOEqEFVmsGaHy8g9x4/kCX3n1hNlcjfssqPwWoRYpzUL5UMgtctrJQdDC2jQgFsxl+Vt0DdsMcV85E/5Ofok5NOIK36+wJ7D7iPSOr4onjk0nLvq6KFwyGADYHg+fVkvkvz4rOkUuqizGSqZa";
-    /// Genuine Electron_Build `cbc:` blob (AES-256-CBC, legacy PBKDF2-SHA512 key).
+    /// Genuine legacy JS build `cbc:` blob (AES-256-CBC, legacy PBKDF2-SHA512 key).
     const GOLDEN_CBC: &str = "cbc:HWC/VU5LQDnnPZwQ8fjQGw==:zeJx5VR77HbymXXZkTG+Xx/9AMJvrRVxMQb65wJ6HIllUNKxGp48WJfKtdKjzV/4SvRdGqz6osSYA+Ht/nL07iQ4WYTHK+MosqHCsWy8TO73z8jLLPvuZ2HmiHSbQHk/3a7XV9aComXtbMD+KDVEzY+2nt2KWijvL3LzGUm6tKw=";
 
     #[test]
     fn gs_golden_fixture_decrypts_to_known_plaintext() {
-        // scrypt-derived key path (`gs:`): the current-format Electron blob must
+        // scrypt-derived key path (`gs:`): the current-format legacy JS runtime blob must
         // decrypt to the exact plaintext under the same passphrase-derived key.
         let key = derive_scrypt_key(GOLDEN_PASSPHRASE).unwrap();
         let recovered = decrypt_gcm(GOLDEN_GS, &key, "gs")
@@ -1574,7 +1574,7 @@ mod golden_fixture_tests {
 
     #[test]
     fn gcm_golden_fixture_decrypts_to_known_plaintext() {
-        // legacy PBKDF2 key path (`gcm:`): the Electron legacy-format blob must
+        // legacy PBKDF2 key path (`gcm:`): the legacy JS runtime legacy-format blob must
         // decrypt to the exact plaintext under the PBKDF2-SHA512-derived key.
         let key = derive_legacy_key(GOLDEN_PASSPHRASE);
         let recovered = decrypt_gcm(GOLDEN_GCM, &key, "gcm")
@@ -1584,7 +1584,7 @@ mod golden_fixture_tests {
 
     #[test]
     fn cbc_golden_fixture_decrypts_to_known_plaintext() {
-        // legacy CBC read path (`cbc:`): the Electron legacy-format blob must
+        // legacy CBC read path (`cbc:`): the legacy JS runtime legacy-format blob must
         // decrypt to the exact plaintext under the PBKDF2-SHA512-derived key.
         let key = derive_legacy_key(GOLDEN_PASSPHRASE);
         let recovered = decrypt_cbc(GOLDEN_CBC, &key)
@@ -1604,17 +1604,17 @@ mod golden_fixture_tests {
         assert!(decrypt_cbc(GOLDEN_CBC, &wrong_legacy).is_err());
     }
 
-    /// `safe:` coverage. Electron's `safeStorage` on Windows is DPAPI
+    /// `safe:` coverage. legacy JS runtime's `safeStorage` on Windows is DPAPI
     /// (`CryptProtectData`, current-user scope, no entropy) — byte-for-byte the
     /// same wire format this crate's `dpapi_protect`/`dpapi_unprotect` produce and
     /// consume. A `safe:` blob is user/machine-bound and therefore cannot be
     /// pinned as a portable static fixture, so the golden coverage for `safe:` is
     /// a round-trip on this machine: protect a known plaintext, then unprotect it
-    /// and assert the exact bytes come back — the same operation Electron would
+    /// and assert the exact bytes come back — the same operation legacy JS runtime would
     /// perform against a value it sealed.
     #[cfg(windows)]
     #[test]
-    fn safe_dpapi_round_trip_is_electron_compatible() {
+    fn safe_dpapi_round_trip_is_legacy_compatible() {
         let blob = dpapi_protect(GOLDEN_PLAINTEXT.as_bytes())
             .expect("DPAPI protect (safe:) should succeed on Windows");
         assert_ne!(blob.as_slice(), GOLDEN_PLAINTEXT.as_bytes(), "blob must be encrypted");
@@ -1637,7 +1637,7 @@ mod proptest_verify_before_persist {
     use proptest::prelude::*;
     use std::cell::RefCell;
 
-    // Feature: electron-to-tauri-migration, Property 20: A secret write that fails its own verification is never retained
+    // Feature: native-tauri-backend, Property 20: A secret write that fails its own verification is never retained
     //
     // Validates: Requirements 11.5
     #[test]

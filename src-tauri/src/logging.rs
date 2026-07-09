@@ -1,7 +1,7 @@
 //! Session logging (`logging.rs`).
 //!
-//! This module ports the Electron_Build's `// ── Logging ──` section from
-//! `src/main.js`. In the Electron_Build, `sendLog(level, category, message, meta)`
+//! This module ports the legacy JS build's `// ── Logging ──` section from
+//! the legacy JS backend. In the legacy JS build, `sendLog(level, category, message, meta)`
 //! emits a single log record to the Renderer_UI over the `log:entry`
 //! `webContents` channel:
 //!
@@ -14,7 +14,7 @@
 //! }
 //! ```
 //!
-//! Per the design's IPC_Surface mapping table, the Electron `log:entry`
+//! Per the design's IPC_Surface mapping table, the legacy JS runtime `log:entry`
 //! `webContents` channel (subscribed via `window.api.onLogEntry`) maps to the
 //! Tauri `log://entry` event. The Renderer_UI (`src/renderer.js`) reads the
 //! payload fields `ts`, `level`, `category`, `message`, and `meta` directly:
@@ -25,12 +25,12 @@
 //!
 //! so the emitted payload MUST keep those exact field names (Requirement 4.1).
 //! Only the timestamp value and the process/thread identity are permitted to
-//! differ from the Electron_Build (Requirement 4.1).
+//! differ from the legacy JS build (Requirement 4.1).
 //!
 //! Scope note (Requirement 4.2): this module provides only the emission
 //! *mechanism*. The set of events that get logged (the logging *scope*) is
 //! determined entirely by the `send_log` call sites, which are ported 1:1 from
-//! the Electron_Build's `sendLog` call sites within their respective modules
+//! the legacy JS build's `sendLog` call sites within their respective modules
 //! (`native_helper.rs`, `roblox_process.rs`, `accounts.rs`, `browser_launcher.rs`,
 //! ...). No log point is added or removed here.
 
@@ -39,23 +39,23 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Emitter};
 
-/// The Tauri event name that replaces the Electron_Build's `log:entry`
+/// The Tauri event name that replaces the legacy JS build's `log:entry`
 /// `webContents` channel (design IPC_Surface mapping: `onLogEntry` ->
 /// `log://entry`).
 pub const LOG_ENTRY_EVENT: &str = "log://entry";
 
 /// A single session-log record, matching the exact payload shape the
-/// Electron_Build sends over `log:entry` and that the Renderer_UI's
+/// legacy JS build sends over `log:entry` and that the Renderer_UI's
 /// `onLogEntry` callback consumes.
 ///
 /// Field names are load-bearing: `renderer.js` reads `ts`, `level`, `category`,
 /// `message`, and `meta` off this payload, so the serialized names must match
-/// the Electron_Build byte-for-byte (Requirement 4.1). In particular the
-/// metadata field is serialized as `meta` (not `metadata`), matching Electron.
+/// the legacy JS build byte-for-byte (Requirement 4.1). In particular the
+/// metadata field is serialized as `meta` (not `metadata`), matching legacy JS runtime.
 #[derive(Debug, Clone, Serialize)]
 pub struct LogEntry {
-    /// Emission timestamp in epoch milliseconds (Electron: `Date.now()`).
-    /// Requirement 4.1 permits this value to differ from the Electron_Build.
+    /// Emission timestamp in epoch milliseconds (legacy JS runtime: `Date.now()`).
+    /// Requirement 4.1 permits this value to differ from the legacy JS build.
     pub ts: i64,
     /// Severity level (e.g. `ok`, `info`, `warn`, `err`), carried through unchanged.
     pub level: String,
@@ -63,17 +63,17 @@ pub struct LogEntry {
     pub category: String,
     /// Human-readable message text, unchanged.
     pub message: String,
-    /// Structured metadata. Serialized as `meta` to match Electron. Defaults to
-    /// an empty object `{}` when no metadata is supplied (Electron: `meta || {}`).
+    /// Structured metadata. Serialized as `meta` to match legacy JS runtime. Defaults to
+    /// an empty object `{}` when no metadata is supplied (legacy JS runtime: `meta || {}`).
     pub meta: Value,
 }
 
 /// Builds a [`LogEntry`] with the same field values and defaulting behavior as
-/// the Electron_Build's `sendLog` payload construction, without performing the
+/// the legacy JS build's `sendLog` payload construction, without performing the
 /// emission side effect. Kept separate from [`send_log`] so the payload shape
 /// is unit-testable without a live Tauri [`AppHandle`].
 ///
-/// Mirrors Electron's `{ ts: Date.now(), level, category, message, meta: meta || {} }`:
+/// Mirrors legacy JS runtime's `{ ts: Date.now(), level, category, message, meta: meta || {} }`:
 /// a `Value::Null` metadata is normalized to an empty object `{}`, matching
 /// JavaScript's `meta || {}` for the `undefined`/`null` case.
 pub fn build_log_entry(level: &str, category: &str, message: &str, metadata: Value) -> LogEntry {
@@ -88,16 +88,16 @@ pub fn build_log_entry(level: &str, category: &str, message: &str, metadata: Val
 }
 
 /// Emits a single session-log entry to the Renderer_UI as a `log://entry` Tauri
-/// event, replacing the Electron_Build's
+/// event, replacing the legacy JS build's
 /// `win.webContents.send('log:entry', ...)`.
 ///
 /// The signature takes an [`AppHandle`] (rather than a specific `Window`) so
 /// that both `#[tauri::command]` handlers and detached background tasks (the
 /// watch/poll loop, Native_Helper stdout readers, the launch queue, ...) can
-/// call it from anywhere they hold a handle, matching how `main.js` calls
+/// call it from anywhere they hold a handle, matching how the legacy JS backend calls
 /// `sendLog` from both IPC handlers and spawned-process callbacks.
 ///
-/// Emission is best-effort and never panics: like Electron's `try { ... } catch {}`
+/// Emission is best-effort and never panics: like legacy JS runtime's `try { ... } catch {}`
 /// wrapper (which also guards `win && !win.isDestroyed()`), any emit failure
 /// (e.g. the window is gone during shutdown) is swallowed so logging can never
 /// disrupt the operation that produced the log entry.
@@ -105,17 +105,17 @@ pub fn build_log_entry(level: &str, category: &str, message: &str, metadata: Val
 /// Ordering (Requirement 4.1): `emit` runs synchronously in call order, so
 /// entries are delivered in the same relative order they are logged.
 ///
-/// Redaction integration point (Task 4.2, Requirement 4.3): the Electron_Build's
+/// Redaction integration point (Task 4.2, Requirement 4.3): the legacy JS build's
 /// bare `sendLog` does NOT itself redact — secret redaction is applied by the
 /// `logBrowser` wrapper (which calls `redactSecrets` on the message and metadata
 /// *before* calling `sendLog`). This module deliberately mirrors that split:
 /// `send_log` stays a faithful, redaction-free emitter, while the ported
-/// `redaction.js` logic (the [`redaction`] submodule) and the [`log_browser`]
+/// the legacy redaction helper logic (the [`redaction`] submodule) and the [`log_browser`]
 /// wrapper that applies it live alongside it. Callers that handle secrets must go
-/// through [`log_browser`], exactly as in the Electron_Build.
+/// through [`log_browser`], exactly as in the legacy JS build.
 pub fn send_log(app: &AppHandle, level: &str, category: &str, message: &str, metadata: Value) {
     let entry = build_log_entry(level, category, message, metadata);
-    // Best-effort, matching Electron's swallow-all `try { ... } catch {}`.
+    // Best-effort, matching legacy JS runtime's swallow-all `try { ... } catch {}`.
     let _ = app.emit(LOG_ENTRY_EVENT, entry);
 }
 
@@ -130,11 +130,11 @@ pub const COMMAND_ERROR_CATEGORY: &str = "ipc";
 /// return a failure response to the caller").
 ///
 /// This deliberately writes to the backend's standard error stream rather than
-/// emitting a `log://entry` session-log event. In the Electron_Build, an
-/// `ipcMain.handle` handler that fails does NOT call `sendLog` — it returns
+/// emitting a `log://entry` session-log event. In the legacy JS build, an
+/// `legacy command handler` handler that fails does NOT call `sendLog` — it returns
 /// `{ ok: false, error }` (or rejects) and, where it logs at all, uses
 /// `console.error(...)` for diagnostics. Emitting a session-log entry for every
-/// command failure would add log points the Electron_Build never produced,
+/// command failure would add log points the legacy JS build never produced,
 /// violating the session-log scope-parity rule (Requirement 4.2). Routing
 /// command errors here — the Rust equivalent of `console.error` — logs the error
 /// centrally (Requirement 7.1) without widening the user-facing session-log scope
@@ -172,7 +172,7 @@ fn now_millis() -> i64 {
 }
 
 /// Fragment-based secret redaction, a direct algorithmic port of the
-/// Electron_Build's `src/redaction.js` (Requirement 4.3; Requirement 6 of the
+/// legacy JS build's the legacy redaction helper (Requirement 4.3; Requirement 6 of the
 /// account-browser-launcher spec).
 ///
 /// This is pure string/set logic with no OS dependency, so the port is a
@@ -192,24 +192,24 @@ fn now_millis() -> i64 {
 ///
 /// # Unicode note
 ///
-/// JavaScript strings are UTF-16 and `redaction.js` windows by code unit. This
+/// JavaScript strings are UTF-16 and the legacy redaction helper windows by code unit. This
 /// port windows by Unicode scalar value (`char`), collecting each string into a
 /// `Vec<char>` before slicing so a multi-byte character can never split a window
 /// on a non-`char` boundary. For the secret set this module actually protects
 /// (ASCII cookie/`.ROBLOSECURITY` and Donut API token values) `char`-windowing
 /// and UTF-16-code-unit-windowing coincide, so behavior matches the
-/// Electron_Build for every real input.
+/// legacy JS build for every real input.
 pub mod redaction {
     use serde_json::{Map, Value};
     use std::collections::HashSet;
 
     /// The fixed minimum fragment length (`MIN_SECRET_FRAGMENT_LEN = 8` in
-    /// `redaction.js`). Any run of `>=` this many characters that occurs inside a
+    /// the legacy redaction helper). Any run of `>=` this many characters that occurs inside a
     /// known secret is treated as sensitive and masked.
     pub const MIN_SECRET_FRAGMENT_LEN: usize = 8;
 
     /// Human-readable marker left in place of a stripped secret fragment
-    /// (`DEFAULT_MASK` in `redaction.js`). Purely cosmetic: correctness never
+    /// (`DEFAULT_MASK` in the legacy redaction helper). Purely cosmetic: correctness never
     /// depends on the mask (see [`redact_string_with`], which falls back to
     /// empty-string stripping if a mask ever interacts badly).
     pub const DEFAULT_MASK: &str = "[redacted]";
@@ -460,7 +460,7 @@ pub fn account_log_identity(account: &Account) -> Value {
 /// stored Donut_API_Token (decrypted only in memory) plus any cookie value(s)
 /// the caller is currently handling.
 ///
-/// Ports `launcherSecrets`. In the Electron_Build this function calls
+/// Ports `launcherSecrets`. In the legacy JS build this function calls
 /// `getDonutToken()` itself; the Tauri Settings_Store / token-decryption module
 /// that provides that value is ported in a later task, so the decrypted token is
 /// threaded in here as `donut_token` (integration point). `extra_secrets` carries
@@ -483,7 +483,7 @@ pub fn launcher_secrets(donut_token: Option<&str>, extra_secrets: &[&str]) -> Ve
 }
 
 /// [`send_log`] wrapper for every Account_Browser_Launcher log entry, ported from
-/// the Electron_Build's `logBrowser`. It:
+/// the legacy JS build's `logBrowser`. It:
 ///   1. forces the `browser` log category,
 ///   2. strips any cookie/Donut_API_Token fragment from the message text and the
 ///      metadata *before* it is emitted (Requirement 4.3 / launcher Req 6.1, 6.4),
@@ -555,7 +555,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn log_entry_serializes_with_electron_field_names() {
+    fn log_entry_serializes_with_legacy_field_names() {
         let entry = LogEntry {
             ts: 1_700_000_000_000,
             level: "ok".to_string(),
@@ -570,13 +570,13 @@ mod tests {
         assert_eq!(v["category"], json!("launch"));
         assert_eq!(v["message"], json!("Launched Roblox"));
         assert_eq!(v["meta"], json!({ "accountId": "abc", "pid": 1234 }));
-        // The metadata field must be named `meta`, not `metadata` (Electron parity).
+        // The metadata field must be named `meta`, not `metadata` (legacy JS runtime parity).
         assert!(v.get("metadata").is_none());
     }
 
     #[test]
     fn build_log_entry_defaults_null_metadata_to_empty_object() {
-        // Mirrors Electron's `meta: meta || {}`.
+        // Mirrors legacy JS runtime's `meta: meta || {}`.
         let entry = build_log_entry("warn", "afk", "Anti-AFK stopped", Value::Null);
         assert_eq!(entry.meta, json!({}));
         assert_eq!(entry.level, "warn");
@@ -754,7 +754,7 @@ mod tests {
         proptest! {
             #![proptest_config(ProptestConfig::with_cases(256))]
 
-            // Feature: electron-to-tauri-migration, Property 13: Log redaction removes every secret fragment at or above the minimum length
+            // Feature: native-tauri-backend, Property 13: Log redaction removes every secret fragment at or above the minimum length
             //
             // For an arbitrary secret embedded (in full and in a truncated slice) in
             // arbitrary surrounding text — both as a plain message string and nested
@@ -870,7 +870,7 @@ mod tests {
         proptest! {
             #![proptest_config(ProptestConfig::with_cases(256))]
 
-            // Feature: electron-to-tauri-migration, Property 14: An error while handling one command does not crash the backend or block subsequent commands
+            // Feature: native-tauri-backend, Property 14: An error while handling one command does not crash the backend or block subsequent commands
             //
             // For an arbitrary sequence of command invocations where some hit an
             // injected internal error and some succeed, driven through the shared

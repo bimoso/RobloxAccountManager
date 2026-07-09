@@ -1,4 +1,4 @@
-//! Native_Helper (`RobloxNative.exe`) integration, ported from `main.js`'s
+//! Native_Helper (`RobloxNative.exe`) integration, ported from the legacy JS backend's
 //! native-helper section.
 //!
 //! Task 9.1 implements [`ensure_native_helper`] — the three-step resolution that
@@ -12,9 +12,9 @@
 //! marker parser (Task 9.3) and the command layer (Task 9.7) build on top of
 //! these later.
 //!
-//! ## Process lifecycle port (`main.js` → Task 9.2)
+//! ## Process lifecycle port (the legacy JS backend → Task 9.2)
 //!
-//! The Electron_Build spawns `RobloxNative.exe` in two distinct shapes, which
+//! The legacy JS build spawns `RobloxNative.exe` in two distinct shapes, which
 //! this module reproduces with `tokio::process`:
 //!
 //! * **Persistent** — the `mutex` subcommand prints `MUTEX_HELD` then blocks,
@@ -30,12 +30,12 @@
 //!
 //! Every wait in both shapes is bounded by a `tokio::time::timeout` so a hung or
 //! unexpectedly-terminated helper can never leave a caller awaiting forever
-//! (Requirement 7.4) — the Rust analogue of the Electron_Build's per-spawn
+//! (Requirement 7.4) — the Rust analogue of the legacy JS build's per-spawn
 //! `setTimeout(..., N)` safety guards (mutex 8s, volume 12s, closehandles 4s).
 //!
 //! ## Ported behavior
 //!
-//! The Electron_Build's `ensureNativeHelper()` (`src/main.js`) resolves the
+//! The legacy JS build's `ensureNativeHelper()` (the legacy JS backend) resolves the
 //! helper executable in three steps, in this exact order:
 //!
 //! ```js
@@ -64,15 +64,15 @@
 //!   path.join(win, 'Microsoft.NET', 'Framework',   'v4.0.30319', 'csc.exe') ]
 //! ```
 //!
-//! ## Differences from the Electron_Build (intentional, per the requirements)
+//! ## Differences from the legacy JS build (intentional, per the requirements)
 //!
 //! `ensureNativeHelper()` returns `null` when the helper is unavailable and the
-//! Electron callers then no-op or fall back. The migration instead returns an
+//! legacy JS runtime callers then no-op or fall back. The migration instead returns an
 //! `Err(String)` (Requirement 9.5: a failed/timed-out fallback compile makes the
 //! dependent feature report a failure to the user rather than hanging or silently
 //! no-op-ing). The three-step order and the candidate paths are otherwise
 //! reproduced exactly. In particular, on a compile **timeout** this returns an
-//! `Err` (Requirement 9.4/9.5) rather than the Electron code's post-kill
+//! `Err` (Requirement 9.4/9.5) rather than the legacy JS runtime code's post-kill
 //! `fs.existsSync(outExe)` re-check, since a killed compile cannot be trusted to
 //! have produced a complete executable.
 //!
@@ -83,8 +83,8 @@
 //! so the resolution order can be unit-tested against temp directories without a
 //! live Tauri app. [`ensure_native_helper`] is the thin `AppHandle` wrapper that
 //! fills in those paths from Tauri's resource directory (the bundled exe/source,
-//! matching Electron's `resourcesPath`/`__dirname`) and the app-data directory
-//! (the cached-compile location, matching Electron's `userData`).
+//! matching legacy JS runtime's `resourcesPath`/`__dirname`) and the app-data directory
+//! (the cached-compile location, matching legacy JS runtime's `userData`).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -95,7 +95,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::logging::send_log;
 use crate::AppState;
 
-/// The fallback-compilation timeout, matching the Electron_Build's 30-second
+/// The fallback-compilation timeout, matching the legacy JS build's 30-second
 /// `setTimeout` guard on the `csc.exe` child (Requirement 9.4).
 pub const COMPILE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -112,23 +112,23 @@ pub const NATIVE_SRC_NAME: &str = "RobloxNative.cs";
 /// unit-testable without a live Tauri app.
 #[derive(Debug, Clone)]
 pub struct NativeHelperPaths {
-    /// Step 1: the prebuilt exe shipped with the app (Electron's
+    /// Step 1: the prebuilt exe shipped with the app (legacy JS runtime's
     /// `bundledNativeExePath()` — `resourcesPath`/`__dirname` + `RobloxNative.exe`;
     /// here, the Tauri resource dir).
     pub bundled_exe: PathBuf,
-    /// Steps 2/3 input: the bundled C# source (Electron's `nativeSrcPath()`);
+    /// Steps 2/3 input: the bundled C# source (legacy JS runtime's `nativeSrcPath()`);
     /// compiled by step 3 when no usable exe exists.
     pub source: PathBuf,
     /// Steps 2/3 output: the cached-compile location in the app-data dir
-    /// (Electron's `path.join(userData, 'RobloxNative.exe')`).
+    /// (legacy JS runtime's `path.join(userData, 'RobloxNative.exe')`).
     pub cached_exe: PathBuf,
 }
 
 /// Resolve a usable `RobloxNative.exe` path, porting `ensureNativeHelper()`.
 ///
 /// Resolves the bundled exe and source from the Tauri resource directory (the
-/// analogue of Electron's `resourcesPath`/`__dirname`) and the cached-compile
-/// output from the app-data directory (the analogue of Electron's `userData`,
+/// analogue of legacy JS runtime's `resourcesPath`/`__dirname`) and the cached-compile
+/// output from the app-data directory (the analogue of legacy JS runtime's `userData`,
 /// resolved via [`crate::accounts::store_dir`] so it lands in the same
 /// `%APPDATA%\robloxaccountmanager\` folder the rest of the backend uses). Returns
 /// `Err` on any non-Windows platform (Requirement 8.4) and when no usable exe
@@ -164,7 +164,7 @@ pub async fn resolve_native_helper(
     csc_locator: impl Fn() -> Option<PathBuf>,
 ) -> Result<PathBuf, String> {
     // Step 1: prefer the prebuilt exe shipped with the app. A stat error is
-    // treated as "not present" (Electron wraps this `existsSync` in try/catch).
+    // treated as "not present" (legacy JS runtime wraps this `existsSync` in try/catch).
     if file_exists(&paths.bundled_exe) {
         return Ok(paths.bundled_exe.clone());
     }
@@ -192,7 +192,7 @@ pub async fn resolve_native_helper(
 }
 
 /// Compile `source` into `output` via `csc`, bounded by `timeout`, using the same
-/// compiler flags as the Electron_Build and `build-native.js`
+/// compiler flags as the legacy JS build and `build-native.js`
 /// (`/nologo /optimize+ /platform:x64 /target:exe /out:<output> <source>`).
 ///
 /// Production always passes [`COMPILE_TIMEOUT`] (the 30-second guard); the
@@ -221,7 +221,7 @@ async fn compile_native_helper(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
-    // Match the Electron_Build's `windowsHide: true` so the transient compiler
+    // Match the legacy JS build's `windowsHide: true` so the transient compiler
     // process never flashes a console window.
     #[cfg(windows)]
     {
@@ -267,7 +267,7 @@ async fn compile_native_helper(
     }
 }
 
-/// Locate `csc.exe` at the two fixed `%WINDIR%` candidate paths the Electron_Build
+/// Locate `csc.exe` at the two fixed `%WINDIR%` candidate paths the legacy JS build
 /// and `build-native.js` probe, in order, returning the first that exists.
 ///
 /// Falls back to `C:\Windows` when `WINDIR` is unset, matching
@@ -303,11 +303,11 @@ fn file_exists(path: &Path) -> bool {
     std::fs::metadata(path).map(|m| m.is_file()).unwrap_or(false)
 }
 
-/// Port of the Electron cache-freshness check
+/// Port of the legacy JS runtime cache-freshness check
 /// (`statSync(outExe).mtimeMs >= statSync(src).mtimeMs`): true when `cached`
 /// exists and its modified time is at least as recent as `source`'s. Any stat
 /// error (missing cache, unreadable) is treated as "not fresh" so resolution
-/// falls through to a recompile, matching the Electron try/catch.
+/// falls through to a recompile, matching the legacy JS runtime try/catch.
 fn cached_is_fresh(cached: &Path, source: &Path) -> bool {
     fn mtime(p: &Path) -> Option<SystemTime> {
         std::fs::metadata(p).and_then(|m| m.modified()).ok()
@@ -320,26 +320,26 @@ fn cached_is_fresh(cached: &Path, source: &Path) -> bool {
 
 // ── Task 9.2: Native_Helper process lifecycle ──────────────────────────────
 //
-// Ports `main.js`'s `startMutexHolder`/`stopMutexHolder`/`restartMutexHolder`,
+// Ports the legacy JS backend's `startMutexHolder`/`stopMutexHolder`/`restartMutexHolder`,
 // `setRobloxVolume`, `closeSingletonHandlesOnly`, and `startAntiAfk`/`stopAntiAfk`,
 // each `tokio::time::timeout`-guarded (Requirement 7.4).
 
-/// Readiness timeout for the persistent mutex holder, matching the Electron_Build's
+/// Readiness timeout for the persistent mutex holder, matching the legacy JS build's
 /// `setTimeout(resolve, 8000)` safety fallback in `startMutexHolder`. Readiness
 /// resolves on the `MUTEX_HELD` marker or when this elapses, whichever is first;
 /// the holder is kept running either way.
 pub const MUTEX_READY_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Overall timeout for a single `volume <pct>` invocation, matching the
-/// Electron_Build's 12-second safety timeout in `setRobloxVolume`.
+/// legacy JS build's 12-second safety timeout in `setRobloxVolume`.
 pub const VOLUME_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// Overall timeout for a single `closehandles` invocation, matching the
-/// Electron_Build's 4-second safety timeout in `closeSingletonHandlesOnly`.
+/// legacy JS build's 4-second safety timeout in `closeSingletonHandlesOnly`.
 pub const CLOSE_HANDLES_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Readiness timeout for the anti-AFK loop's `ANTIAFK_ON` marker. The
-/// Electron_Build's `startAntiAfk` does not itself await readiness (it spawns and
+/// legacy JS build's `startAntiAfk` does not itself await readiness (it spawns and
 /// returns), so this is an added Requirement-7.4 guard: the start call resolves
 /// on `ANTIAFK_ON` or after this elapses, and never hangs. The loop keeps running
 /// either way. Kept equal to the mutex readiness bound for consistency.
@@ -349,10 +349,10 @@ pub const ANTIAFK_READY_TIMEOUT: Duration = Duration::from_secs(8);
 /// stuck kill/reap can never leave a stop/restart awaiting forever (Requirement 7.4).
 pub const HELPER_KILL_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Result of a [`set_roblox_volume`] call, mirroring the object the Electron_Build's
+/// Result of a [`set_roblox_volume`] call, mirroring the object the legacy JS build's
 /// `setRobloxVolume` resolves to (`{ ok, count, error? }`) and that the Renderer_UI
 /// branches on (`if (res && res.ok) ... else ... res.error`). `error` is omitted
-/// entirely on success, matching the Electron_Build's success payload.
+/// entirely on success, matching the legacy JS build's success payload.
 #[derive(Debug, Clone, Serialize)]
 pub struct VolumeResult {
     /// Whether the volume set was attempted successfully.
@@ -367,11 +367,11 @@ pub struct VolumeResult {
 /// Spawns the Native_Helper `exe` with `args`, piping stdout (all markers are
 /// written to `Console.Out`). `pipe_stderr` chooses whether stderr is captured
 /// (the anti-AFK loop surfaces stderr warnings to the log; the other subcommands
-/// only write diagnostic text there, which the Electron_Build sent to
+/// only write diagnostic text there, which the legacy JS build sent to
 /// `console.error`, so it is dropped to avoid a pipe that no one drains).
 ///
 /// On Windows the child is created with `CREATE_NO_WINDOW` so the transient helper
-/// never flashes a console window, matching the Electron_Build's `windowsHide: true`.
+/// never flashes a console window, matching the legacy JS build's `windowsHide: true`.
 fn spawn_helper(
     exe: &Path,
     args: &[&str],
@@ -454,20 +454,20 @@ where
         .unwrap_or(MarkerWait::TimedOut)
 }
 
-/// Start (or reuse) the persistent mutex holder, porting `main.js`'s
+/// Start (or reuse) the persistent mutex holder, porting the legacy JS backend's
 /// `startMutexHolder`.
 ///
 /// A holder that is still running is reused (the mutex is never released and
 /// re-grabbed); a holder that has since exited is discarded and respawned. On a
 /// fresh spawn this resolves readiness on the `MUTEX_HELD` marker, bounded by
-/// [`MUTEX_READY_TIMEOUT`] — mirroring the Electron_Build, readiness also resolves
+/// [`MUTEX_READY_TIMEOUT`] — mirroring the legacy JS build, readiness also resolves
 /// when the timeout elapses, and the holder is kept running (stored in
 /// [`AppState::mutex_proc`]) either way, so a launch fired before readiness simply
 /// reuses the same holder.
 ///
 /// A no-op returning `Ok(())` off Windows (the mutex is a Windows kernel object).
 /// On Windows, a failure to resolve/produce the helper propagates as `Err`
-/// (Requirement 9.5), rather than the Electron_Build's silent no-op.
+/// (Requirement 9.5), rather than the legacy JS build's silent no-op.
 pub async fn start_mutex_holder(app: &AppHandle, state: &AppState) -> Result<(), String> {
     if !cfg!(windows) {
         return Ok(());
@@ -533,7 +533,7 @@ pub async fn stop_mutex_holder(state: &AppState) {
 /// Fully re-squat the singleton mutex/event pair, porting `restartMutexHolder`.
 ///
 /// Killing the old holder releases those kernel objects so the fresh one starts
-/// from a clean slate. As in the Electron_Build this is ONLY safe to call once
+/// from a clean slate. As in the legacy JS build this is ONLY safe to call once
 /// zero real Roblox processes are confirmed running (see `killAllRoblox`); doing
 /// it while a real instance could be racing the holder is what corrupts that
 /// instance's install pipeline.
@@ -543,12 +543,12 @@ pub async fn restart_mutex_holder(app: &AppHandle, state: &AppState) -> Result<(
 }
 
 /// Apply an OS-level volume (0–100) to every running Roblox audio session at
-/// once, porting `main.js`'s `setRobloxVolume`. Returns the number of sessions
+/// once, porting the legacy JS backend's `setRobloxVolume`. Returns the number of sessions
 /// adjusted (parsed from the helper's `SET:<count>` marker).
 ///
 /// A short-lived per-invocation spawn, bounded by [`VOLUME_TIMEOUT`]: on timeout
 /// the helper is killed and `{ ok: true, count: 0 }` is returned (matching the
-/// Electron_Build's timeout branch). `percent` is clamped to `0..=100`
+/// legacy JS build's timeout branch). `percent` is clamped to `0..=100`
 /// (`Math.max(0, Math.min(100, ...))`). Off Windows, or when the helper cannot be
 /// produced, or when the spawn fails, returns `ok: false` with a reason rather
 /// than erroring, so the Renderer_UI's `res.error` branch renders the cause.
@@ -618,14 +618,14 @@ pub async fn set_roblox_volume(app: &AppHandle, percent: i64) -> Result<VolumeRe
 }
 
 /// Close the singleton-event handles on currently-running Roblox processes,
-/// porting `main.js`'s `closeSingletonHandlesOnly`. This never touches the mutex;
+/// porting the legacy JS backend's `closeSingletonHandlesOnly`. This never touches the mutex;
 /// it is the lightweight per-launch step that lets a new instance avoid being
 /// redirected into an existing one.
 ///
 /// A short-lived per-invocation spawn, bounded by [`CLOSE_HANDLES_TIMEOUT`]:
 /// completion resolves on the `HANDLES_DONE` marker (or the helper exiting), and
 /// a timeout kills the helper — either way the helper is torn down and `Ok(())`
-/// is returned, matching the Electron_Build's best-effort `finish` semantics.
+/// is returned, matching the legacy JS build's best-effort `finish` semantics.
 /// A no-op returning `Ok(())` off Windows; a helper that cannot be produced
 /// propagates as `Err` (Requirement 9.5).
 pub async fn close_singleton_handles(app: &AppHandle) -> Result<(), String> {
@@ -652,7 +652,7 @@ pub async fn close_singleton_handles(app: &AppHandle) -> Result<(), String> {
 }
 
 /// Ensure the persistent mutex holder is alive, then close singleton handles on
-/// running Roblox processes — porting `main.js`'s `closeSingletonAndHoldMutex`,
+/// running Roblox processes — porting the legacy JS backend's `closeSingletonAndHoldMutex`,
 /// the per-launch prelude. `startMutexHolder` here never kills a live holder, so
 /// the mutex is never released/re-grabbed at launch time.
 pub async fn close_singleton_and_hold_mutex(
@@ -665,17 +665,17 @@ pub async fn close_singleton_and_hold_mutex(
     close_singleton_handles(app).await
 }
 
-/// Start (or reuse) the anti-AFK loop, porting `main.js`'s `startAntiAfk`.
+/// Start (or reuse) the anti-AFK loop, porting the legacy JS backend's `startAntiAfk`.
 ///
 /// The `antiafk <seconds>` subcommand taps a benign key into every running Roblox
 /// window on an interval so the ~20-minute idle kick never fires. A loop that is
 /// still running is reused; one that has exited is discarded and respawned. The
 /// interval is read from the Settings_Store (`antiAfkInterval`), defaulting to
-/// 19 minutes when absent or below 60s (matching the Electron_Build). The child
+/// 19 minutes when absent or below 60s (matching the legacy JS build). The child
 /// is stored in [`AppState::anti_afk_proc`] for later teardown.
 ///
 /// The start logs `Anti-AFK started` immediately after spawn (as the
-/// Electron_Build does), streams the helper's stdout tick lines to the log, and
+/// legacy JS build does), streams the helper's stdout tick lines to the log, and
 /// surfaces stderr warnings. Readiness on the `ANTIAFK_ON` marker is bounded by
 /// [`ANTIAFK_READY_TIMEOUT`] so the start call can never hang (Requirement 7.4),
 /// resolving `Ok(())` on the marker or the timeout. A no-op off Windows; a helper
@@ -709,7 +709,7 @@ pub async fn start_anti_afk(app: &AppHandle, state: &AppState) -> Result<(), Str
         *guard = Some(child);
     }
 
-    // Logged right after spawn, matching the Electron_Build (before any readiness).
+    // Logged right after spawn, matching the legacy JS build (before any readiness).
     send_log(
         app,
         "ok",
@@ -722,7 +722,7 @@ pub async fn start_anti_afk(app: &AppHandle, state: &AppState) -> Result<(), Str
     );
 
     // Stream stdout tick lines to the log and signal readiness on ANTIAFK_ON,
-    // porting the Electron_Build's `_antiAfkProc.stdout.on('data', ...)` handler.
+    // porting the legacy JS build's `_antiAfkProc.stdout.on('data', ...)` handler.
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     if let Some(so) = stdout {
         let app_out = app.clone();
@@ -762,7 +762,7 @@ pub async fn start_anti_afk(app: &AppHandle, state: &AppState) -> Result<(), Str
         });
     }
 
-    // Surface stderr warnings, porting the Electron_Build's stderr handler.
+    // Surface stderr warnings, porting the legacy JS build's stderr handler.
     if let Some(se) = stderr {
         let app_err = app.clone();
         tokio::spawn(async move {
@@ -788,7 +788,7 @@ pub async fn start_anti_afk(app: &AppHandle, state: &AppState) -> Result<(), Str
 }
 
 /// Stop the anti-AFK loop if one is running, porting `stopAntiAfk`. Logs
-/// `Anti-AFK stopped` before killing (matching the Electron_Build's order), and
+/// `Anti-AFK stopped` before killing (matching the legacy JS build's order), and
 /// only when a loop is actually tracked. The kill is [`HELPER_KILL_TIMEOUT`]-bounded.
 pub async fn stop_anti_afk(app: &AppHandle, state: &AppState) {
     let mut guard = state.anti_afk_proc.lock().await;
@@ -798,7 +798,7 @@ pub async fn stop_anti_afk(app: &AppHandle, state: &AppState) {
     }
 }
 
-/// Resolve the anti-AFK deadline (seconds) the same way `main.js`'s `startAntiAfk`
+/// Resolve the anti-AFK deadline (seconds) the same way the legacy JS backend's `startAntiAfk`
 /// does: use the stored `antiAfkInterval` when it is at least 60 seconds,
 /// otherwise fall back to 19 minutes (safely under Roblox's ~20-minute idle kick).
 /// A missing/`None` interval also falls back (mirroring `!Number.isFinite(...)`).
@@ -812,7 +812,7 @@ fn anti_afk_deadline(interval: Option<i64>) -> i64 {
 /// Read `antiAfkInterval` from the Settings_Store, resolving the app-data dir the
 /// same way the rest of the backend does. Any failure (dir unresolved, unreadable
 /// or corrupt store) yields `None`, so the caller falls back to the default
-/// deadline — matching the Electron_Build's resilience where `loadSettings`
+/// deadline — matching the legacy JS build's resilience where `loadSettings`
 /// returns defaults rather than throwing into `startAntiAfk`.
 fn load_anti_afk_interval(app: &AppHandle) -> Option<i64> {
     let dir = crate::accounts::store_dir(app).ok()?;
@@ -824,7 +824,7 @@ fn load_anti_afk_interval(app: &AppHandle) -> Option<i64> {
 // ── Task 9.3: structured Native_Helper marker parser ───────────────────────
 //
 // `RobloxNative.exe` communicates results to its parent purely through
-// single-line markers on stdout (and diagnostic text on stderr). The Electron_Build
+// single-line markers on stdout (and diagnostic text on stderr). The legacy JS build
 // parsed these ad-hoc at each call site — `data.includes('MUTEX_HELD')`,
 // `data.includes('HANDLES_DONE')`, `out.match(/SET:(\d+)/)` — and logged the
 // anti-AFK lines. This section replaces those scattered checks with one
@@ -870,12 +870,12 @@ pub enum HelperMarker {
 /// The line is trimmed first (helper markers are always written on their own
 /// line via `Console.Out.WriteLine`). Valued markers (`SET:`, `ANTIAFK_ON:`,
 /// `ANTIAFK_TICK:`) are matched by locating their prefix and reading the run of
-/// ASCII digits immediately following it — mirroring the Electron_Build's
+/// ASCII digits immediately following it — mirroring the legacy JS build's
 /// `/SET:(\d+)/`, which requires at least one digit right after the `:`; a prefix
 /// with no following digits (`SET:`), non-numeric text (`SET:abc`), or a value
 /// that overflows the payload type yields `None` for that marker. The token
 /// markers (`MUTEX_HELD`, `HANDLES_DONE`) are matched by substring, mirroring the
-/// Electron_Build's `.includes(...)`. The three valued prefixes are mutually
+/// legacy JS build's `.includes(...)`. The three valued prefixes are mutually
 /// non-overlapping (and none is a substring of the token markers), so a line can
 /// only ever match one format; valued markers are checked before token markers
 /// purely for determinism.
@@ -925,7 +925,7 @@ fn parse_value_after(line: &str, prefix: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
-/// Parse a `SET:<count>` volume marker, porting `main.js`'s `out.match(/SET:(\d+)/)`.
+/// Parse a `SET:<count>` volume marker, porting the legacy JS backend's `out.match(/SET:(\d+)/)`.
 /// Returns the count carried by the first `SET:<count>` marker in `out`, or `None`
 /// if absent. Thin wrapper over the structured [`parse_marker`] (Task 9.3), kept
 /// for [`set_roblox_volume`]'s call site.
@@ -936,12 +936,12 @@ fn parse_set_count(out: &str) -> Option<u32> {
     })
 }
 
-/// Port of `main.js`'s anti-AFK stdout classification `t.match(/tapped\s+(\d+)\s+window/i)`:
+/// Port of the legacy JS backend's anti-AFK stdout classification `t.match(/tapped\s+(\d+)\s+window/i)`:
 /// returns the tapped-window count when a line matches `tapped <n> window`
 /// (case-insensitively, any whitespace run), else `None`. The current
 /// `RobloxNative.exe` emits `ANTIAFK_TICK:<pid>` rather than this phrasing, so in
 /// practice lines fall through to the verbatim log branch — but the classification
-/// is ported exactly so behavior matches the Electron_Build for any helper build.
+/// is ported exactly so behavior matches the legacy JS build for any helper build.
 fn parse_tapped_windows(line: &str) -> Option<u64> {
     let lower = line.to_lowercase();
     let after_tapped = lower.find("tapped")? + "tapped".len();
@@ -969,18 +969,18 @@ fn parse_tapped_windows(line: &str) -> Option<u64> {
 // ── Task 9.7: Tauri command layer ──────────────────────────────────────────
 //
 // The three `#[tauri::command]` wrappers that expose this module's Native_Helper
-// functionality to the Renderer_UI, each mirroring its Electron IPC handler with
+// functionality to the Renderer_UI, each mirroring its legacy IPC handler with
 // the same parameter order and return shape (design IPC_Surface mapping table,
 // Requirement 10.1):
 //
-// | Electron IPC           | command                  | wraps                          |
+// | legacy IPC           | command                  | wraps                          |
 // |------------------------|--------------------------|--------------------------------|
 // | `roblox:setVolume`     | [`roblox_set_volume`]    | [`set_roblox_volume`]          |
 // | `multiinstance:status` | [`multiinstance_status`] | mutex-holder liveness + setting|
 // | `antiafk:status`       | [`antiafk_status`]       | anti-AFK-loop liveness + setting|
 
 /// The `{ enabled, active }` object [`multiinstance_status`] and [`antiafk_status`]
-/// return, matching the Electron handlers' shape so the Renderer_UI receives the
+/// return, matching the legacy handlers' shape so the Renderer_UI receives the
 /// identical payload it already branches on.
 #[derive(Debug, Clone, Serialize)]
 pub struct HelperStatus {
@@ -992,10 +992,10 @@ pub struct HelperStatus {
 }
 
 /// `roblox:setVolume` — apply an OS-level volume (0–100) to every running Roblox
-/// audio session, porting the Electron handler:
+/// audio session, porting the legacy handler:
 ///
 /// ```js
-/// ipcMain.handle('roblox:setVolume', async (_, percent) => {
+/// legacy command handler('roblox:setVolume', async (_, percent) => {
 ///   try { return await setRobloxVolume(percent); }
 ///   catch (e) { return { ok: false, count: 0, error: e.message }; }
 /// });
@@ -1004,9 +1004,9 @@ pub struct HelperStatus {
 /// Delegates to [`set_roblox_volume`], which already resolves every failure mode
 /// (non-Windows, helper-unavailable, spawn failure, timeout) to an
 /// `Ok(VolumeResult { ok: false, .. })` / timeout `Ok(VolumeResult { ok: true, count: 0 })`,
-/// so this wrapper never rejects — matching the Electron handler's
+/// so this wrapper never rejects — matching the legacy handler's
 /// always-resolves contract. Any unexpected `Err` is mapped to the same
-/// `{ ok: false, count: 0, error }` object the Electron `catch` produces.
+/// `{ ok: false, count: 0, error }` object the legacy JS runtime `catch` produces.
 #[tauri::command]
 pub async fn roblox_set_volume(app: AppHandle, percent: i64) -> Result<VolumeResult, String> {
     Ok(set_roblox_volume(&app, percent)
@@ -1022,7 +1022,7 @@ pub async fn roblox_set_volume(app: AppHandle, percent: i64) -> Result<VolumeRes
 /// the singleton-mutex holder is currently running, porting:
 ///
 /// ```js
-/// ipcMain.handle('multiinstance:status', () => ({
+/// legacy command handler('multiinstance:status', () => ({
 ///   enabled: isMultiInstanceEnabled(), active: !!_mutexProc,
 /// }));
 /// ```
@@ -1031,7 +1031,7 @@ pub async fn roblox_set_volume(app: AppHandle, percent: i64) -> Result<VolumeRes
 /// when the store is unreadable, matching `loadSettings()`'s try/catch that backs
 /// `isMultiInstanceEnabled`). `active` reflects the live [`AppState::mutex_proc`]
 /// child — `true` only while it is still running; a holder found to have exited
-/// is cleared, mirroring the Electron_Build's
+/// is cleared, mirroring the legacy JS build's
 /// `_mutexProc.on('exit', () => { _mutexProc = null; })`.
 #[tauri::command]
 pub async fn multiinstance_status(
@@ -1047,7 +1047,7 @@ pub async fn multiinstance_status(
 /// loop is currently running, porting:
 ///
 /// ```js
-/// ipcMain.handle('antiafk:status', () => ({
+/// legacy command handler('antiafk:status', () => ({
 ///   enabled: !!loadSettings().antiAfk, active: !!_antiAfkProc,
 /// }));
 /// ```
@@ -1067,7 +1067,7 @@ pub async fn antiafk_status(
 }
 
 /// Read a boolean flag from the Settings_Store, defaulting to `false` on any
-/// dir-resolution / read / parse failure. Mirrors the Electron status handlers'
+/// dir-resolution / read / parse failure. Mirrors the legacy JS runtime status handlers'
 /// reliance on `loadSettings()`, whose try/catch hands them default settings
 /// rather than throwing, so an unreadable store reports the feature disabled.
 fn setting_enabled(app: &AppHandle, pick: impl Fn(&crate::models::Settings) -> bool) -> bool {
@@ -1080,7 +1080,7 @@ fn setting_enabled(app: &AppHandle, pick: impl Fn(&crate::models::Settings) -> b
 
 /// Whether the Native_Helper child in `slot` is currently alive, clearing the
 /// slot when it has already exited so the reported `active` matches the
-/// Electron_Build's exit-nulled `!!_mutexProc` / `!!_antiAfkProc` truthiness
+/// legacy JS build's exit-nulled `!!_mutexProc` / `!!_antiAfkProc` truthiness
 /// rather than reporting a dead handle as active.
 async fn proc_active(
     slot: &std::sync::Arc<tokio::sync::Mutex<Option<tokio::process::Child>>>,
@@ -1089,7 +1089,7 @@ async fn proc_active(
     match guard.as_mut() {
         Some(child) => match child.try_wait() {
             Ok(Some(_)) => {
-                *guard = None; // exited — clear, matching the Electron `on('exit')` handler
+                *guard = None; // exited — clear, matching the legacy JS runtime `on('exit')` handler
                 false
             }
             Ok(None) => true, // still running
@@ -1133,7 +1133,7 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn parse_tapped_windows_matches_electron_regex() {
+    fn parse_tapped_windows_matches_legacy_regex() {
         assert_eq!(parse_tapped_windows("tapped 3 windows"), Some(3));
         assert_eq!(parse_tapped_windows("tapped 1 window"), Some(1));
         assert_eq!(parse_tapped_windows("Tapped  12   Windows"), Some(12));
@@ -1222,7 +1222,7 @@ mod lifecycle_tests {
 
     #[test]
     fn parse_set_count_reads_via_structured_parser() {
-        // Mid-line SET: is still located (matches the Electron /SET:(\d+)/ substring).
+        // Mid-line SET: is still located (matches the legacy JS runtime /SET:(\d+)/ substring).
         assert_eq!(parse_set_count("prefix SET:42 suffix"), Some(42));
         assert_eq!(parse_set_count("SET:0"), Some(0));
         assert_eq!(parse_set_count("noise\nSET:7\nmore"), Some(7));
@@ -1356,7 +1356,7 @@ mod fallback_compile_prop_tests {
         script
     }
 
-    // Feature: electron-to-tauri-migration, Property 16: Native_Helper fallback compilation resolves according to its outcome and timeout
+    // Feature: native-tauri-backend, Property 16: Native_Helper fallback compilation resolves according to its outcome and timeout
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(120))]
 
@@ -1555,7 +1555,7 @@ mod mid_operation_termination_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(100))]
 
-        // Feature: electron-to-tauri-migration, Property 15: An in-progress Native_Helper operation fails cleanly if the helper process terminates unexpectedly
+        // Feature: native-tauri-backend, Property 15: An in-progress Native_Helper operation fails cleanly if the helper process terminates unexpectedly
         //
         // Validates: Requirements 7.4
         #[test]
@@ -1724,7 +1724,7 @@ mod marker_parse_prop_tests {
         prop_oneof![arb_token_case(), arb_valued_case(), arb_non_marker_case()]
     }
 
-    // Feature: electron-to-tauri-migration, Property 17: Native_Helper stdout/stderr markers are parsed into the correct structured result
+    // Feature: native-tauri-backend, Property 17: Native_Helper stdout/stderr markers are parsed into the correct structured result
     //
     // Validates: Requirements 9.6
     proptest! {

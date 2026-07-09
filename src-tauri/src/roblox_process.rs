@@ -1,4 +1,4 @@
-//! Roblox game client process management, ported from `main.js`'s
+//! Roblox game client process management, ported from the legacy JS backend's
 //! `// ── Roblox session control ──` section.
 //!
 //! This module owns the launch flow (target parsing → CSRF/auth-ticket
@@ -18,7 +18,7 @@
 //! runs before spawning the client:
 //!   * the **launch queue** — a `tokio::sync::Mutex` (`AppState::launch_lock`)
 //!     that serializes concurrent launches so they cannot all hammer
-//!     `auth.roblox.com` at once (porting `main.js`'s promise-chained
+//!     `auth.roblox.com` at once (porting the legacy JS backend's promise-chained
 //!     `_launchQueue`), plus the 4-second [`LAUNCH_STAGGER_MS`] gap enforced
 //!     against `AppState::last_launch_ts`;
 //!   * **CSRF-token caching** ([`get_csrf_token`]) with a 5-minute
@@ -47,7 +47,7 @@
 //! the `tasklist`-backed [`PresenceProbe`] ([`TasklistPresenceProbe`]) and
 //! enumeration/count/fully-closed helpers, and the `taskkill`-backed
 //! [`kill_one`] / [`kill_all`], all issued with the **same command strings** the
-//! Electron_Build uses ([`TASKLIST_ENUM_CMD`], [`TASKKILL_ALL_CMD`], etc.). A
+//! legacy JS build uses ([`TASKLIST_ENUM_CMD`], [`TASKKILL_ALL_CMD`], etc.). A
 //! kill on an untracked identifier is a no-op that affects only the targeted
 //! account (Requirement 2.6), and the tracking-map bookkeeping is factored into
 //! pure, process-free helpers so that property is unit-testable.
@@ -77,9 +77,9 @@ use url::Url;
 use crate::{AppState, CachedToken};
 
 /// The classification of a launch target, mirroring the four `request=` variants
-/// `main.js` builds into the `placelauncher.ashx` URL, plus the app-only case.
+/// the legacy JS backend builds into the `placelauncher.ashx` URL, plus the app-only case.
 ///
-/// `main.js` reference (the `roblox:launch` handler): a launch target is trimmed,
+/// the legacy JS backend reference (the `roblox:launch` handler): a launch target is trimmed,
 /// then classified in this exact order:
 /// 1. empty                              → app-only launch (`launchmode:app`)
 /// 2. all digits (`/^\d+$/`)             → `RequestGame`
@@ -91,7 +91,7 @@ use crate::{AppState, CachedToken};
 ///    e. none of the above               → error
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LauncherRequest {
-    /// Empty target. `main.js` builds a `launchmode:app` URI with no
+    /// Empty target. the legacy JS backend builds a `launchmode:app` URI with no
     /// `placelauncherurl`, launching the Roblox app to its home screen.
     AppOnly,
 
@@ -121,7 +121,7 @@ pub enum LauncherRequest {
     },
 
     /// A share link (a `/share` URL, or any URL carrying both `code` and `type`
-    /// query params). `main.js` resolves this with an async call
+    /// query params). the legacy JS backend resolves this with an async call
     /// (`resolveShareLink`) into a `placeId` + `linkCode`, then builds
     /// `request=RequestGameJob`. Task 10.2 performs that resolution.
     ShareLink {
@@ -129,7 +129,7 @@ pub enum LauncherRequest {
         link_type: Option<String>,
     },
 
-    /// A `ro.blox.com` short link. `main.js` follows the HTTP redirect
+    /// A `ro.blox.com` short link. the legacy JS backend follows the HTTP redirect
     /// (`followRedirect`, async) to obtain the real URL, then re-parses it. The
     /// launch flow (Task 10.2) follows the redirect and calls
     /// [`parse_launch_target`] again on the resolved URL.
@@ -137,7 +137,7 @@ pub enum LauncherRequest {
 }
 
 /// A launch-target classification failure, carrying the same user-facing message
-/// text `main.js` returns for the corresponding `{ success: false, error }` case.
+/// text the legacy JS backend returns for the corresponding `{ success: false, error }` case.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchTargetError {
     /// URL parsed, share/private branches did not match, and no place id was
@@ -150,7 +150,7 @@ pub enum LaunchTargetError {
 }
 
 impl LaunchTargetError {
-    /// The exact user-facing error string `main.js` returns for this case.
+    /// The exact user-facing error string the legacy JS backend returns for this case.
     pub fn message(&self) -> &'static str {
         match self {
             LaunchTargetError::NoPlaceId => "Could not find a Place ID in the URL.",
@@ -164,7 +164,7 @@ impl LaunchTargetError {
 
 impl LauncherRequest {
     /// For a fully-resolved [`LauncherRequest::RequestGame`], build the exact
-    /// `placelauncher.ashx` URL `main.js` builds (`request=RequestGame`). The
+    /// `placelauncher.ashx` URL the legacy JS backend builds (`request=RequestGame`). The
     /// other variants require async resolution before their URL can be built,
     /// so they return `None` here (Task 10.2 builds those).
     pub fn placelauncher_url(&self) -> Option<String> {
@@ -178,10 +178,10 @@ impl LauncherRequest {
 }
 
 /// Classify a raw launch target into the correct [`LauncherRequest`] variant,
-/// exactly reproducing `main.js`'s synchronous branching (see [`LauncherRequest`]).
+/// exactly reproducing the legacy JS backend's synchronous branching (see [`LauncherRequest`]).
 ///
 /// This is a pure function: it performs no network or process I/O. Variants that
-/// `main.js` resolves with an async call ([`LauncherRequest::ShortLink`],
+/// the legacy JS backend resolves with an async call ([`LauncherRequest::ShortLink`],
 /// [`LauncherRequest::ShareLink`], [`LauncherRequest::RequestPrivateGame`]'s
 /// access-code step) are returned as-is for the launch flow to resolve.
 pub fn parse_launch_target(target: &str) -> Result<LauncherRequest, LaunchTargetError> {
@@ -208,7 +208,7 @@ pub fn parse_launch_target(target: &str) -> Result<LauncherRequest, LaunchTarget
     };
 
     // ro.blox.com short-link detection happens before the main parse in
-    // `main.js`, wrapped in try/catch (a parse failure here is ignored and falls
+    // the legacy JS backend, wrapped in try/catch (a parse failure here is ignored and falls
     // through to the main parse). We mirror that: only classify as a ShortLink
     // when the URL parses AND the host matches.
     if let Ok(parsed0) = Url::parse(&raw_url) {
@@ -350,30 +350,30 @@ fn extract_place_id(path: &str) -> Option<String> {
 // ── Launch-credential pipeline (Task 10.2) ──────────────────────────────────
 
 /// 4-second minimum gap between successive launches (`LAUNCH_STAGGER` in
-/// `main.js`), enforced against [`AppState::last_launch_ts`] to avoid tripping
+/// the legacy JS backend), enforced against [`AppState::last_launch_ts`] to avoid tripping
 /// `auth.roblox.com`'s 429 rate limiter when several accounts launch at once.
 pub const LAUNCH_STAGGER_MS: i64 = 4_000;
 
-/// CSRF-token cache TTL (`CSRF_TTL` in `main.js`): 5 minutes. A cached token
+/// CSRF-token cache TTL (`CSRF_TTL` in the legacy JS backend): 5 minutes. A cached token
 /// newer than this is reused; anything older is re-fetched.
 pub const CSRF_TTL_MS: i64 = 5 * 60_000;
 
-/// Auth-ticket cache TTL (`TICKET_TTL` in `main.js`): 25 seconds. A cached ticket
+/// Auth-ticket cache TTL (`TICKET_TTL` in the legacy JS backend): 25 seconds. A cached ticket
 /// newer than this is returned without a network round-trip.
 pub const TICKET_TTL_MS: i64 = 25_000;
 
 /// Minimum gap between live auth-ticket requests for the same cookie
-/// (`TICKET_MIN_GAP` in `main.js`): 8 seconds. If a cached ticket is older than
+/// (`TICKET_MIN_GAP` in the legacy JS backend): 8 seconds. If a cached ticket is older than
 /// [`TICKET_TTL_MS`] but younger than this, the flow sleeps the remaining gap
 /// before issuing a fresh request, so a single cookie never requests tickets
 /// faster than once per 8 seconds.
 pub const TICKET_MIN_GAP_MS: i64 = 8_000;
 
-/// The renderer-facing result of a launch attempt, mirroring `main.js`'s
+/// The renderer-facing result of a launch attempt, mirroring the legacy JS backend's
 /// `{ success: true }` / `{ success: false, error }` resolution value so the
 /// `roblox:launch` command (Task 10.10) can return it straight to the
 /// Renderer_UI. On failure `error` carries the exact user-facing message text
-/// `main.js` produced for that failure.
+/// the legacy JS backend produced for that failure.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LaunchResult {
     pub success: bool,
@@ -402,7 +402,7 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// `sleep(ms)` — the async equivalent of `main.js`'s
+/// `sleep(ms)` — the async equivalent of the legacy JS backend's
 /// `new Promise(r => setTimeout(r, ms))`. A non-positive duration is a no-op.
 async fn sleep_ms(ms: i64) {
     if ms > 0 {
@@ -424,7 +424,7 @@ fn build_auth_client() -> Result<reqwest::Client, String> {
 /// Acquire the launch-queue lock, serializing this launch against every other
 /// in-flight launch for the lifetime of the returned guard.
 ///
-/// This is the Rust counterpart of `main.js`'s `_launchQueue = _launchQueue.then(
+/// This is the Rust counterpart of the legacy JS backend's `_launchQueue = _launchQueue.then(
 /// () => _doLaunch(...))` promise chain: there, each launch is appended to a
 /// single promise chain so only one `_doLaunch` body runs at a time; here, the
 /// caller holds this guard across the whole launch body to get the same
@@ -437,7 +437,7 @@ pub async fn acquire_launch_slot(state: &AppState) -> tokio::sync::OwnedMutexGua
 
 /// Enforce the 4-second stagger between launches.
 ///
-/// Ports `main.js`'s pre-launch guard:
+/// Ports the legacy JS backend's pre-launch guard:
 /// ```js
 /// const sinceLastLaunch = Date.now() - _lastLaunchTs;
 /// if (_lastLaunchTs > 0 && sinceLastLaunch < LAUNCH_STAGGER)
@@ -460,7 +460,7 @@ pub async fn enforce_launch_stagger(state: &AppState) {
 }
 
 /// Record that a launch just completed, so the next launch staggers off it.
-/// Ports `main.js`'s `_lastLaunchTs = Date.now();` at the end of a successful
+/// Ports the legacy JS backend's `_lastLaunchTs = Date.now();` at the end of a successful
 /// `_doLaunch`. Kept public so the spawn step (Task 10.3+) can call it at the
 /// same point in the flow.
 pub fn mark_launched(state: &AppState) {
@@ -476,7 +476,7 @@ pub fn mark_launched(state: &AppState) {
 /// Ports the network half of `getCSRFToken`: `POST` to `/v2/logout` then
 /// `/v1/logout` (a logout with no body deliberately returns a
 /// `x-csrf-token` response header), returning the first token header seen.
-/// Returns `None` when neither endpoint yields a token (matching `main.js`'s
+/// Returns `None` when neither endpoint yields a token (matching the legacy JS backend's
 /// `return null`); transport errors on one endpoint fall through to the next.
 async fn fetch_csrf_token(cookie: &str) -> Option<String> {
     let client = build_auth_client().ok()?;
@@ -543,7 +543,7 @@ struct TicketAttempt {
 /// Issue one `POST https://auth.roblox.com/v1/authentication-ticket` with the
 /// given CSRF token and read back the ticket / status / retry-after. A transport
 /// failure is reported as status `0` with no ticket (so the caller's status-based
-/// branching treats it as a generic non-2xx failure), matching how `main.js`'s
+/// branching treats it as a generic non-2xx failure), matching how the legacy JS backend's
 /// `httpsPost` rejections are surfaced as a non-success status.
 async fn post_auth_ticket(client: &reqwest::Client, cookie: &str, csrf: &str) -> TicketAttempt {
     let resp = client
@@ -553,7 +553,7 @@ async fn post_auth_ticket(client: &reqwest::Client, cookie: &str, csrf: &str) ->
         .header("Origin", "https://www.roblox.com")
         .header("X-CSRF-TOKEN", csrf)
         // The endpoint rejects the request with HTTP 415 without a JSON
-        // Content-Type; `main.js`'s httpsPost always sent these. The body is
+        // Content-Type; the legacy JS backend's httpsPost always sent these. The body is
         // empty (the ticket is derived from the cookie + CSRF headers).
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
@@ -586,7 +586,7 @@ async fn post_auth_ticket(client: &reqwest::Client, cookie: &str, csrf: &str) ->
 }
 
 /// Obtain an auth ticket for `cookie`, using the 25-second cache, the 8-second
-/// minimum gap, and the same 3-attempt 429/403 recovery loop as `main.js`'s
+/// minimum gap, and the same 3-attempt 429/403 recovery loop as the legacy JS backend's
 /// `getAuthTicket`.
 ///
 /// Behavior (a faithful port of `getAuthTicket`):
@@ -602,7 +602,7 @@ async fn post_auth_ticket(client: &reqwest::Client, cookie: &str, csrf: &str) ->
 ///   4. Exhausting all 3 attempts fails with the "still rate limited" message.
 ///
 /// Returns `Ok(ticket)` or `Err(user_facing_message)`; the error strings match
-/// `main.js` verbatim so the Renderer_UI shows the same text.
+/// the legacy JS backend verbatim so the Renderer_UI shows the same text.
 pub async fn get_auth_ticket(
     state: &AppState,
     cookie: &str,
@@ -708,7 +708,7 @@ pub struct LaunchCredentials {
 /// Run the credential-acquisition half of a launch: enforce the stagger, obtain a
 /// CSRF token, then obtain an auth ticket.
 ///
-/// Ports the leading section of `main.js`'s `_doLaunch`:
+/// Ports the leading section of the legacy JS backend's `_doLaunch`:
 /// ```js
 /// // (stagger)
 /// const csrfToken = await getCSRFToken(cookie);
@@ -719,7 +719,7 @@ pub struct LaunchCredentials {
 ///
 /// On success returns [`LaunchCredentials`]. On failure at **either** the CSRF or
 /// the auth-ticket step it returns `Err(LaunchResult::fail(...))` with the exact
-/// message `main.js` produced — and, critically, returns **before** any launch or
+/// message the legacy JS backend produced — and, critically, returns **before** any launch or
 /// watch state is mutated, so a credential failure never marks the account as
 /// launched (Requirement 2.2). The caller (the spawn step) only records the PID,
 /// arms the watcher, and calls [`mark_launched`] on the `Ok` path.
@@ -785,7 +785,7 @@ impl LaunchCredentialSteps for RealCredentialSteps {
 /// This is the seam behind [`acquire_launch_credentials`] and preserves its exact
 /// behavior: enforce the stagger, obtain a CSRF token, then obtain an auth
 /// ticket. On failure at **either** the CSRF or the auth-ticket step it returns
-/// `Err(LaunchResult::fail(...))` with the exact message `main.js` produced —
+/// `Err(LaunchResult::fail(...))` with the exact message the legacy JS backend produced —
 /// and, critically, returns **before** any launch or watch state is mutated
 /// (`arm_watch`/`mark_launched` are only reached by the caller on the `Ok` path),
 /// so a credential failure never marks the account as launched (Requirement 2.2).
@@ -821,7 +821,7 @@ fn parse_leading_u64(s: &str) -> Option<u64> {
 
 // ── Watch/poll close-detection state machine (Task 10.3) ────────────────────
 //
-// This is a faithful port of `main.js`'s single shared watch poll (the
+// This is a faithful port of the legacy JS backend's single shared watch poll (the
 // `_watchedAccounts` / `_missCounts` / `_watchTimer` machinery and `_watchTick`).
 // The design fixes the timing constants below and requires the map be a Rust
 // `HashMap` guarded by a `tokio::sync::Mutex`, ticked by a `tokio::time::interval`
@@ -834,43 +834,43 @@ fn parse_leading_u64(s: &str) -> Option<u64> {
 // notification is abstracted behind [`WatchNotifier`] (the `roblox://closed` /
 // `roblox://all-closed` / `roblox://count` events are formally registered in
 // Task 10.10); a [`TauriWatchNotifier`] wires it to real Tauri events here,
-// consistent with `main.js`'s `win.webContents.send('roblox:closed', ...)` /
+// consistent with the legacy JS backend's `win.webContents.send('roblox:closed', ...)` /
 // `send('roblox:count', ...)` calls.
 
-/// Poll cadence (`POLL_INTERVAL` in `main.js`): a single `tasklist` sweep every
+/// Poll cadence (`POLL_INTERVAL` in the legacy JS backend): a single `tasklist` sweep every
 /// 5000 ms covering every watched account, rather than one timer per account.
 pub const POLL_INTERVAL_MS: u64 = 5_000;
 
-/// Post-launch grace period (`LAUNCH_DELAY` in `main.js`): 15000 ms. An account is
+/// Post-launch grace period (`LAUNCH_DELAY` in the legacy JS backend): 15000 ms. An account is
 /// armed with `readyAt = now + LAUNCH_DELAY_MS` and is not evaluated until that
 /// instant passes, covering the launcher→game-client hand-off gap during which
 /// the process we spawned legitimately disappears.
 pub const LAUNCH_DELAY_MS: i64 = 15_000;
 
-/// Consecutive-miss threshold (`MISS_THRESHOLD` in `main.js`): an account must be
+/// Consecutive-miss threshold (`MISS_THRESHOLD` in the legacy JS backend): an account must be
 /// observed absent on 4 consecutive post-grace polls (~20 s) before it is
 /// declared closed. Any single "present" observation resets the count to zero.
 pub const MISS_THRESHOLD: u32 = 4;
 
-/// Tauri event replacing `main.js`'s `win.webContents.send('roblox:closed', id)`
+/// Tauri event replacing the legacy JS backend's `win.webContents.send('roblox:closed', id)`
 /// (design IPC_Surface mapping, registered in Task 10.10).
 pub const ROBLOX_CLOSED_EVENT: &str = "roblox://closed";
 
-/// Tauri event replacing `main.js`'s `send('roblox:allClosed')` (emitted by the
+/// Tauri event replacing the legacy JS backend's `send('roblox:allClosed')` (emitted by the
 /// kill-all path, Task 10.4/10.10).
 pub const ROBLOX_ALL_CLOSED_EVENT: &str = "roblox://all-closed";
 
-/// Tauri event replacing `main.js`'s `send('roblox:count', alivePids.size)`.
+/// Tauri event replacing the legacy JS backend's `send('roblox:count', alivePids.size)`.
 pub const ROBLOX_COUNT_EVENT: &str = "roblox://count";
 
 /// One poll observation of the system's live Roblox processes, the input the
 /// state machine evaluates each tick.
 ///
-/// On Windows (`is_windows == true`) `main.js` enumerates every live
+/// On Windows (`is_windows == true`) the legacy JS backend enumerates every live
 /// `RobloxPlayerBeta.exe` PID from `tasklist` CSV, so per-account liveness can be
 /// checked against that account's *own* tracked PID (`alive_pids`). On any other
 /// platform only a coarse "is any Roblox process running" signal is available
-/// (`any_running`), matching `main.js`'s `pgrep` fallback.
+/// (`any_running`), matching the legacy JS backend's `pgrep` fallback.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PresenceSnapshot {
     /// Whether this snapshot came from the Windows PID-enumeration path.
@@ -885,7 +885,7 @@ pub struct PresenceSnapshot {
 
 impl PresenceSnapshot {
     /// Build a Windows snapshot from the set of live `RobloxPlayerBeta.exe` PIDs.
-    /// `any_running` follows `alivePids.size > 0`, matching `main.js`.
+    /// `any_running` follows `alivePids.size > 0`, matching the legacy JS backend.
     pub fn windows(alive_pids: HashSet<u32>) -> Self {
         let any_running = !alive_pids.is_empty();
         Self { is_windows: true, alive_pids, any_running }
@@ -900,7 +900,7 @@ impl PresenceSnapshot {
 /// A closed account produced by a watch tick, carrying the account id and the
 /// last PID we had tracked for it (read out *before* the tracking entry is
 /// removed, so the close notification/log can still identify the process — the
-/// `pid: _accountPids.get(accountId)` metadata `main.js` logs on close).
+/// `pid: _accountPids.get(accountId)` metadata the legacy JS backend logs on close).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClosedAccount {
     pub account_id: String,
@@ -912,8 +912,8 @@ pub struct ClosedAccount {
 /// the Renderer_UI.
 ///
 /// `running_count` is `Some(n)` only on the Windows PID-enumeration path (where
-/// `main.js` emits `roblox:count` with `alivePids.size`); on other platforms it
-/// is `None` because no exact count is available (`main.js` only emits the count
+/// the legacy JS backend emits `roblox:count` with `alivePids.size`); on other platforms it
+/// is `None` because no exact count is available (the legacy JS backend only emits the count
 /// under `isWin`).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WatchTickOutcome {
@@ -922,11 +922,11 @@ pub struct WatchTickOutcome {
 }
 
 /// The pure, synchronous core of the watch/poll state machine — a direct port of
-/// the body of `main.js`'s `_watchTick` `close` callback, with all I/O (the
+/// the body of the legacy JS backend's `_watchTick` `close` callback, with all I/O (the
 /// `tasklist` spawn and the `webContents.send` notifications) factored out.
 ///
 /// Given the current tracking maps, one [`PresenceSnapshot`], and the current
-/// time, it advances every watched account exactly as `main.js` does:
+/// time, it advances every watched account exactly as the legacy JS backend does:
 ///   * accounts still inside their post-launch grace window (`now < readyAt`) are
 ///     skipped entirely — no observation before the grace period elapses counts
 ///     toward the miss threshold;
@@ -956,7 +956,7 @@ pub fn evaluate_watch_tick(
     let any_running = snapshot.any_running;
 
     // PIDs currently claimed by *any* watched account (grace window included),
-    // matching `main.js`'s `claimed` set built over `_watchedAccounts.keys()`.
+    // matching the legacy JS backend's `claimed` set built over `_watchedAccounts.keys()`.
     let mut claimed: HashSet<u32> = HashSet::new();
     for id in watched.keys() {
         if let Some(p) = pids.get(id) {
@@ -1035,7 +1035,7 @@ pub fn evaluate_watch_tick(
 /// with a scripted test double.
 ///
 /// `probe` returns `None` when the enumeration itself failed this tick (the
-/// `tasklist` spawn errored) — matching `main.js`'s `proc.on('error', () => {})`,
+/// `tasklist` spawn errored) — matching the legacy JS backend's `proc.on('error', () => {})`,
 /// which skips the tick and retries on the next one rather than treating a failed
 /// enumeration as "nothing running".
 pub trait PresenceProbe: Send + Sync {
@@ -1047,19 +1047,19 @@ pub trait PresenceProbe: Send + Sync {
 /// testable and lets Task 10.10 formally register the events.
 pub trait WatchNotifier: Send + Sync {
     /// A previously-tracked account's process was found gone: `roblox://closed`
-    /// (`main.js`: `send('roblox:closed', accountId)`).
+    /// (the legacy JS backend: `send('roblox:closed', accountId)`).
     fn notify_closed(&self, account_id: &str);
-    /// The current live Roblox-instance count: `roblox://count` (`main.js`:
+    /// The current live Roblox-instance count: `roblox://count` (the legacy JS backend:
     /// `send('roblox:count', alivePids.size)`).
     fn notify_count(&self, count: usize);
     /// Every tracked instance went down at once: `roblox://all-closed`
-    /// (`main.js`: `send('roblox:allClosed')`, used by the kill-all path).
+    /// (the legacy JS backend: `send('roblox:allClosed')`, used by the kill-all path).
     fn notify_all_closed(&self);
 }
 
-/// [`WatchNotifier`] that emits the real Tauri events, replacing `main.js`'s
+/// [`WatchNotifier`] that emits the real Tauri events, replacing the legacy JS backend's
 /// `win.webContents.send(...)`. Emission is best-effort (any emit error is
-/// swallowed), matching `main.js`'s `if (win && !win.isDestroyed())` guard.
+/// swallowed), matching the legacy JS backend's `if (win && !win.isDestroyed())` guard.
 #[derive(Clone)]
 pub struct TauriWatchNotifier {
     app: tauri::AppHandle,
@@ -1089,7 +1089,7 @@ impl WatchNotifier for TauriWatchNotifier {
 }
 
 /// Arm (or re-arm) watching for `account_id` with a fresh post-launch grace
-/// period, a direct port of `main.js`'s `_watchRoblox(accountId)`:
+/// period, a direct port of the legacy JS backend's `_watchRoblox(accountId)`:
 /// ```js
 /// _watchedAccounts.set(accountId, Date.now() + LAUNCH_DELAY);
 /// _missCounts.set(accountId, 0);
@@ -1111,10 +1111,10 @@ pub async fn arm_watch(state: &AppState, account_id: &str) {
 /// Run exactly one watch tick against the given tracking maps: probe presence,
 /// evaluate the state machine under lock, then fire the Renderer_UI
 /// notifications. Returns `true` when no accounts remain watched afterward (so
-/// the caller's loop can stop), mirroring `main.js`'s `_stopWatchPollIfIdle`.
+/// the caller's loop can stop), mirroring the legacy JS backend's `_stopWatchPollIfIdle`.
 ///
 /// A `None` probe result (failed enumeration this tick) is skipped without
-/// touching any state, matching `main.js`'s `proc.on('error')` retry-next-tick
+/// touching any state, matching the legacy JS backend's `proc.on('error')` retry-next-tick
 /// behavior; the idle check still runs so a loop with nothing left to watch can
 /// still wind down.
 async fn run_watch_tick(
@@ -1177,7 +1177,7 @@ pub async fn watch_tick_once(
 }
 
 /// Ensure the single shared watch/poll loop is running, starting it if it is not
-/// — the Rust counterpart of `main.js`'s `_startWatchPoll()` (`if (_watchTimer)
+/// — the Rust counterpart of the legacy JS backend's `_startWatchPoll()` (`if (_watchTimer)
 /// return; _watchTimer = setInterval(_watchTick, POLL_INTERVAL);`).
 ///
 /// At most one loop task ever runs: the [`AppState::watch_loop_running`] flag
@@ -1228,10 +1228,10 @@ pub async fn ensure_watch_loop(
 
 // ── Process enumeration / termination + kill paths (Task 10.4) ──────────────
 //
-// Ports `main.js`'s `// ── Roblox session control (volume / kill / count) ──`
+// Ports the legacy JS backend's `// ── Roblox session control (volume / kill / count) ──`
 // process paths: the `tasklist`-backed enumeration / count / "fully closed"
 // checks and the `taskkill`-backed kill-one / kill-all termination, issued with
-// the **same command strings** the Electron_Build uses so the observable OS
+// the **same command strings** the legacy JS build uses so the observable OS
 // effect is identical (Requirement 8.3), plus the tracking-map bookkeeping and
 // Renderer_UI notifications of `killAccountRoblox` / `killAllRoblox`
 // (Requirement 2.5, 2.6). The `tasklist` enumeration here is also the real,
@@ -1245,12 +1245,12 @@ pub async fn ensure_watch_loop(
 
 /// `tasklist` enumeration command (`_watchTick`, Windows): every live
 /// `RobloxPlayerBeta.exe` row in CSV form (`/FO CSV /NH`), so a PID can be pulled
-/// from each row. Byte-for-byte the string `main.js` issues.
+/// from each row. Byte-for-byte the string the legacy JS backend issues.
 pub const TASKLIST_ENUM_CMD: &str =
     r#"tasklist /FI "IMAGENAME eq RobloxPlayerBeta.exe" /FO CSV /NH"#;
 
 /// `tasklist` count command (`countRobloxProcesses`): the plain (non-CSV) listing
-/// whose `RobloxPlayerBeta.exe` name occurrences `main.js` counts.
+/// whose `RobloxPlayerBeta.exe` name occurrences the legacy JS backend counts.
 pub const TASKLIST_COUNT_CMD: &str = r#"tasklist /FI "IMAGENAME eq RobloxPlayerBeta.exe" /NH"#;
 
 /// `tasklist` presence command (`waitForRobloxFullyClosed`): lists both the
@@ -1260,7 +1260,7 @@ pub const TASKLIST_PRESENCE_CMD: &str =
     r#"tasklist /FI "IMAGENAME eq RobloxPlayerBeta.exe" /NH & tasklist /FI "IMAGENAME eq RobloxCrashHandler.exe" /NH"#;
 
 /// `taskkill` kill-all command (`killAllRoblox`): force-terminate every Roblox
-/// player and crash-handler process tree. Byte-for-byte the string `main.js`
+/// player and crash-handler process tree. Byte-for-byte the string the legacy JS backend
 /// issues.
 pub const TASKKILL_ALL_CMD: &str =
     "taskkill /F /IM RobloxPlayerBeta.exe /T & taskkill /F /IM RobloxCrashHandler.exe /T";
@@ -1270,16 +1270,16 @@ pub const TASKKILL_ALL_CMD: &str =
 pub const WAIT_FULLY_CLOSED_MS: i64 = 5_000;
 
 /// Build the per-PID kill command (`killAccountRoblox`): `taskkill /F /PID <pid> /T`.
-/// Byte-for-byte the template `main.js` interpolates.
+/// Byte-for-byte the template the legacy JS backend interpolates.
 pub fn taskkill_pid_cmd(pid: u32) -> String {
     format!("taskkill /F /PID {pid} /T")
 }
 
-/// The renderer-facing result of a kill request, mirroring `main.js`'s
+/// The renderer-facing result of a kill request, mirroring the legacy JS backend's
 /// `{ ok: true }` / `{ ok: false, error }` resolution value so the
 /// `roblox:killOne` / `roblox:killAll` commands (Task 10.10) can return it
 /// straight to the Renderer_UI. On failure `error` carries the exact user-facing
-/// message text `main.js` produced.
+/// message text the legacy JS backend produced.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct KillResult {
     pub ok: bool,
@@ -1300,7 +1300,7 @@ impl KillResult {
 }
 
 /// Parse the PIDs of every live `RobloxPlayerBeta.exe` out of the CSV output of
-/// [`TASKLIST_ENUM_CMD`], reproducing `main.js`'s
+/// [`TASKLIST_ENUM_CMD`], reproducing the legacy JS backend's
 /// `out.matchAll(/"RobloxPlayerBeta\.exe","(\d+)"/gi)`: each match is a
 /// `"RobloxPlayerBeta.exe","<digits>"` cell pair (image name matched
 /// case-insensitively), and `<digits>` must be immediately followed by a closing
@@ -1333,7 +1333,7 @@ pub fn parse_tasklist_csv_pids(output: &str) -> HashSet<u32> {
 }
 
 /// Whether [`TASKLIST_PRESENCE_CMD`] output still reports a Roblox player or
-/// crash-handler process, reproducing `main.js`'s
+/// crash-handler process, reproducing the legacy JS backend's
 /// `/RobloxPlayerBeta\.exe|RobloxCrashHandler\.exe/i.test(out)`.
 pub fn tasklist_reports_roblox_running(output: &str) -> bool {
     let lower = output.to_ascii_lowercase();
@@ -1341,20 +1341,20 @@ pub fn tasklist_reports_roblox_running(output: &str) -> bool {
 }
 
 /// Count `RobloxPlayerBeta.exe` occurrences in [`TASKLIST_COUNT_CMD`] output,
-/// reproducing `main.js`'s `out.match(/RobloxPlayerBeta\.exe/gi)?.length`.
+/// reproducing the legacy JS backend's `out.match(/RobloxPlayerBeta\.exe/gi)?.length`.
 pub fn count_roblox_processes_in_output(output: &str) -> usize {
     output.to_ascii_lowercase().matches("robloxplayerbeta.exe").count()
 }
 
 /// Build a `cmd /c <command>` invocation with no visible console window
-/// (`CREATE_NO_WINDOW`), matching Electron's `spawn('cmd', ['/c', ...], {
+/// (`CREATE_NO_WINDOW`), matching legacy JS runtime's `spawn('cmd', ['/c', ...], {
 /// windowsHide: true })`.
 #[cfg(windows)]
 fn spawn_cmd(command: &str) -> tokio::process::Command {
     // `tokio::process::Command` re-exposes `creation_flags` as an inherent method
     // on Windows, so the `std::os::windows::process::CommandExt` trait import is
     // not needed here.
-    /// `CREATE_NO_WINDOW`: run the console command headless (Electron's
+    /// `CREATE_NO_WINDOW`: run the console command headless (legacy JS runtime's
     /// `windowsHide: true`).
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut c = tokio::process::Command::new("cmd");
@@ -1364,7 +1364,7 @@ fn spawn_cmd(command: &str) -> tokio::process::Command {
 
 /// Enumerate the PIDs of every live `RobloxPlayerBeta.exe` via
 /// [`TASKLIST_ENUM_CMD`]. Returns `None` when the `tasklist` spawn itself failed
-/// (matching `main.js`'s `proc.on('error', () => {})`, which skips the tick), or
+/// (matching the legacy JS backend's `proc.on('error', () => {})`, which skips the tick), or
 /// `Some(set)` — possibly empty — when enumeration succeeded.
 #[cfg(windows)]
 pub async fn enumerate_roblox_pids() -> Option<HashSet<u32>> {
@@ -1379,7 +1379,7 @@ pub async fn enumerate_roblox_pids() -> Option<HashSet<u32>> {
 
 /// Count running Roblox clients (`countRobloxProcesses`) via
 /// [`TASKLIST_COUNT_CMD`]. `0` on a spawn failure (and off Windows), matching
-/// `main.js`.
+/// the legacy JS backend.
 #[cfg(windows)]
 pub async fn count_roblox_processes() -> usize {
     match spawn_cmd(TASKLIST_COUNT_CMD).output().await {
@@ -1395,8 +1395,8 @@ pub async fn count_roblox_processes() -> usize {
 
 /// Issue [`TASKKILL_ALL_CMD`]. `Ok(())` once the command ran to completion —
 /// regardless of `taskkill`'s own exit code, which is non-zero when nothing
-/// matched and which `main.js`'s `close` handler likewise treats as success —
-/// and `Err(())` only when the spawn itself failed (`main.js`'s `error` handler).
+/// matched and which the legacy JS backend's `close` handler likewise treats as success —
+/// and `Err(())` only when the spawn itself failed (the legacy JS backend's `error` handler).
 #[cfg(windows)]
 async fn run_taskkill_all() -> Result<(), ()> {
     match spawn_cmd(TASKKILL_ALL_CMD).output().await {
@@ -1431,7 +1431,7 @@ async fn run_taskkill_pid(_pid: u32) -> Result<(), ()> {
 /// *issued*; actual teardown (and release of the singleton handles/kernel objects
 /// those processes held) can lag a beat behind, so the mutex holder must not be
 /// refreshed until this confirms a fully-closed state. A spawn failure resolves
-/// immediately (as `main.js` does).
+/// immediately (as the legacy JS backend does).
 #[cfg(windows)]
 pub async fn wait_for_roblox_fully_closed(max_wait_ms: i64) {
     let started = now_ms();
@@ -1453,10 +1453,10 @@ pub async fn wait_for_roblox_fully_closed(max_wait_ms: i64) {
 pub async fn wait_for_roblox_fully_closed(_max_wait_ms: i64) {}
 
 /// The production [`PresenceProbe`]: enumerates live Roblox processes with the
-/// same `tasklist` command string `main.js`'s `_watchTick` issues, wrapping the
+/// same `tasklist` command string the legacy JS backend's `_watchTick` issues, wrapping the
 /// result in a [`PresenceSnapshot`]. This is the real probe the watch loop
 /// (Task 10.3) runs; a `None` result (failed enumeration) makes the loop skip the
-/// tick and retry next time, exactly as `main.js` does.
+/// tick and retry next time, exactly as the legacy JS backend does.
 pub struct TasklistPresenceProbe;
 
 impl PresenceProbe for TasklistPresenceProbe {
@@ -1554,7 +1554,7 @@ async fn untrack_all(state: &AppState) -> Vec<String> {
 ///     "Windows only" }`;
 ///   * **untracked identifier** (no PID tracked) → a **no-op**: no `taskkill` is
 ///     issued and no other account is touched; the account's own indicator is
-///     still reset (`send('roblox:closed', accountId)`) and `main.js`'s benign
+///     still reset (`send('roblox:closed', accountId)`) and the legacy JS backend's benign
 ///     `{ ok: false, error: "No tracked process for this account" }` is returned
 ///     (Requirement 2.6);
 ///   * otherwise → issue `taskkill /F /PID <pid> /T`, notify the account closed,
@@ -1640,10 +1640,10 @@ pub async fn kill_all(
 
 // ── Multi-instance vs single-instance launch behavior (Task 10.5) ───────────
 //
-// Ports the head of `main.js`'s `_doLaunch`, branched on the Settings_Store
+// Ports the head of the legacy JS backend's `_doLaunch`, branched on the Settings_Store
 // `multiInstance` flag (Requirements 2.3 / 2.4).
 //
-// In the Electron_Build the `multiInstance` flag drives the lifetime of the
+// In the legacy JS build the `multiInstance` flag drives the lifetime of the
 // persistent mutex holder: toggling it on starts the holder, toggling it off
 // stops it (the `settings:save` side effect), and the holder is what lets
 // several `RobloxPlayerBeta` processes coexist instead of Roblox folding a
@@ -1672,7 +1672,7 @@ pub enum LaunchSingletonMode {
 }
 
 /// Pure classifier mapping the `multiInstance` flag to a [`LaunchSingletonMode`],
-/// mirroring `main.js`'s `isMultiInstanceEnabled()` decision at the launch site.
+/// mirroring the legacy JS backend's `isMultiInstanceEnabled()` decision at the launch site.
 pub fn launch_singleton_mode(multi_instance_enabled: bool) -> LaunchSingletonMode {
     if multi_instance_enabled {
         LaunchSingletonMode::MultiInstance
@@ -1681,11 +1681,11 @@ pub fn launch_singleton_mode(multi_instance_enabled: bool) -> LaunchSingletonMod
     }
 }
 
-/// Read the Settings_Store `multiInstance` flag, porting `main.js`'s
+/// Read the Settings_Store `multiInstance` flag, porting the legacy JS backend's
 /// `isMultiInstanceEnabled()` (`return !!(loadSettings().multiInstance)`).
 ///
 /// A store read/parse failure resolves to `false` (single-instance) — the same
-/// falsy outcome the Electron helper produces when `loadSettings()` yields no
+/// falsy outcome the legacy JS runtime helper produces when `loadSettings()` yields no
 /// usable value — following the identical swallow-to-default pattern
 /// `native_helper.rs`'s `setting_enabled` uses.
 pub fn is_multi_instance_enabled(app: &AppHandle) -> bool {
@@ -1710,7 +1710,7 @@ pub trait SingletonHold: Send + Sync {
 
 /// Production [`SingletonHold`]: delegates to
 /// [`crate::native_helper::close_singleton_and_hold_mutex`], so the live behavior
-/// is byte-for-byte the Electron_Build's per-launch prelude.
+/// is byte-for-byte the legacy JS build's per-launch prelude.
 pub struct RealSingletonHold<'h> {
     pub app: &'h AppHandle,
     pub state: &'h AppState,
@@ -1743,7 +1743,7 @@ pub async fn apply_launch_singleton_prelude(
 }
 
 /// Launch-flow entry point (called by the `roblox_launch` command, Task 10.10, at
-/// the same point `main.js`'s `_doLaunch` calls `closeSingletonAndHoldMutex`):
+/// the same point the legacy JS backend's `_doLaunch` calls `closeSingletonAndHoldMutex`):
 /// read the `multiInstance` flag, classify it, and run the matching prelude.
 pub async fn run_launch_singleton_prelude(
     app: &AppHandle,
@@ -1757,18 +1757,18 @@ pub async fn run_launch_singleton_prelude(
 //
 // This section wires the building blocks above into the four Tauri commands the
 // Renderer_UI invokes and formally registers the three Renderer_UI events. Each
-// command takes the SAME parameters, in the SAME order, as its Electron IPC
-// handler in `src/main.js` (Requirement 10.1), and every event carries the same
-// payload the Electron_Build sent (Requirement 10.2):
+// command takes the SAME parameters, in the SAME order, as its legacy IPC
+// handler in the legacy JS backend (Requirement 10.1), and every event carries the same
+// payload the legacy JS build sent (Requirement 10.2):
 //
-// | Electron IPC (`main.js`)     | Tauri command          | Electron handler        |
+// | legacy IPC (the legacy JS backend)     | Tauri command          | legacy handler        |
 // |------------------------------|------------------------|-------------------------|
 // | `roblox:launch(id,ck,tgt)`   | [`roblox_launch`]      | `_doLaunch`             |
 // | `roblox:killAll()`           | [`roblox_kill_all`]    | `killAllRoblox`         |
 // | `roblox:killOne(id)`         | [`roblox_kill_one`]    | `killAccountRoblox`     |
 // | `roblox:runningCount()`      | [`roblox_running_count`] | `countRobloxProcesses` |
 //
-// | Electron send                | Tauri event                 |
+// | legacy event                | Tauri event                 |
 // |------------------------------|-----------------------------|
 // | `roblox:closed`              | [`ROBLOX_CLOSED_EVENT`]     |
 // | `roblox:allClosed`           | [`ROBLOX_ALL_CLOSED_EVENT`] |
@@ -1934,7 +1934,7 @@ fn build_roblox_uri(ticket: &str, launcher_url: &str) -> String {
 fn spawn_roblox_player(exe: &std::path::Path, uri: &str) -> Option<u32> {
     use std::os::windows::process::CommandExt;
     /// `DETACHED_PROCESS`: the new client runs independently of this backend
-    /// (Electron's `detached: true` + `child.unref()`).
+    /// (legacy JS runtime's `detached: true` + `child.unref()`).
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     std::process::Command::new(exe)
         .arg(uri)
@@ -2021,7 +2021,7 @@ fn touch_last_used(app: &AppHandle, account_id: &str) -> (Option<String>, Option
 }
 
 /// The credential-failure launch-log message text `_doLaunch` writes on a CSRF /
-/// auth-ticket failure, used so the session log matches the Electron_Build.
+/// auth-ticket failure, used so the session log matches the legacy JS build.
 fn log_launch_failure(app: &AppHandle, account_id: &str, error: &str) {
     let username = load_accounts_quiet(app)
         .into_iter()
@@ -2175,10 +2175,10 @@ async fn do_launch(
 
 /// `roblox:launch` — launch the Roblox client for an account, injecting its
 /// session cookie via the auth-ticket flow (Requirement 2.1, 2.2). Parameters
-/// match the Electron handler's `(accountId, cookie, target)` order.
+/// match the legacy handler's `(accountId, cookie, target)` order.
 ///
 /// Launches are serialized through the launch queue ([`acquire_launch_slot`],
-/// held for the whole launch) exactly as `main.js`'s
+/// held for the whole launch) exactly as the legacy JS backend's
 /// `_launchQueue = _launchQueue.then(() => _doLaunch(...))` chain does, so
 /// concurrent launches stagger rather than all hitting `auth.roblox.com` at once.
 #[tauri::command]
@@ -2254,7 +2254,7 @@ pub async fn roblox_kill_all(
 /// `roblox:killOne` — terminate the Roblox instance launched for one account and
 /// reset only that account's indicator (Requirement 2.5, 2.6). Emits
 /// `roblox://closed` for the account. An untracked identifier is a benign no-op
-/// (no other account is affected). Parameter matches the Electron handler's
+/// (no other account is affected). Parameter matches the legacy handler's
 /// `(accountId)`.
 ///
 /// The `warn`/`kill` session-log entry is written before the kill, matching
@@ -2460,7 +2460,7 @@ mod tests {
     #[test]
     fn private_server_link_code_without_place_id_falls_through_to_no_place_id() {
         // privateServerLinkCode present but no place id in the path → not private,
-        // not share, no placeId → NoPlaceId (mirrors main.js's fall-through).
+        // not share, no placeId → NoPlaceId (mirrors the legacy JS backend's fall-through).
         assert_eq!(
             parse_launch_target("https://www.roblox.com/home?privateServerLinkCode=abc"),
             Err(LaunchTargetError::NoPlaceId)
@@ -2621,7 +2621,7 @@ mod tests {
 
     #[tokio::test]
     async fn csrf_cache_is_keyed_per_cookie() {
-        // Distinct cookies must not share a CSRF entry (parity with main.js's
+        // Distinct cookies must not share a CSRF entry (parity with the legacy JS backend's
         // per-cookie `_csrfCache` Map): a hit for cookieA must not answer cookieB.
         let state = AppState::default();
         state
@@ -2667,7 +2667,7 @@ mod tests {
     #[ignore = "requires network isolation; run with --ignored offline"]
     async fn acquire_launch_credentials_fails_without_marking_launched_when_csrf_unavailable() {
         // With no reachable network and no cached CSRF token, credential
-        // acquisition fails at the CSRF step and returns the exact main.js
+        // acquisition fails at the CSRF step and returns the exact legacy JS backend
         // message — and must NOT record a launch timestamp (Requirement 2.2).
         let state = AppState::default();
         assert_eq!(
@@ -2865,7 +2865,7 @@ mod launch_target_prop_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
-        // Feature: electron-to-tauri-migration, Property 5: Launch target parsing produces the correct launcher request shape
+        // Feature: native-tauri-backend, Property 5: Launch target parsing produces the correct launcher request shape
         //
         // **Validates: Requirements 2.1**
         //
@@ -3264,7 +3264,7 @@ mod csrf_auth_ticket_failure_prop_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
-        // Feature: electron-to-tauri-migration, Property 6: A launch failure at the CSRF or auth-ticket stage reports failure and does not mark the account as launched
+        // Feature: native-tauri-backend, Property 6: A launch failure at the CSRF or auth-ticket stage reports failure and does not mark the account as launched
         //
         // **Validates: Requirements 2.2**
         //
@@ -3342,7 +3342,7 @@ mod csrf_auth_ticket_failure_prop_tests {
                     .expect("a failure LaunchResult carries an error message");
                 prop_assert!(!error.is_empty(), "the reported error must be non-empty");
 
-                // The reported message is the exact text `main.js` produces for
+                // The reported message is the exact text the legacy JS backend produces for
                 // the stage that failed.
                 let expected = match &stage {
                     FailStage::Csrf => {
@@ -3455,7 +3455,7 @@ mod watch_grace_miss_prop_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
-        // Feature: electron-to-tauri-migration, Property 8: Watch/poll close-detection respects the grace period and miss threshold
+        // Feature: native-tauri-backend, Property 8: Watch/poll close-detection respects the grace period and miss threshold
         //
         // **Validates: Requirements 2.7, 7.2, 7.3**
         //
@@ -3618,7 +3618,7 @@ mod kill_tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
 
-    // ── Command-string parity with the Electron_Build (Requirement 8.3) ─────
+    // ── Command-string parity with the legacy JS build (Requirement 8.3) ─────
 
     #[test]
     fn command_strings_match_main_js() {
@@ -3679,7 +3679,7 @@ mod kill_tests {
         assert!(parse_tasklist_csv_pids(malformed).is_empty());
     }
 
-    // ── presence / count parsing (mirrors main.js's regexes) ────────────────
+    // ── presence / count parsing (mirrors the legacy JS backend's regexes) ────────────────
 
     #[test]
     fn tasklist_reports_roblox_running_detects_either_process() {
@@ -3770,7 +3770,7 @@ mod kill_tests {
         assert!(state.account_pids.lock().unwrap().is_empty());
     }
 
-    // ── KillResult serialization parity with main.js's { ok, error? } ───────
+    // ── KillResult serialization parity with the legacy JS backend's { ok, error? } ───────
 
     #[test]
     fn kill_result_serializes_like_main_js() {
@@ -3938,7 +3938,7 @@ mod kill_targeting_prop_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
-        // Feature: electron-to-tauri-migration, Property 7: Kill operations only affect their targeted tracked account(s)
+        // Feature: native-tauri-backend, Property 7: Kill operations only affect their targeted tracked account(s)
         //
         // **Validates: Requirements 2.5, 2.6**
         //

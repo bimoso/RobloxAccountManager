@@ -1,14 +1,14 @@
-//! Packages_Store (`packages.json`) persistence, ported from `main.js`'s
+//! Packages_Store (`packages.json`) persistence, ported from the legacy JS backend's
 //! `loadPackages` / `savePackages` section and the `packages:load` /
 //! `packages:save` IPC handlers.
 //!
 //! Packages are named groups of accounts that can be launched together with a
-//! single shared join-link. As the Electron_Build comment notes, **no secrets
+//! single shared join-link. As the legacy JS build comment notes, **no secrets
 //! live here** — just names, account-id references, and the last-used link — so,
 //! unlike the Account_Store, nothing in this file is encrypted and no
 //! decrypt/verify step is involved.
 //!
-//! The Electron_Build:
+//! The legacy JS build:
 //!
 //! ```js
 //! const packagesPath = path.join(app.getPath('userData'), 'packages.json');
@@ -17,16 +17,16 @@
 //! }
 //! function savePackages(p) { fs.writeFileSync(packagesPath, JSON.stringify(p, null, 2), { mode: 0o600 }); }
 //!
-//! ipcMain.handle('packages:load', () => loadPackages());
-//! ipcMain.handle('packages:save', (_, packages) => {
+//! legacy command handler('packages:load', () => loadPackages());
+//! legacy command handler('packages:save', (_, packages) => {
 //!   try { savePackages(packages); return true; } catch (e) { return false; }
 //! });
 //! ```
 //!
-//! ## Deliberately permissive, matching the Electron_Build
+//! ## Deliberately permissive, matching the legacy JS build
 //!
 //! `packages.json` is a **non-critical** store. The design's Error Handling
-//! section explicitly keeps the Electron_Build's permissive `catch { ... }`
+//! section explicitly keeps the legacy JS build's permissive `catch { ... }`
 //! behavior for non-critical files like `genhistory.json` / `packages.json`,
 //! and applies the strict "never silently start empty" rule (Requirement 11.7)
 //! ONLY to the Account_Store / Settings_Store. So this port intentionally mirrors
@@ -63,7 +63,7 @@ use tauri::AppHandle;
 
 use crate::accounts::store_dir;
 
-/// The Packages_Store file name, identical to the Electron_Build's
+/// The Packages_Store file name, identical to the legacy JS build's
 /// `path.join(app.getPath('userData'), 'packages.json')` leaf. The parent
 /// directory (`%APPDATA%\robloxaccountmanager\`) is supplied by the caller so this module
 /// stays testable without a live Tauri app (Requirement 11.6: same file name +
@@ -112,7 +112,7 @@ pub fn load_from_dir(dir: &Path) -> Vec<Value> {
 ///
 /// ```js
 /// function savePackages(p) { fs.writeFileSync(packagesPath, JSON.stringify(p, null, 2), { mode: 0o600 }); }
-/// ipcMain.handle('packages:save', (_, packages) => {
+/// legacy command handler('packages:save', (_, packages) => {
 ///   try { savePackages(packages); return true; } catch (e) { return false; }
 /// });
 /// ```
@@ -122,10 +122,10 @@ pub fn load_from_dir(dir: &Path) -> Vec<Value> {
 /// serialize/IO failure, matching the handler's boolean result. The write is a
 /// single, direct (non-atomic) `write`, matching `fs.writeFileSync` — no
 /// temp-file+rename is introduced, to keep the exact write semantics of the
-/// Electron_Build.
+/// legacy JS build.
 ///
 /// On Unix the file mode is best-effort set to `0o600` after writing, mirroring
-/// the Electron_Build's `{ mode: 0o600 }`; on Windows (the supported target) the
+/// the legacy JS build's `{ mode: 0o600 }`; on Windows (the supported target) the
 /// mode argument is inert just as it is for Node's `fs.writeFileSync`.
 pub fn save_to_file(path: &Path, packages: &[Value]) -> bool {
     let json = match serde_json::to_string_pretty(packages) {
@@ -156,12 +156,12 @@ pub fn save_to_dir(dir: &Path, packages: &[Value]) -> bool {
 // ── Tauri command layer (Task 14.2) ──────────────────────────────────────────
 //
 // These two `#[tauri::command]` functions are the direct counterparts of the
-// Electron `packages:*` IPC handlers (design IPC_Surface mapping table), each
-// taking the same parameters, in the same order, as its Electron handler
+// legacy JS runtime `packages:*` IPC handlers (design IPC_Surface mapping table), each
+// taking the same parameters, in the same order, as its legacy handler
 // (Requirement 10.1):
 //
-//   packages_load()          <- ipcMain.handle('packages:load', () => loadPackages())
-//   packages_save(packages)  <- ipcMain.handle('packages:save', (_, packages) => { ... })
+//   packages_load()          <- legacy command handler('packages:load', () => loadPackages())
+//   packages_save(packages)  <- legacy command handler('packages:save', (_, packages) => { ... })
 //
 // Both resolve the per-user application-data directory via
 // [`crate::accounts::store_dir`] — the SAME resolution the `accounts_*` /
@@ -171,8 +171,8 @@ pub fn save_to_dir(dir: &Path, packages: &[Value]) -> bool {
 
 /// `packages:load` — return the stored packages list.
 ///
-/// Ports `ipcMain.handle('packages:load', () => loadPackages())`. Takes no
-/// payload (matching the Electron handler's zero-arg signature) and returns the
+/// Ports `legacy command handler('packages:load', () => loadPackages())`. Takes no
+/// payload (matching the legacy handler's zero-arg signature) and returns the
 /// package objects verbatim. Because the Packages_Store is a non-critical store
 /// whose read is deliberately permissive (a missing/unreadable/corrupt file
 /// reads as `[]`; see [`load_from_file`]), the only failure this command can
@@ -189,13 +189,13 @@ pub fn packages_load(app: AppHandle) -> Result<Vec<Value>, String> {
 ///
 /// Ports:
 /// ```js
-/// ipcMain.handle('packages:save', (_, packages) => {
+/// legacy command handler('packages:save', (_, packages) => {
 ///   try { savePackages(packages); return true; } catch (e) { return false; }
 /// });
 /// ```
 ///
 /// Takes the `packages` array (same single parameter, same position as the
-/// Electron handler) and returns `true` on a successful write or `false` on any
+/// legacy handler) and returns `true` on a successful write or `false` on any
 /// serialize/IO failure, mirroring the handler's boolean result (see
 /// [`save_to_file`]). As with [`packages_load`], the only `Err` this command
 /// produces is a failure to resolve the application-data directory.

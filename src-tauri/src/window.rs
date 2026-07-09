@@ -1,24 +1,24 @@
-//! Window-control and external-open command layer, ported from `main.js`'s
+//! Window-control and external-open command layer, ported from the legacy JS backend's
 //! window-chrome / shell section (the frameless-window title-bar buttons and the
 //! "open in default handler" action). These are the direct counterparts of the
-//! Electron IPC handlers registered near the end of `main.js`:
+//! legacy IPC handlers registered near the end of the legacy JS backend:
 //!
-//! | Electron IPC (`preload.js` → `main.js`)                                   | command             |
+//! | legacy IPC (`preload.js` → the legacy JS backend)                                   | command             |
 //! |---------------------------------------------------------------------------|---------------------|
 //! | `send('window-minimize')` → `win.minimize()`                              | [`window_minimize`] |
 //! | `send('window-maximize')` → `win.isMaximized() ? unmaximize() : maximize()` | [`window_maximize`] |
 //! | `send('window-close')`    → `win.close()`                                 | [`window_close`]    |
 //! | `send('open-external', url)` → `shell.openExternal(url)`                   | [`open_external`]   |
 //!
-//! `main.js` operated on the single main `BrowserWindow` (`win`); the Tauri_Build
+//! the legacy JS backend operated on the single main `main window` (`win`); the Tauri_Build
 //! has a single `"main"` window (`tauri.conf.json`), so the window-control
 //! commands act on the window that invoked them (the injected
 //! [`tauri::WebviewWindow`]), which is that same main window. `open_external`
 //! delegates to `tauri-plugin-opener` — the official Tauri v2 replacement for
-//! Electron's `shell.openExternal` — opening the URL in the OS default handler
+//! legacy JS runtime's `shell.openExternal` — opening the URL in the OS default handler
 //! (Requirement 10.1: same user-observable result for the same input).
 //!
-//! Unlike the Electron `ipcMain.on` fire-and-forget handlers, these return
+//! Unlike the legacy JS runtime `legacy IPC listener` fire-and-forget handlers, these return
 //! `Result<(), String>` so a failure surfaces to the caller rather than being
 //! swallowed, consistent with the rest of the Tauri command surface.
 

@@ -8,8 +8,8 @@
 //! `encryption.rs` / `accounts.rs`). Something has to actually resolve those
 //! three inputs from the Settings_Store and the platform before a command can
 //! call [`crate::accounts::load_from_dir`] / [`crate::accounts::save_to_dir`].
-//! In the Electron_Build that resolution is spread across three helpers in
-//! `src/main.js`, which `encryptField`/`decryptField` call inline:
+//! In the legacy JS build that resolution is spread across three helpers in
+//! the legacy JS backend, which `encryptField`/`decryptField` call inline:
 //!
 //! ```js
 //! function safeStorageReady() {
@@ -30,13 +30,13 @@
 //!
 //! [`resolve`] ports all three into a single [`CryptoContext`] the command layer
 //! resolves once (from the same application-data directory the stores live in)
-//! and threads into the store calls, matching how `main.js` derives them from
+//! and threads into the store calls, matching how the legacy JS backend derives them from
 //! `loadSettings()` before every encrypt/decrypt.
 //!
 //! ## Faithful simplifications (documented)
 //!
 //!  * **`safe_storage_ready`** is `true` on Windows and `false` elsewhere.
-//!    Electron's `safeStorage.isEncryptionAvailable()` returns `true` on Windows
+//!    legacy JS runtime's `safeStorage.isEncryptionAvailable()` returns `true` on Windows
 //!    (its `safe:` format is Windows DPAPI, which this build also implements via
 //!    `windows-rs`); RobloxAccountManager is Windows-only (Requirement 8.1), so a bare
 //!    `cfg!(windows)` reproduces the observable value without probing the
@@ -46,11 +46,11 @@
 //!    swallow. The *surfacing* of a corrupt/unreadable Settings_Store to the user
 //!    (Requirement 11.7) is the `settings_load` command's responsibility
 //!    (Task 7.7), not this resolver's — resolving crypto inputs must stay
-//!    non-fatal so the account commands behave exactly as the Electron_Build
+//!    non-fatal so the account commands behave exactly as the legacy JS build
 //!    (which proceeds in device-key mode when settings can't be read).
 //!  * **`device_key`** is only materialized (generated + persisted) when it is
 //!    actually needed — i.e. when NOT in passphrase mode, the only branch
-//!    `encryption.rs` ever consults it in. In `main.js`, `getOrCreateDeviceKey`
+//!    `encryption.rs` ever consults it in. In the legacy JS backend, `getOrCreateDeviceKey`
 //!    is likewise called lazily only from the `!passphraseMode()` arms of
 //!    `getEncryptionKey`/`getLegacyKey`, so generating a device key while in
 //!    passphrase mode never happens there either. An already-present `_deviceKey`
@@ -64,7 +64,7 @@ use crate::models::Settings;
 use crate::settings;
 
 /// Derived-key length in bytes (AES-256), matching `encryption.rs`'s `KEY_LEN`
-/// and the Electron_Build's `const KEY_LEN = 32`. A stored `_deviceKey` is this
+/// and the legacy JS build's `const KEY_LEN = 32`. A stored `_deviceKey` is this
 /// many bytes, i.e. `2 * 32 = 64` hex characters.
 const KEY_LEN: usize = 32;
 
@@ -72,7 +72,7 @@ const KEY_LEN: usize = 32;
 /// resolved once from the Settings_Store + platform and threaded into
 /// [`crate::encryption::encrypt_account`] / [`crate::encryption::decrypt_account`]
 /// (via the `accounts.rs` load/save wrappers). Mirrors the trio of values
-/// `main.js`'s `encryptField`/`decryptField` read inline from `loadSettings()`
+/// the legacy JS backend's `encryptField`/`decryptField` read inline from `loadSettings()`
 /// plus `safeStorage`.
 #[derive(Debug, Clone)]
 pub struct CryptoContext {
@@ -127,7 +127,7 @@ fn extra_nonempty_str(extra: &Map<String, Value>, key: &str, trim: bool) -> bool
 /// Resolve the [`CryptoContext`] for the application-data directory `dir` (the
 /// directory holding `settings.json` / `accounts.json`). Reads the Settings_Store
 /// once and derives all three inputs, mirroring the per-call resolution
-/// `main.js` performs from `loadSettings()`.
+/// the legacy JS backend performs from `loadSettings()`.
 ///
 /// A Settings_Store read failure is non-fatal here (see the module docs): it
 /// falls back to [`settings::default_settings`], exactly as `loadSettings()`
@@ -157,7 +157,7 @@ pub fn resolve(dir: &Path) -> CryptoContext {
 ///     `saveSettings({ ...s, _deviceKey })`), and return it.
 ///   * In passphrase mode with no stored key, return `None`: the device key is
 ///     never used, and generating/persisting one would be a spurious write the
-///     Electron_Build never makes in that mode.
+///     legacy JS build never makes in that mode.
 fn resolve_device_key(
     dir: &Path,
     settings: &Settings,
@@ -183,7 +183,7 @@ fn resolve_device_key(
     // Persist as hex, mirroring `saveSettings({ ...s, _deviceKey: key.toString('hex') })`.
     // Best-effort: a write failure (e.g. an unreadable Settings_Store, which
     // `save_to_dir` refuses to clobber per Requirement 11.7) leaves us with an
-    // in-memory key for this run, exactly as usable as Electron's would be even
+    // in-memory key for this run, exactly as usable as legacy JS runtime's would be even
     // if its own `saveSettings` had thrown.
     let mut update = Map::new();
     update.insert("_deviceKey".to_string(), Value::String(encode_hex_key(&key)));

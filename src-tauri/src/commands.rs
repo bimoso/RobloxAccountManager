@@ -1,12 +1,12 @@
 //! Settings_Store + encryption Tauri command layer (Task 7.7).
 //!
 //! These 13 `#[tauri::command]` functions are the direct counterparts of the
-//! Electron `settings:*` / `enc:*` / `genhistory:*` / `fflag:*` / `fps:*` IPC
+//! legacy JS runtime `settings:*` / `enc:*` / `genhistory:*` / `fflag:*` / `fps:*` IPC
 //! handlers (design IPC_Surface mapping table). Each takes the same parameters,
-//! in the same order, as its Electron handler, and returns the same shape the
+//! in the same order, as its legacy handler, and returns the same shape the
 //! Renderer_UI already consumes (Requirement 10.1):
 //!
-//! | Electron IPC              | command                     | Rust core called                     |
+//! | legacy IPC              | command                     | Rust core called                     |
 //! |---------------------------|-----------------------------|--------------------------------------|
 //! | `settings:load`           | [`settings_load`]           | `settings::load_from_dir`            |
 //! | `settings:save`           | [`settings_save`]           | `settings::save_to_dir`              |
@@ -48,7 +48,7 @@ use crate::settings;
 
 /// The keys `settings:load` strips before returning settings to the Renderer_UI,
 /// so no secret or key material ever reaches the frontend (Requirement 3.4 /
-/// Property 12). Mirrors the Electron destructure
+/// Property 12). Mirrors the legacy JS runtime destructure
 /// `const { customKeyEnc, customKey, keyVerifier, _deviceKey, donutApiTokenEnc, ...rest } = s;`.
 const SETTINGS_LOAD_STRIPPED_KEYS: [&str; 5] = [
     "customKeyEnc",
@@ -155,17 +155,17 @@ pub fn settings_save(app: AppHandle, data: Map<String, Value>) -> Result<bool, S
         encryption::invalidate_key_cache();
     }
 
-    // NOTE (Task 9 / native_helper.rs): the Electron handler also starts/stops the
+    // NOTE (Task 9 / native_helper.rs): the legacy handler also starts/stops the
     // Native_Helper mutex holder on `multiInstance` and the anti-AFK loop on
     // `antiAfk` / `antiAfkInterval` here. Those side effects are wired in when
     // `native_helper.rs` is implemented; the persisted setting itself is already
-    // written above, so the stored state matches the Electron_Build now.
+    // written above, so the stored state matches the legacy JS build now.
 
     Ok(true)
     })())
 }
 
-/// The value [`settings_save_donut_token`] returns, matching the Electron
+/// The value [`settings_save_donut_token`] returns, matching the legacy JS runtime
 /// handler's `{ ok, donutApiTokenConfigured }` (success) and `{ ok, error }`
 /// (failure) shapes so the Renderer_UI receives the identical payload.
 #[derive(Debug, Clone, Serialize)]
@@ -201,7 +201,7 @@ pub struct SaveDonutTokenResult {
 /// token is never read back or returned (Requirement 3.4). The three encryption
 /// inputs are resolved once via [`crypto_context::resolve`], the SAME resolver
 /// the account commands use. A non-string `token` (JSON `null`/absent) is treated
-/// as the empty string, exactly like the Electron `typeof token === 'string'`
+/// as the empty string, exactly like the legacy JS runtime `typeof token === 'string'`
 /// guard.
 #[tauri::command]
 pub fn settings_save_donut_token(
@@ -238,7 +238,7 @@ pub fn settings_save_donut_token(
 
 // ── enc:status / enc:unlock / enc:setKey ─────────────────────────────────────
 
-/// The value [`enc_status`] returns, matching the Electron handler's `{ mode }`
+/// The value [`enc_status`] returns, matching the legacy handler's `{ mode }`
 /// shape. `mode` is one of `"setup"`, `"locked"`, or `"unlocked"`.
 #[derive(Debug, Clone, Serialize)]
 pub struct EncStatus {
@@ -247,14 +247,14 @@ pub struct EncStatus {
     pub mode: String,
 }
 
-/// The value [`enc_unlock`] returns, matching the Electron handler's `{ ok }`.
+/// The value [`enc_unlock`] returns, matching the legacy handler's `{ ok }`.
 #[derive(Debug, Clone, Serialize)]
 pub struct EncUnlockResult {
     /// `true` iff the passphrase verified and the session is now unlocked.
     pub ok: bool,
 }
 
-/// The value [`enc_set_key`] returns, matching the Electron handler's
+/// The value [`enc_set_key`] returns, matching the legacy handler's
 /// `{ ok }` (success) / `{ ok, error }` (failure) shapes.
 #[derive(Debug, Clone, Serialize)]
 pub struct EncSetKeyResult {
@@ -275,7 +275,7 @@ pub struct EncSetKeyResult {
 /// ```
 ///
 /// A Settings_Store read failure is swallowed to default settings here, matching
-/// the Electron `passphraseMode()` (`loadSettings()` in a `try/catch`), which
+/// the legacy JS runtime `passphraseMode()` (`loadSettings()` in a `try/catch`), which
 /// yields `{ mode: 'setup' }` rather than surfacing — the distinct
 /// error-surfacing path is [`settings_load`] (Requirement 11.7). This is a pure
 /// read: it never mutates key-session or device-key state.
@@ -316,7 +316,7 @@ pub fn enc_status(app: AppHandle) -> Result<EncStatus, String> {
 /// read that never touches the key session, so there is no partial mutation
 /// (Requirement 3.3 / Property 11). On success [`encryption::set_session_pass`]
 /// records the unlocked passphrase and invalidates the derived-key cache. The
-/// Electron `writeSessionKey` is a no-op (session caching is disabled — it always
+/// legacy JS runtime `writeSessionKey` is a no-op (session caching is disabled — it always
 /// returns `null` on read), so it is intentionally not reproduced. A settings
 /// read failure is swallowed to defaults (an absent verifier => reject), matching
 /// `verifyPass`'s reliance on `loadSettings()`'s try/catch.
@@ -384,9 +384,9 @@ pub fn enc_unlock(app: AppHandle, pass: Option<String>) -> Result<EncUnlockResul
 ///    (`safe:` on Windows). The save's verify-before-persist pass (Requirement
 ///    11.5) guards against writing an unverifiable secret.
 ///
-/// The Electron `writeSessionKey`/`clearSessionKey` calls are no-ops (session
+/// The legacy JS runtime `writeSessionKey`/`clearSessionKey` calls are no-ops (session
 /// caching disabled) and are intentionally not reproduced. This command never
-/// returns `Err`: like the Electron `try/catch`, every failure resolves to
+/// returns `Err`: like the legacy JS runtime `try/catch`, every failure resolves to
 /// `{ ok:false, error }` so the Renderer_UI branch on `r.ok` works unchanged.
 #[tauri::command]
 pub fn enc_set_key(app: AppHandle, pass: Option<String>) -> Result<EncSetKeyResult, String> {
@@ -469,7 +469,7 @@ pub fn genhistory_read(app: AppHandle) -> Result<Vec<Value>, String> {
 
 /// `genhistory:write` — persist the generation history (capped at 500 entries),
 /// returning `true`/`false` for success/failure, matching the handler.
-/// Delegates to [`settings::write_gen_history`]. A non-array payload the Electron
+/// Delegates to [`settings::write_gen_history`]. A non-array payload the legacy JS runtime
 /// handler coerces to `[]` (`Array.isArray(list) ? ... : []`) is enforced by the
 /// typed `Vec<Value>` parameter — a malformed payload is rejected at
 /// deserialization, which `invoke()` surfaces as a rejected promise.
@@ -513,7 +513,7 @@ pub fn fflag_write(flags: Value) -> Result<bool, String> {
 
 // ── fps:read / fps:write ─────────────────────────────────────────────────────
 
-/// The value [`fps_write`] returns, matching the Electron handler's
+/// The value [`fps_write`] returns, matching the legacy handler's
 /// `{ ok }` / `{ ok, error }` shapes.
 #[derive(Debug, Clone, Serialize)]
 pub struct FpsWriteResult {
@@ -538,7 +538,7 @@ pub fn fps_read() -> Result<i64, String> {
 /// absent or the write fails, matching the handler. Delegates to the
 /// [`settings::fps_write`] core (clamp/round `Math.max(0, Math.round(...))`,
 /// update-in-place-or-insert semantics). The `cap` parameter is `f64` to mirror
-/// the Electron `Number(cap)` coercion.
+/// the legacy JS runtime `Number(cap)` coercion.
 #[tauri::command]
 pub fn fps_write(cap: f64) -> Result<FpsWriteResult, String> {
     match settings::fps_write(cap) {
@@ -588,7 +588,7 @@ mod tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(200))]
 
-        // Feature: electron-to-tauri-migration, Property 12: Settings load never returns a stored secret in plaintext
+        // Feature: native-tauri-backend, Property 12: Settings load never returns a stored secret in plaintext
         #[test]
         fn settings_load_never_returns_secrets(
             key_verifier in opt_secret(),

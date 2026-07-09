@@ -1,20 +1,20 @@
 //! Serde data models for the Account_Store (`accounts.json`) and Settings_Store
 //! (`settings.json`).
 //!
-//! These structs mirror the exact on-disk JSON shapes the Electron_Build
-//! (`src/main.js`) already reads and writes, field-for-field, so that
+//! These structs mirror the exact on-disk JSON shapes the legacy JS build
+//! (the legacy JS backend) already reads and writes, field-for-field, so that
 //! `serde_json::from_str` -> `serde_json::to_string` round-trips through the same
 //! JSON without any schema migration (Requirement 11.6, Requirement 13.3).
 //!
 //! Two rules make the round-trip lossless:
-//!   1. Every camelCase JSON field name the Electron_Build uses is mapped with
+//!   1. Every camelCase JSON field name the legacy JS build uses is mapped with
 //!      `#[serde(rename = ...)]` to its snake_case Rust counterpart, so the
 //!      serialized bytes keep the original field names.
 //!   2. Both structs carry a `#[serde(flatten)] extra: serde_json::Map<String, Value>`
 //!      catch-all, so any unrecognized/legacy field present in an existing file
 //!      (e.g. a stray `_deviceKey`, `customKeyEnc`, or a field not yet modeled)
 //!      is preserved on a load-then-save round-trip rather than silently dropped.
-//!      This mirrors the Electron_Build's habit of spreading (`{ ...s, ... }`)
+//!      This mirrors the legacy JS build's habit of spreading (`{ ...s, ... }`)
 //!      plain JS objects instead of validating against a fixed shape.
 
 use serde::{Deserialize, Serialize};
@@ -23,7 +23,7 @@ use serde_json::{Map, Value};
 /// A single saved Roblox account, as persisted in the Account_Store
 /// (`accounts.json`).
 ///
-/// Field name mapping (Rust field -> JSON key), matching `src/main.js`:
+/// Field name mapping (Rust field -> JSON key), matching the legacy JS backend:
 ///   `user_id`                     -> `userId`
 ///   `created_at`                  -> `createdAt`
 ///   `last_used`                   -> `lastUsed`
@@ -31,7 +31,7 @@ use serde_json::{Map, Value};
 ///   `donut_profile_pending_delete`-> `donutProfilePendingDelete`
 ///
 /// `cookie` holds the encrypted-at-rest `.ROBLOSECURITY` value in the same
-/// tag-prefixed format the Electron_Build uses. `donut_profile_id` /
+/// tag-prefixed format the legacy JS build uses. `donut_profile_id` /
 /// `donut_profile_pending_delete` are stored unencrypted (they are not
 /// credentials), consistent with the account-browser-launcher design.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,7 +44,7 @@ pub struct Account {
     /// renderer's `nickname || username` behavior by treating it as blank.
     #[serde(default)]
     pub nickname: String,
-    /// Encrypted at rest, same tag-prefixed format as the Electron_Build.
+    /// Encrypted at rest, same tag-prefixed format as the legacy JS build.
     pub cookie: String,
     #[serde(rename = "createdAt")]
     pub created_at: String,
@@ -65,11 +65,11 @@ pub struct Account {
 ///
 /// Every recognized field is optional/defaulted (container-level
 /// `#[serde(default)]`) so a file missing a field simply gets that field's Rust
-/// default (Requirement 11.2); the Electron_Build's documented runtime defaults
+/// default (Requirement 11.2); the legacy JS build's documented runtime defaults
 /// (e.g. `donutApiPort` = 10108, `pendingDonutDeletions` = []) are applied by the
 /// settings-load logic in a later task, not baked into the struct's `Default`.
 ///
-/// Field name mapping (Rust field -> JSON key), matching `src/main.js`:
+/// Field name mapping (Rust field -> JSON key), matching the legacy JS backend:
 ///   `multi_instance`         -> `multiInstance`
 ///   `anti_afk`               -> `antiAfk`
 ///   `anti_afk_interval`      -> `antiAfkInterval`
@@ -81,7 +81,7 @@ pub struct Account {
 ///   `master_volume`          -> `masterVolume`
 ///   `enc_setup_done`         -> `encSetupDone`
 ///
-/// All remaining/legacy fields the Electron_Build may have written
+/// All remaining/legacy fields the legacy JS build may have written
 /// (`customKey`, `customKeyEnc`, `encryptionType`, `_deviceKey`, etc.) are kept
 /// via the `extra` catch-all rather than being modeled explicitly, so they
 /// survive a load-then-save round-trip untouched.

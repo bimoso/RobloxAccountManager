@@ -9,7 +9,7 @@
 // Pipeline order (this file, Task 19.1):
 //   1. Native_Helper build step  -> runs scripts/build-native.js so
 //      src/RobloxNative.exe is (re)compiled BEFORE the Rust build. This mirrors
-//      the Electron_Build's npm `prebuild` lifecycle and satisfies Requirement
+//      the npm `prebuild` lifecycle and satisfies Requirement
 //      12.5 (invoke the Native_Helper build step before packaging) and
 //      Requirement 9.2 (prebuild the native helper).
 //   2. Release build            -> `cargo build --release
@@ -32,7 +32,7 @@ const srcDir = path.join(projectRoot, 'src');
 const distDir = path.join(projectRoot, 'dist');
 
 // Source-of-truth locations for the packaging assembly (Task 19.2).
-const electronIcon = path.join(srcDir, 'icon.ico'); // the icon the Electron_Build embedded (Req 12.4)
+const appIcon = path.join(srcDir, 'icon.ico'); // the application icon embedded into the portable exe (Req 12.4)
 const tauriIcon = path.join(srcTauriDir, 'icons', 'icon.ico'); // what bundle.icon points at / cargo embeds
 const releaseBinary = path.join(srcTauriDir, 'target', RUST_TARGET, 'release', 'robloxaccountmanager.exe');
 const nativeExeSrc = path.join(srcDir, 'RobloxNative.exe');
@@ -112,26 +112,21 @@ function assertNativeHelperConsistent(exePath, csPath) {
     new Date(csMtime).toISOString() + ') -> produced from the bundled source (Req 9.3).');
 }
 
-// Req 12.4 (icon embedding): the icon Tauri/winres embeds into the compiled
-// exe comes from tauri.conf.json's `bundle.icon` (src-tauri/icons/icon.ico),
-// read at cargo-build time via build.rs. To guarantee the embedded icon is the
-// SAME one the Electron_Build shipped (src/icon.ico), we mirror src/icon.ico
-// into src-tauri/icons/icon.ico BEFORE the release build runs. This keeps the
-// local icons/ layout `cargo build` expects while making the embedded icon
-// byte-identical to the Electron icon. If the two already match, this is a
-// no-op. A missing Electron icon is a hard failure (icon embed cannot satisfy
-// Req 12.4).
-function ensureElectronIconEmbedded() {
-  if (!fs.existsSync(electronIcon)) {
-    fail('Electron application icon not found at ' + electronIcon + ' (Req 12.4 requires embedding the same icon).');
+// Req 12.4 (icon embedding): the icon Tauri/winres embeds into the compiled exe
+// comes from tauri.conf.json's `bundle.icon` (src-tauri/icons/icon.ico), read at
+// cargo-build time via build.rs. Mirror src/icon.ico into that location BEFORE
+// the release build runs so the embedded icon is stable and expected.
+function ensureAppIconEmbedded() {
+  if (!fs.existsSync(appIcon)) {
+    fail('Application icon not found at ' + appIcon + ' (Req 12.4 requires embedding it).');
   }
-  if (filesIdentical(electronIcon, tauriIcon)) {
-    console.log('[package-tauri] embedded icon already matches Electron icon (' + electronIcon + ').');
+  if (filesIdentical(appIcon, tauriIcon)) {
+    console.log('[package-tauri] embedded icon already matches application icon (' + appIcon + ').');
     return;
   }
   fs.mkdirSync(path.dirname(tauriIcon), { recursive: true });
-  fs.copyFileSync(electronIcon, tauriIcon);
-  console.log('[package-tauri] synced Electron icon into build icon: ' + electronIcon + ' -> ' + tauriIcon + ' (Req 12.4).');
+  fs.copyFileSync(appIcon, tauriIcon);
+  console.log('[package-tauri] synced application icon into build icon: ' + appIcon + ' -> ' + tauriIcon + ' (Req 12.4).');
 }
 
 // Req 12.3 (asInvoker / no elevation): assert the produced exe does not request
@@ -200,15 +195,13 @@ console.log('[package-tauri] verifying Native_Helper executable exists and is co
 assertNativeHelperConsistent(nativeExeSrc, nativeCsSrc);
 
 // -- Step 1b: Icon embedding prep (Req 12.4 / 12.6) --------------------------
-// Must run BEFORE the release build so cargo/winres embeds the Electron icon.
-// ensureElectronIconEmbedded() hard-fails (process.exit) when src/icon.ico is
-// absent. We additionally wrap it so that ANY unexpected error while preparing
-// the embedded icon (e.g. a failed mkdir/copy) fails the build with a clear
-// message and non-zero exit, rather than silently continuing to build an exe
-// without the correct embedded icon (Req 12.6).
-console.log('[package-tauri] ensuring Electron application icon is the embedded icon (Req 12.4) ...');
+// Must run BEFORE the release build so cargo/winres embeds the app icon.
+// ensureAppIconEmbedded() hard-fails (process.exit) when src/icon.ico is absent.
+// We additionally wrap it so that ANY unexpected error while preparing the
+// embedded icon fails the build with a clear message and non-zero exit.
+console.log('[package-tauri] ensuring application icon is embedded (Req 12.4) ...');
 try {
-  ensureElectronIconEmbedded();
+  ensureAppIconEmbedded();
 } catch (err) {
   fail('icon embedding step failed (Req 12.4 / 12.6): ' + (err && err.message ? err.message : String(err)) +
     '. Failing the build rather than producing a distributable without the correct embedded icon.');
@@ -276,7 +269,7 @@ for (const f of [distRobloxAccountManager, distNativeExe, distNativeCs]) {
   const size = fs.statSync(f).size;
   console.log('[package-tauri]   ' + path.basename(f) + '  (' + size + ' bytes)');
 }
-console.log('[package-tauri] embedded icon: ' + electronIcon + ' (Req 12.4); execution level: asInvoker / no elevation (Req 12.3).');
+console.log('[package-tauri] embedded icon: ' + appIcon + ' (Req 12.4); execution level: asInvoker / no elevation (Req 12.3).');
 }
 
 // Run the pipeline only when invoked directly as a CLI. When require()'d (e.g.
@@ -288,8 +281,8 @@ if (require.main === module) {
 module.exports = {
   filesIdentical,
   copyRequired,
-  ensureElectronIconEmbedded,
+  ensureAppIconEmbedded,
   assertNativeHelperConsistent,
   assertNoElevation,
-  paths: { electronIcon, tauriIcon, releaseBinary, nativeExeSrc, nativeCsSrc, distDir },
+  paths: { appIcon, tauriIcon, releaseBinary, nativeExeSrc, nativeCsSrc, distDir },
 };

@@ -1,7 +1,7 @@
 //! Account_Browser_Launcher (`browser_launcher.rs`).
 //!
-//! This module is the Rust port of the Electron_Build's account-browser-launcher
-//! subsystem — the part of `src/main.js` that talks to the Donut Browser local
+//! This module is the Rust port of the legacy JS build's account-browser-launcher
+//! subsystem — the part of the legacy JS backend that talks to the Donut Browser local
 //! HTTP API (the Donut_Browser_API) and drives the per-account isolated browser
 //! session. It depends on `encryption.rs` (to decrypt the stored Donut_API_Token)
 //! and `settings.rs` (to read the configured Donut API port / stored token),
@@ -10,23 +10,23 @@
 //! ## What this task (13.1) ports
 //!
 //! The plain-HTTP transport for the Donut_Browser_API, ported 1:1 from
-//! `src/donut-http.js` plus the two `main.js` wrappers that feed it:
+//! the legacy Donut HTTP helper plus the two the legacy JS backend wrappers that feed it:
 //!
 //! ```js
-//! // src/donut-http.js
+//! // legacy Donut HTTP helper
 //! function buildDonutBaseUrl(port) { return `http://127.0.0.1:${port || DEFAULT_DONUT_PORT}`; }
 //! function donutRequest(baseUrl, token, method, urlPath, body, opts = {}) { ... }
 //!
-//! // src/main.js
+//! // legacy JS backend
 //! function getDonutBaseUrl() { const s = loadSettings(); return buildDonutBaseUrl(s.donutApiPort); }
 //! function getDonutToken()   { const s = loadSettings(); return decryptField(s.donutApiTokenEnc) || null; }
 //! function donutHttp(method, urlPath, body) { return donutRequest(getDonutBaseUrl(), getDonutToken(), method, urlPath, body); }
 //! ```
 //!
-//! Where the Electron_Build used Node's built-in `http` module (no third-party
+//! Where the legacy JS build used Node's built-in `http` module (no third-party
 //! client), this port uses `reqwest` — the same crate `roblox_api.rs` already
 //! uses for the HTTPS Roblox calls — so "the plain-HTTP local API path mirrors
-//! the HTTPS Roblox path" (the comment `main.js` carries above this section) is
+//! the HTTPS Roblox path" (the comment the legacy JS backend carries above this section) is
 //! preserved. The request shape is reproduced exactly: an
 //! `Authorization: Bearer {token}` header attached only when a token is present
 //! (Requirement 5.2 / account-browser-launcher Property 25), a JSON body, a hard
@@ -37,7 +37,7 @@
 //! ### Three-way classification (the invariant this task must preserve)
 //!
 //! [`donut_request`] always resolves to a [`DonutResponse`] whose `error` is one
-//! of exactly three outcomes, identical to `donut-http.js`'s truth table:
+//! of exactly three outcomes, identical to the legacy Donut HTTP helper's truth table:
 //!
 //!   * [`DonutTransportError::Unreachable`] — no response arrived at all
 //!     (connection refused / socket error / request timeout, or a base-URL/path
@@ -79,18 +79,18 @@ use crate::settings;
 use crate::AppState;
 
 /// The Donut_Browser_API's documented default local port, from
-/// `donut-http.js`'s `DEFAULT_DONUT_PORT = 10108`. Used when the Settings_Store
+/// the legacy Donut HTTP helper's `DEFAULT_DONUT_PORT = 10108`. Used when the Settings_Store
 /// has no `donutApiPort` (or a falsy `0`), matching the JS `port || DEFAULT`.
 pub const DEFAULT_DONUT_PORT: u16 = 10108;
 
-/// The hard per-request timeout, from `donut-http.js`'s
+/// The hard per-request timeout, from the legacy Donut HTTP helper's
 /// `DEFAULT_TIMEOUT_MS = 5000`. A request that does not complete within this
 /// window is classified [`DonutTransportError::Unreachable`], exactly as the
-/// Electron_Build's `req.setTimeout(timeoutMs, () => { req.destroy(); resolve(unreachable) })`.
+/// legacy JS build's `req.setTimeout(timeoutMs, () => { req.destroy(); resolve(unreachable) })`.
 pub const DEFAULT_TIMEOUT_MS: u64 = 5000;
 
 /// The non-success outcome of a [`donut_request`] call — the Rust form of
-/// `donut-http.js`'s `error: 'unreachable' | 'http'` string field.
+/// the legacy Donut HTTP helper's `error: 'unreachable' | 'http'` string field.
 ///
 /// Modeled as an enum (rather than a raw string) so the availability classifier
 /// in Task 13.2 can match on it exhaustively; `None` on [`DonutResponse::error`]
@@ -116,7 +116,7 @@ impl DonutTransportError {
 }
 
 /// The classified result of a single Donut_Browser_API request — the Rust form
-/// of `donut-http.js`'s `{ ok, status, json, error }` resolve value.
+/// of the legacy Donut HTTP helper's `{ ok, status, json, error }` resolve value.
 ///
 ///   * `ok`     — `true` iff a response arrived with a `2xx` status.
 ///   * `status` — the numeric HTTP status, or `0` when no response was received.
@@ -143,7 +143,7 @@ impl DonutResponse {
     }
 }
 
-/// Port of `donut-http.js`'s `buildDonutBaseUrl(port)`:
+/// Port of the legacy Donut HTTP helper's `buildDonutBaseUrl(port)`:
 /// `http://127.0.0.1:${port || DEFAULT_DONUT_PORT}`.
 ///
 /// A `None` port (field absent) or a falsy `0` falls back to
@@ -156,7 +156,7 @@ pub fn build_donut_base_url(port: Option<u16>) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-/// Port of `main.js`'s `getDonutBaseUrl()`: read the Settings_Store's
+/// Port of the legacy JS backend's `getDonutBaseUrl()`: read the Settings_Store's
 /// `donutApiPort` and build the local API base URL from it.
 ///
 /// A Settings_Store read failure is non-fatal here (it falls back to
@@ -170,7 +170,7 @@ pub fn get_donut_base_url(dir: &Path) -> String {
     build_donut_base_url(settings.donut_api_port)
 }
 
-/// Port of `main.js`'s `getDonutToken()`:
+/// Port of the legacy JS backend's `getDonutToken()`:
 /// `decryptField(s.donutApiTokenEnc) || null`.
 ///
 /// Returns the decrypted Donut_API_Token, or `None` when none is stored (or when
@@ -182,7 +182,7 @@ pub fn get_donut_base_url(dir: &Path) -> String {
 ///
 /// A decrypt failure (e.g. a locked passphrase-mode store) is treated as "no
 /// usable token" (`None`) rather than surfaced, so a callable token gate never
-/// hangs or errors on the launcher's preflight — mirroring `main.js`'s
+/// hangs or errors on the launcher's preflight — mirroring the legacy JS backend's
 /// `launcherSecrets`, which wraps `getDonutToken()` in a `try { ... } catch {}`.
 pub fn get_donut_token(dir: &Path) -> Option<String> {
     let settings = settings::load_from_dir(dir).unwrap_or_else(|_| settings::default_settings());
@@ -204,7 +204,7 @@ pub fn get_donut_token(dir: &Path) -> Option<String> {
 }
 
 /// Send a single request to the Donut_Browser_API and classify the outcome —
-/// the direct port of `donut-http.js`'s `donutRequest`, using the module default
+/// the direct port of the legacy Donut HTTP helper's `donutRequest`, using the module default
 /// 5-second timeout ([`DEFAULT_TIMEOUT_MS`]).
 ///
 /// All inputs are injected (`base_url`, `token`, `method`, `url_path`, `body`),
@@ -253,7 +253,7 @@ pub async fn donut_request_with_timeout(
         Err(_) => return DonutResponse::unreachable(),
     };
 
-    // Headers mirror `donut-http.js` exactly: Content-Type + Accept always, and
+    // Headers mirror the legacy Donut HTTP helper exactly: Content-Type + Accept always, and
     // the Bearer Authorization header ONLY when a (truthy) token is supplied.
     let mut request = client
         .request(method, url)
@@ -264,7 +264,7 @@ pub async fn donut_request_with_timeout(
     }
     // `body != null ? Buffer.from(JSON.stringify(body)) : Buffer.alloc(0)` —
     // serialized with serde_json (reqwest's `json` feature is intentionally off,
-    // matching main.js's raw JSON.stringify); reqwest sets a matching
+    // matching the legacy JS backend's raw JSON.stringify); reqwest sets a matching
     // Content-Length for the attached bytes. A body that cannot be serialized to
     // JSON can never form a valid request, so it classifies as 'unreachable'.
     if let Some(body) = body {
@@ -309,20 +309,21 @@ pub async fn donut_request_with_timeout(
 // resolve/create/run/delete, and the pending-deletion retry queue.
 //
 // These sit on top of the [`donut_request`] transport (Task 13.1) and port the
-// corresponding `src/main.js` section 1:1 (see the inline `js` blocks). Every
+// corresponding the legacy JS backend section 1:1 (see the inline `js` blocks). Every
 // function that only talks HTTP is split into a transport-injected `*_at`
 // core (taking `base_url` + `token`, so it is testable against an in-process
 // server exactly like the transport tests) plus a thin `dir`-based wrapper that
 // resolves the base URL / token from the Settings_Store via
 // [`get_donut_base_url`] / [`get_donut_token`]. Functions that additionally
 // touch the Account_Store / Settings_Store take the application-data `dir`
-// directly, matching `main.js`'s `loadAccounts`/`saveAccounts`/`loadSettings`/
+// directly, matching the legacy JS backend's `loadAccounts`/`saveAccounts`/`loadSettings`/
 // `saveSettings` call sites.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The Donut_Browser_API path used as the cheapest authenticated reachability
-/// probe by the availability preflight — `GET /v1/profiles` in `main.js`.
+/// probe by the availability preflight — `GET /v1/profiles` in the legacy JS backend.
 const PROFILES_PATH: &str = "/v1/profiles";
+const PROFILES_BATCH_RUN_PATH: &str = "/v1/profiles/batch/run";
 
 /// Donut Browser groups endpoint, plus the dedicated group name and tag under
 /// which EVERY profile this app creates is filed. This keeps RobloxAccountManager's
@@ -333,7 +334,7 @@ const DONUT_GROUP_NAME: &str = "RobloxAccountManager";
 const DONUT_APP_TAG: &str = "RobloxAccountManager";
 
 /// The Wayfern (anti-detect Chromium) browser name plus the REAL Donut Browser
-/// API path for listing its versions. The Electron_Build's
+/// API path for listing its versions. The legacy JS build's
 /// `/v1/engines/wayfern[/download]` endpoints do NOT exist in Donut Browser's
 /// actual REST API (v0.27.x): the browser lifecycle lives under `/v1/browsers/`:
 ///   * `GET  /v1/browsers/wayfern/versions`                       (newest-first)
@@ -343,7 +344,7 @@ const WAYFERN_BROWSER: &str = "wayfern";
 const WAYFERN_VERSIONS_PATH: &str = "/v1/browsers/wayfern/versions";
 
 /// Resolve the base URL + token once and send a Donut_Browser_API request — the
-/// direct port of `main.js`'s `donutHttp(method, urlPath, body)`:
+/// direct port of the legacy JS backend's `donutHttp(method, urlPath, body)`:
 ///
 /// ```js
 /// function donutHttp(method, urlPath, body) {
@@ -364,7 +365,7 @@ async fn donut_http(
 // ── Availability preflight (Req 5.1 / account-browser-launcher Req 3) ─────────
 
 /// The classified outcome of the Donut_Browser_API availability preflight — the
-/// Rust form of `donut-http.js`'s `classifyAvailability` result
+/// Rust form of the legacy Donut HTTP helper's `classifyAvailability` result
 /// `{ ok, error: null|'no_token'|'unreachable'|'unauthorized'|'payment_required' }`.
 ///
 /// [`Availability::Ok`] is the success case (`ok:true, error:null`); every other
@@ -406,7 +407,7 @@ impl Availability {
     }
 }
 
-/// Pure port of `donut-http.js`'s `classifyAvailability(hasToken, result)` — the
+/// Pure port of the legacy Donut HTTP helper's `classifyAvailability(hasToken, result)` — the
 /// availability truth table, kept transport-free so it is directly testable:
 ///
 /// ```js
@@ -459,7 +460,7 @@ pub async fn check_donut_availability_at(base_url: &str, token: Option<&str>) ->
     classify_availability(true, Some(&res))
 }
 
-/// Port of `main.js`'s `checkDonutAvailability()`: verify the Donut_Browser_API
+/// Port of the legacy JS backend's `checkDonutAvailability()`: verify the Donut_Browser_API
 /// is reachable and the stored token accepted before any profile is created or
 /// launched. Resolves the base URL / token from the Settings_Store, then
 /// delegates to [`check_donut_availability_at`].
@@ -479,7 +480,7 @@ pub async fn check_donut_availability(dir: &Path) -> Availability {
 
 // ── Wayfern engine availability (account-browser-launcher Req 3.5-3.7) ────────
 
-/// Pure port of `main.js`'s `isWayfernDownloaded(json)`: interpret an engine-
+/// Pure port of the legacy JS backend's `isWayfernDownloaded(json)`: interpret an engine-
 /// status body into "is the wayfern engine downloaded?". Reads the commonly-used
 /// fields defensively (an explicit `downloaded`/`installed`/`is_downloaded`
 /// boolean, or a `status` string of `downloaded`/`installed`/`ready`); anything
@@ -547,7 +548,7 @@ pub async fn ensure_wayfern_engine_at(
     token: Option<&str>,
 ) -> Result<(), WayfernError> {
     // 1. List the Wayfern versions Donut knows about (newest first). This uses
-    //    Donut Browser's real browser API instead of the Electron_Build's
+    //    Donut Browser's real browser API instead of the legacy JS build's
     //    nonexistent `/v1/engines/wayfern` status endpoint. A non-2xx here means
     //    the API is unreachable or the token is wrong.
     let versions_res = donut_request(base_url, token, "GET", WAYFERN_VERSIONS_PATH, None).await;
@@ -586,7 +587,7 @@ pub async fn ensure_wayfern_engine_at(
     Err(WayfernError::DownloadFailed)
 }
 
-/// Port of `main.js`'s `ensureWayfernEngine()`: ensure the "wayfern" browser
+/// Port of the legacy JS backend's `ensureWayfernEngine()`: ensure the "wayfern" browser
 /// engine is downloaded before a Donut_Profile is created
 /// (account-browser-launcher Req 3.5-3.7). The status is re-checked on every
 /// call (Req 3.5 / Property 10) — no cached "already downloaded" result is kept.
@@ -608,7 +609,7 @@ pub async fn ensure_wayfern_engine(dir: &Path) -> Result<(), WayfernError> {
 
 // ── Donut_Profile mapping / run / delete (account-browser-launcher Req 1, 2, 8) ─
 
-/// Coerce a JSON value into the string form `main.js` uses for a returned profile
+/// Coerce a JSON value into the string form the legacy JS backend uses for a returned profile
 /// id (`String(res.json.id)`), treating JSON `null`/absence as "no id". Strings
 /// pass through unchanged; numbers/booleans are stringified like JS `String(x)`;
 /// any other shape is stringified via its JSON representation (unrealistic for a
@@ -624,7 +625,7 @@ fn value_to_id_string(value: &Value) -> Option<String> {
 }
 
 /// Extract the created profile id from a `POST /v1/profiles` body — the port of
-/// `main.js`'s defensive `res.json.id ?? res.json.profile_id` read:
+/// the legacy JS backend's defensive `res.json.id ?? res.json.profile_id` read:
 ///
 /// ```js
 /// const profileId = res.json.id != null ? String(res.json.id)
@@ -635,7 +636,7 @@ fn value_to_id_string(value: &Value) -> Option<String> {
 /// (matching the JS `!= null` guard).
 pub fn extract_profile_id(json: &Value) -> Option<String> {
     // Donut Browser's real API wraps the created profile under a `profile`
-    // object (`{ "profile": { "id": ... } }`); the Electron_Build read a
+    // object (`{ "profile": { "id": ... } }`); the legacy JS build read a
     // top-level `id`/`profile_id`. Check the nested object first, then the flat
     // keys, so both response shapes work.
     let candidates = [
@@ -653,7 +654,7 @@ pub fn extract_profile_id(json: &Value) -> Option<String> {
 }
 
 /// Extract the CDP_Port from a `POST /v1/profiles/{id}/run` body — the port of
-/// `main.js`'s defensive multi-key read + integer validation:
+/// the legacy JS backend's defensive multi-key read + integer validation:
 ///
 /// ```js
 /// const raw = res.json.cdpPort ?? res.json.cdp_port ?? res.json.port
@@ -664,7 +665,7 @@ pub fn extract_profile_id(json: &Value) -> Option<String> {
 ///
 /// The keys are tried in order and the FIRST present, non-`null` one wins (JS
 /// `??` nullish-coalescing — a `0` value is not skipped, and then fails the
-/// `> 0` check just as in the Electron_Build). The chosen value is coerced from a
+/// `> 0` check just as in the legacy JS build). The chosen value is coerced from a
 /// JSON number (integral, `> 0`) or a numeric string; anything else yields `None`.
 pub fn extract_cdp_port(json: &Value) -> Option<u32> {
     let raw = [
@@ -711,6 +712,33 @@ pub fn extract_cdp_port(json: &Value) -> Option<u32> {
     Some(port as u32)
 }
 
+fn extract_error_text(json: &Value) -> Option<String> {
+    ["error", "message", "detail"]
+        .into_iter()
+        .find_map(|key| json.get(key))
+        .and_then(|v| match v {
+            Value::Null => None,
+            Value::String(s) => Some(s.clone()),
+            other => Some(other.to_string()),
+        })
+        .filter(|s| !s.trim().is_empty())
+}
+
+fn is_profile_not_found_text(text: &str) -> bool {
+    text.to_ascii_lowercase().contains("profile not found")
+}
+
+fn response_is_profile_not_found(res: &DonutResponse) -> bool {
+    if res.status == 404 {
+        return true;
+    }
+    res.json
+        .as_ref()
+        .and_then(extract_error_text)
+        .as_deref()
+        .is_some_and(is_profile_not_found_text)
+}
+
 /// The failure outcomes of profile creation, mirroring
 /// `createDonutProfileForAccount`'s `error: 'create_failed' | 'duplicate_profile'`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -746,7 +774,7 @@ pub struct ResolvedProfile {
 /// [`crypto_context`] exactly as the command layer does. Returns the account
 /// list (ciphertext-preserving for any entry whose cookie failed to decrypt); a
 /// store read failure yields an empty list so a lookup no-ops rather than hangs,
-/// matching how `main.js`'s `loadAccounts()` feeds the profile helpers.
+/// matching how the legacy JS backend's `loadAccounts()` feeds the profile helpers.
 fn load_accounts(dir: &Path) -> Result<Vec<Account>, ()> {
     let ctx = crypto_context::resolve(dir);
     accounts::load_from_dir(
@@ -760,7 +788,7 @@ fn load_accounts(dir: &Path) -> Result<Vec<Account>, ()> {
 }
 
 /// Persist the Account_Store for the app-data `dir`, resolving crypto inputs via
-/// [`crypto_context`] (mirrors `main.js`'s `saveAccounts(accounts)`).
+/// [`crypto_context`] (mirrors the legacy JS backend's `saveAccounts(accounts)`).
 fn save_accounts(dir: &Path, accounts: &[Account]) -> Result<(), ()> {
     let ctx = crypto_context::resolve(dir);
     accounts::save_to_dir(
@@ -773,7 +801,22 @@ fn save_accounts(dir: &Path, accounts: &[Account]) -> Result<(), ()> {
     .map_err(|_| ())
 }
 
-/// Port of `main.js`'s `getProfileIdForAccount(accountId)`: read the
+fn clear_profile_mapping_if_current(dir: &Path, account_id: &str, profile_id: &str) -> bool {
+    let mut accounts = match load_accounts(dir) {
+        Ok(accounts) => accounts,
+        Err(_) => return false,
+    };
+    let Some(account) = accounts.iter_mut().find(|a| a.id == account_id) else {
+        return false;
+    };
+    if account.donut_profile_id.as_deref() != Some(profile_id) {
+        return false;
+    }
+    account.donut_profile_id = None;
+    save_accounts(dir, &accounts).is_ok()
+}
+
+/// Port of the legacy JS backend's `getProfileIdForAccount(accountId)`: read the
 /// Donut_Profile id currently mapped to an account id, or `None` when the account
 /// is unknown or not yet mapped.
 ///
@@ -795,7 +838,7 @@ pub fn get_profile_id_for_account(dir: &Path, account_id: &str) -> Option<String
         .filter(|id| !id.is_empty())
 }
 
-/// Port of `main.js`'s `createDonutProfileForAccount(account)`: create a new
+/// Port of the legacy JS backend's `createDonutProfileForAccount(account)`: create a new
 /// Donut_Profile and persist the id -> account mapping IMMEDIATELY (before
 /// returning), so a later `/run` failure can never leave a created-but-unrecorded
 /// profile (account-browser-launcher Req 2.1 / basis for Req 2.6). Enforces the
@@ -957,7 +1000,7 @@ pub async fn create_donut_profile_for_account(
     Ok(profile_id)
 }
 
-/// Port of `main.js`'s `resolveOrCreateProfile(account)`: resolve the
+/// Port of the legacy JS backend's `resolveOrCreateProfile(account)`: resolve the
 /// Donut_Profile to open a browser for, creating and mapping one ONLY when the
 /// account is not already mapped (account-browser-launcher Req 1.1/1.2/2.4/2.5).
 /// Reusing an existing mapping never calls profile creation.
@@ -999,15 +1042,21 @@ pub enum RunProfileError {
     /// HTTP 402: `POST /v1/profiles/{id}/run` is a Donut Browser Pro-only
     /// endpoint; without an active Pro subscription it returns Payment Required.
     RequiresPro,
+    /// Donut Browser no longer has the profile id stored by the account record.
+    /// This happens when profiles are deleted externally from Donut Browser; the
+    /// local mapping must be cleared and recreated once.
+    ProfileNotFound,
 }
 
 impl RunProfileError {
-    /// The stable string form (`"run_failed"` / `"no_cdp_port"` / `"requires_pro"`).
+    /// The stable string form (`"run_failed"` / `"no_cdp_port"` /
+    /// `"requires_pro"` / `"profile_not_found"`).
     pub fn as_str(self) -> &'static str {
         match self {
             RunProfileError::RunFailed => "run_failed",
             RunProfileError::NoCdpPort => "no_cdp_port",
             RunProfileError::RequiresPro => "requires_pro",
+            RunProfileError::ProfileNotFound => "profile_not_found",
         }
     }
 }
@@ -1026,6 +1075,9 @@ pub async fn run_donut_profile_at(
     if res.status == 402 {
         return Err(RunProfileError::RequiresPro);
     }
+    if response_is_profile_not_found(&res) {
+        return Err(RunProfileError::ProfileNotFound);
+    }
     // `!res || !res.ok || !res.json`
     if !res.ok {
         return Err(RunProfileError::RunFailed);
@@ -1037,7 +1089,7 @@ pub async fn run_donut_profile_at(
     extract_cdp_port(json).ok_or(RunProfileError::NoCdpPort)
 }
 
-/// Port of `main.js`'s `runDonutProfile(profileId)`: launch the Browser_Instance
+/// Port of the legacy JS backend's `runDonutProfile(profileId)`: launch the Browser_Instance
 /// for a Donut_Profile via `POST /v1/profiles/{id}/run` (Req 1.1) and extract the
 /// CDP_Port the launcher connects to for cookie injection.
 ///
@@ -1054,6 +1106,72 @@ pub async fn run_donut_profile_at(
 pub async fn run_donut_profile(dir: &Path, profile_id: &str) -> Result<u32, RunProfileError> {
     let token = get_donut_token(dir);
     run_donut_profile_at(&get_donut_base_url(dir), token.as_deref(), profile_id).await
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchRunProfileResult {
+    pub profile_id: String,
+    pub ok: bool,
+    pub cdp_port: Option<u32>,
+    pub error: Option<String>,
+}
+
+impl BatchRunProfileResult {
+    fn from_json(value: &Value) -> Option<Self> {
+        let profile_id = extract_profile_id(value)?;
+        let cdp_port = extract_cdp_port(value);
+        let error = extract_error_text(value);
+        let ok = value
+            .get("ok")
+            .and_then(|v| v.as_bool())
+            .unwrap_or_else(|| cdp_port.is_some() && error.is_none());
+        Some(Self {
+            profile_id,
+            ok,
+            cdp_port,
+            error,
+        })
+    }
+
+    fn is_profile_not_found(&self) -> bool {
+        self.error
+            .as_deref()
+            .is_some_and(is_profile_not_found_text)
+    }
+}
+
+pub async fn run_donut_profiles_batch(
+    dir: &Path,
+    profile_ids: &[String],
+) -> Result<Vec<BatchRunProfileResult>, RunProfileError> {
+    if profile_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body = json!({
+        "profile_ids": profile_ids,
+        "headless": false,
+    });
+    let res = donut_http(dir, "POST", PROFILES_BATCH_RUN_PATH, Some(&body)).await;
+    if res.status == 402 {
+        return Err(RunProfileError::RequiresPro);
+    }
+    if !res.ok {
+        return Err(RunProfileError::RunFailed);
+    }
+    let results = res
+        .json
+        .as_ref()
+        .and_then(|j| j.get("results"))
+        .and_then(|v| v.as_array())
+        .ok_or(RunProfileError::RunFailed)?;
+
+    let mut parsed = Vec::with_capacity(results.len());
+    for item in results {
+        if let Some(result) = BatchRunProfileResult::from_json(item) {
+            parsed.push(result);
+        }
+    }
+    Ok(parsed)
 }
 
 /// The failure outcomes of [`delete_donut_profile`], mirroring
@@ -1102,7 +1220,7 @@ pub async fn delete_donut_profile_at(
     Err(DeleteProfileError::DeleteFailed)
 }
 
-/// Port of `main.js`'s `deleteDonutProfile(profileId)`: delete a Donut_Profile
+/// Port of the legacy JS backend's `deleteDonutProfile(profileId)`: delete a Donut_Profile
 /// via `DELETE /v1/profiles/{id}` (Req 8.1). A `404` "not found" is folded into
 /// success — if the profile is already gone the desired end state is achieved, so
 /// callers clear the mapping / drop it from the pending-deletion queue just as on
@@ -1130,9 +1248,9 @@ pub async fn delete_donut_profile(
 // The durable source of truth for "which Donut_Profiles still need deleting" is
 // `settings.pendingDonutDeletions` (an array of profile ids), stored in
 // `settings.json` (NOT on the account record, which is gone by the time a retry
-// runs). Ported from `main.js`'s `addPendingDeletion` / `retryPendingDeletions`.
+// runs). Ported from the legacy JS backend's `addPendingDeletion` / `retryPendingDeletions`.
 
-/// Port of `main.js`'s `addPendingDeletion(profileId)`: append a Donut_Profile id
+/// Port of the legacy JS backend's `addPendingDeletion(profileId)`: append a Donut_Profile id
 /// to the pending-deletion queue and persist it (Req 8.4), de-duplicating so the
 /// same id is never queued twice.
 ///
@@ -1152,7 +1270,7 @@ pub async fn delete_donut_profile(
 /// happens when the id was actually newly added (the JS dedupe guard). A
 /// Settings_Store read/write failure surfaces as `Err` rather than being
 /// swallowed, so a caller that cares can observe it (Requirement 11.7); the
-/// account-removal caller treats it best-effort exactly as `main.js` does.
+/// account-removal caller treats it best-effort exactly as the legacy JS backend does.
 pub fn add_pending_deletion(dir: &Path, profile_id: &str) -> Result<(), String> {
     if profile_id.is_empty() {
         return Ok(());
@@ -1167,7 +1285,7 @@ pub fn add_pending_deletion(dir: &Path, profile_id: &str) -> Result<(), String> 
     persist_pending_deletions(dir, &queue)
 }
 
-/// Port of `main.js`'s `retryPendingDeletions()`: retry [`delete_donut_profile`]
+/// Port of the legacy JS backend's `retryPendingDeletions()`: retry [`delete_donut_profile`]
 /// for every queued id (Req 8.5). On success the id is removed from the queue; on
 /// failure it is left queued for a later retry (Req 8.6). The queue is persisted
 /// after EACH successful attempt (reloading settings first so a concurrent
@@ -1231,39 +1349,39 @@ fn persist_pending_deletions(dir: &Path, queue: &[String]) -> Result<(), String>
 // ─────────────────────────────────────────────────────────────────────────────
 // Task 13.3: CDP login flow (Requirement 5.1)
 //
-// Port of `main.js`'s `puppeteerLogin(chromePath)` — the cookie-capture login
-// window. Where the Electron_Build launched a non-headless Chromium via
-// `playwright-core` (`chromium.launch({ headless:false, args:[...] })`) and polled
+// Port of the legacy JS backend's `puppeteerLogin(chromePath)` — the cookie-capture login
+// window. Where the legacy JS build launched a non-headless Chromium via
+// the CDP helper (`chromium.launch({ headless:false, args:[...] })`) and polled
 // `Network.getAllCookies` for the `.ROBLOSECURITY` cookie, this uses
 // `chromiumoxide`'s `Browser::launch(... .with_head() ...)` and the same
 // `Network.getAllCookies` CDP call, at the identical 1500 ms poll interval and
-// 5-minute hard timeout. The Electron `ipcMain.once('login:cancel', ...)` cancel
+// 5-minute hard timeout. The legacy JS runtime `legacy one-shot IPC listener('login:cancel', ...)` cancel
 // path is replaced by a `tokio::sync::oneshot` channel: the command layer
 // (Task 13.7) holds the `Sender` and fires it when the Renderer_UI requests a
 // cancel, which this flow observes on its `Receiver`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The URL the login window opens, from `main.js`'s
+/// The URL the login window opens, from the legacy JS backend's
 /// `page.goto('https://www.roblox.com/login', ...)`.
 const LOGIN_URL: &str = "https://www.roblox.com/login";
 
-/// The cookie poll cadence, from `main.js`'s `setInterval(..., 1500)`.
+/// The cookie poll cadence, from the legacy JS backend's `setInterval(..., 1500)`.
 const LOGIN_POLL_INTERVAL_MS: u64 = 1500;
 
-/// The hard login timeout, from `main.js`'s `LOGIN_TIMEOUT_MS = 5 * 60 * 1000`
+/// The hard login timeout, from the legacy JS backend's `LOGIN_TIMEOUT_MS = 5 * 60 * 1000`
 /// ("hard cap -- never hang forever").
 const LOGIN_TIMEOUT_MS: u64 = 5 * 60 * 1000;
 
 /// The stealth init script registered before navigation, byte-for-byte from
-/// `main.js`'s `context.addInitScript(...)` (Playwright's equivalent of
+/// the legacy JS backend's `context.addInitScript(...)` (Playwright's equivalent of
 /// Puppeteer's `evaluateOnNewDocument`). Added via
 /// [`Page::evaluate_on_new_document`] so it runs on every document before the
-/// page's own scripts, exactly as the Electron_Build did.
+/// page's own scripts, exactly as the legacy JS build did.
 const STEALTH_INIT_SCRIPT: &str = "\
 Object.defineProperty(navigator,'webdriver',{get:()=>false});\
 Object.defineProperty(navigator,'plugins',{get:()=>[{name:'Chrome PDF Plugin',filename:'internal-pdf-viewer'}]});";
 
-/// The Chromium launch flags, byte-for-byte from `main.js`'s
+/// The Chromium launch flags, byte-for-byte from the legacy JS backend's
 /// `args: ['--no-sandbox', '--disable-setuid-sandbox',
 /// '--disable-blink-features=AutomationControlled', '--window-size=530,700']`.
 const LOGIN_CHROME_ARGS: [&str; 4] = [
@@ -1273,20 +1391,20 @@ const LOGIN_CHROME_ARGS: [&str; 4] = [
     "--window-size=530,700",
 ];
 
-/// Port of `main.js`'s `ensureChrome()` (Requirement 5.1): locate a system
+/// Port of the legacy JS backend's `ensureChrome()` (Requirement 5.1): locate a system
 /// Chromium-family browser to drive the cookie-capture login window over CDP.
 ///
-/// Scans the same candidate paths in the same order as the Electron_Build,
+/// Scans the same candidate paths in the same order as the legacy JS build,
 /// resolving the `ProgramFiles`, `ProgramFiles(x86)`, and `LOCALAPPDATA`
 /// environment variables (with the same fallbacks — the two Program Files roots
 /// fall back to their `C:\` defaults, and `LOCALAPPDATA` falls back to
-/// `%USERPROFILE%\AppData\Local`, mirroring `main.js`'s
+/// `%USERPROFILE%\AppData\Local`, mirroring the legacy JS backend's
 /// `path.join(os.homedir(), 'AppData', 'Local')`), and returns the FIRST path
 /// that exists on disk. Google Chrome is preferred first (most "vanilla"
 /// fingerprint), then Microsoft Edge (ships on every Win10/11 box and is
 /// non-removable), then Brave.
 ///
-/// The Electron_Build additionally fell back to Playwright's own bundled
+/// The legacy JS build additionally fell back to Playwright's own bundled
 /// Chromium (`chromium.executablePath()`). The Tauri_Build ships no Playwright —
 /// it drives CDP via `chromiumoxide` against a system browser — so there is no
 /// equivalent bundled-Chromium fallback to scan. Returns `None` when no system
@@ -1368,19 +1486,19 @@ impl LoginResult {
 enum LoginOutcome {
     /// A `.ROBLOSECURITY` cookie matching [`matches_login_cookie`] was captured.
     Cookie(String),
-    /// The user requested cancel (the `oneshot` fired) — `main.js`'s
-    /// `ipcMain.once('login:cancel', ...)` path.
+    /// The user requested cancel (the `oneshot` fired) — the legacy JS backend's
+    /// `legacy one-shot IPC listener('login:cancel', ...)` path.
     Cancelled,
     /// The 5-minute hard timeout elapsed.
     Timeout,
-    /// The browser disconnected / the login window was closed — `main.js`'s
+    /// The browser disconnected / the login window was closed — the legacy JS backend's
     /// `browser.on('disconnected', ...)` path.
     Disconnected,
     /// Page setup (navigation / CDP) failed before any cookie could be captured.
     Error(String),
 }
 
-/// Pure predicate for the target cookie, from `main.js`'s
+/// Pure predicate for the target cookie, from the legacy JS backend's
 /// `cookies.find(ck => ck.name === '.ROBLOSECURITY' &&
 /// ck.domain.includes('roblox.com') && ck.value && ck.value.length > 100)`.
 /// Kept transport-free so it is unit-testable without a live browser.
@@ -1388,7 +1506,7 @@ fn matches_login_cookie(name: &str, domain: &str, value: &str) -> bool {
     name == ".ROBLOSECURITY" && domain.contains("roblox.com") && value.len() > 100
 }
 
-/// Re-resolve the page to poll, mirroring `main.js`'s `resolveActivePage()`:
+/// Re-resolve the page to poll, mirroring the legacy JS backend's `resolveActivePage()`:
 /// prefer whichever open tab is currently on `roblox.com` (the login flow
 /// navigates the tab and spawns popups), else fall back to the last page. Returns
 /// `None` when there are no open pages (treated as "retry next tick").
@@ -1407,15 +1525,15 @@ async fn resolve_active_page(browser: &Browser) -> Option<Page> {
     pages.into_iter().last()
 }
 
-/// One cookie-capture attempt, mirroring `main.js`'s `tryGetCookie()`: resolve the
+/// One cookie-capture attempt, mirroring the legacy JS backend's `tryGetCookie()`: resolve the
 /// active page, read all browser cookies (`Storage.getCookies`, the CDP
-/// equivalent of `main.js`'s `Network.getAllCookies`), and return the matching
+/// equivalent of the legacy JS backend's `Network.getAllCookies`), and return the matching
 /// `.ROBLOSECURITY` value if present. Any error resolves to `None`
 /// ("recreated next tick on a freshly resolved page"), never propagates.
 async fn try_get_login_cookie(browser: &Browser) -> Option<String> {
     let page = resolve_active_page(browser).await?;
     // `Storage.getCookies` returns ALL cookies in the browser (the CDP equivalent
-    // of Playwright's `Network.getAllCookies` used by `main.js`), so a cookie set
+    // of Playwright's `Network.getAllCookies` used by the legacy JS backend), so a cookie set
     // on `.roblox.com` is found regardless of which tab/popup is currently active.
     let response = page.execute(GetCookiesParams::default()).await.ok()?;
     response
@@ -1436,7 +1554,7 @@ async fn login_poll_loop(
     cancel_rx: &mut oneshot::Receiver<()>,
 ) -> LoginOutcome {
     // Create a blank page, register the stealth init script BEFORE navigation so
-    // it applies to the login document (main.js registered it on the context
+    // it applies to the login document (legacy JS backend registered it on the context
     // before newPage/goto), then navigate to the login URL.
     let page = match browser.new_page("about:blank").await {
         Ok(page) => page,
@@ -1461,7 +1579,7 @@ async fn login_poll_loop(
             // (Err), which we likewise treat as a cancel/closed outcome.
             _ = &mut *cancel_rx => return LoginOutcome::Cancelled,
             // The CDP handler stream ended => the browser process exited / the
-            // login window was closed (main.js's `disconnected` event).
+            // login window was closed (the legacy JS backend's `disconnected` event).
             _ = &mut *handler_task => return LoginOutcome::Disconnected,
             // Hard 5-minute cap.
             _ = tokio::time::sleep_until(deadline) => return LoginOutcome::Timeout,
@@ -1475,14 +1593,14 @@ async fn login_poll_loop(
     }
 }
 
-/// Port of `main.js`'s `puppeteerLogin(chromePath)` (Requirement 5.1): launch a
+/// Port of the legacy JS backend's `puppeteerLogin(chromePath)` (Requirement 5.1): launch a
 /// non-headless Chromium at `chrome_path`, open the Roblox login page, and poll
 /// for the `.ROBLOSECURITY` cookie every 1500 ms until it is captured, the user
-/// cancels (via `cancel_rx`, replacing `ipcMain.once('login:cancel')`), the login
+/// cancels (via `cancel_rx`, replacing `legacy one-shot IPC listener('login:cancel')`), the login
 /// window is closed, or the 5-minute hard timeout elapses.
 ///
 /// On a captured cookie the account is verified with
-/// [`roblox_api::fetch_user_info`] (mirroring `main.js`'s `finishOk` →
+/// [`roblox_api::fetch_user_info`] (mirroring the legacy JS backend's `finishOk` →
 /// `fetchUserInfo`) before success is reported; a verification failure resolves to
 /// `success:false` with the failure reason. The browser is always closed and the
 /// CDP handler task always aborted before returning, matching `puppeteerLogin`'s
@@ -1535,7 +1653,7 @@ pub async fn run_login_flow(
             Err(_) => LoginResult::fail("Could not verify account."),
         },
         // Both the cancel path and the window-closed path resolve with the exact
-        // string main.js used: 'Login window closed'.
+        // string legacy JS backend used: 'Login window closed'.
         LoginOutcome::Cancelled | LoginOutcome::Disconnected => {
             LoginResult::fail("Login window closed")
         }
@@ -1549,14 +1667,14 @@ pub async fn run_login_flow(
 // ─────────────────────────────────────────────────────────────────────────────
 // Task 13.4: CDP cookie injection (Requirements 5.1, 5.2)
 //
-// Port of `main.js`'s `injectCookieAndNavigate(cdpPort, cookie)` — the mirror
+// Port of the legacy JS backend's `injectCookieAndNavigate(cdpPort, cookie)` — the mirror
 // image of the login flow. Instead of launching Chrome and *reading* the
 // `.ROBLOSECURITY` cookie, this connects to an already-running Browser_Instance
 // that Donut Browser launched (via the CDP_Port returned by [`run_donut_profile`])
 // and *writes* the account's `.ROBLOSECURITY` cookie onto the Roblox website
 // domain, then navigates that instance to the Roblox home page.
 //
-// Where the Electron_Build used `playwright-core`
+// Where the legacy JS build used the CDP helper
 // (`chromium.connectOverCDP({ endpointURL })` → `Network.setCookie` → `page.goto`),
 // this uses `chromiumoxide`'s `Browser::connect` → the same `Network.setCookie`
 // CDP command → `page.goto`, preserving the identical sequence (Requirement 5.1).
@@ -1576,10 +1694,10 @@ pub async fn run_login_flow(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The Roblox home page the injected Browser_Instance navigates to AFTER the
-/// cookie is set, from `main.js`'s `page.goto('https://www.roblox.com', ...)`.
+/// cookie is set, from the legacy JS backend's `page.goto('https://www.roblox.com', ...)`.
 const ROBLOX_HOME_URL: &str = "https://www.roblox.com";
 
-/// The navigation timeout, from `main.js`'s `page.goto(..., { timeout: 30000 })`.
+/// The navigation timeout, from the legacy JS backend's `page.goto(..., { timeout: 30000 })`.
 /// `chromiumoxide`'s `goto` has no per-call timeout, so the navigation is wrapped
 /// in a `tokio::time::timeout` to reproduce the same hard cap and guarantee the
 /// injection flow can never hang indefinitely.
@@ -1606,7 +1724,7 @@ pub struct InjectedSession {
 }
 
 /// Build the redacted, user-facing error string for a cookie-injection failure —
-/// the port of `main.js`'s
+/// the port of the legacy JS backend's
 /// `'Could not inject cookie into the browser: ' + redactSecrets(e.message, launcherSecrets(cookie))`.
 ///
 /// The cookie value is added to the redaction set so it can never leak into the
@@ -1614,7 +1732,7 @@ pub struct InjectedSession {
 /// (Requirement 5.1 / account-browser-launcher Req 6.1). This mirrors the JS
 /// `catch` block, which prefixes and scrubs; the two early-return guards
 /// (`No CDP port` / `No cookie to inject`) sit OUTSIDE this block and are returned
-/// verbatim, exactly as in the Electron_Build.
+/// verbatim, exactly as in the legacy JS build.
 fn inject_error(cookie: &str, message: &str) -> String {
     let safe = logging::redaction::redact_string(message, &[cookie.to_string()]);
     format!("Could not inject cookie into the browser: {safe}")
@@ -1630,7 +1748,7 @@ fn inject_error(cookie: &str, message: &str) -> String {
 /// cookie-redaction.
 async fn inject_on_connection(browser: &Browser, cookie: &str) -> Result<Page, String> {
     // Reuse the context/tab Donut Browser already opened rather than spawning a
-    // second one — `main.js`'s `pages.length > 0 ? pages[0] : context.newPage()`.
+    // second one — the legacy JS backend's `pages.length > 0 ? pages[0] : context.newPage()`.
     let pages = browser.pages().await.map_err(|e| e.to_string())?;
     let page = match pages.into_iter().next() {
         Some(page) => page,
@@ -1643,7 +1761,7 @@ async fn inject_on_connection(browser: &Browser, cookie: &str) -> Result<Page, S
     // Inject the `.ROBLOSECURITY` cookie onto the Roblox website domain FIRST.
     // Scoped to `.roblox.com` so it applies across roblox.com subdomains, and
     // marked Secure/HttpOnly/SameSite=Lax to match how Roblox itself sets the real
-    // cookie — byte-for-byte the same fields `main.js` passed to
+    // cookie — byte-for-byte the same fields the legacy JS backend passed to
     // `Network.setCookie`.
     let params = SetCookieParams::builder()
         .name(".ROBLOSECURITY")
@@ -1658,7 +1776,7 @@ async fn inject_on_connection(browser: &Browser, cookie: &str) -> Result<Page, S
 
     // Only AFTER the cookie is set do we navigate, so the home-page request is
     // authenticated from the first byte (Requirement 5.2). The 30-second cap
-    // mirrors `main.js`'s goto `{ timeout: 30000 }`.
+    // mirrors the legacy JS backend's goto `{ timeout: 30000 }`.
     match tokio::time::timeout(
         Duration::from_millis(INJECT_NAV_TIMEOUT_MS),
         page.goto(ROBLOX_HOME_URL),
@@ -1671,13 +1789,13 @@ async fn inject_on_connection(browser: &Browser, cookie: &str) -> Result<Page, S
     }
 }
 
-/// Port of `main.js`'s `injectCookieAndNavigate(cdpPort, cookie)` (Requirements
+/// Port of the legacy JS backend's `injectCookieAndNavigate(cdpPort, cookie)` (Requirements
 /// 5.1, 5.2): connect over CDP to the Browser_Instance at
 /// `http://127.0.0.1:{cdp_port}`, inject the account's `.ROBLOSECURITY` cookie via
 /// `Network.setCookie`, then navigate to the Roblox home page — in that order.
 ///
 /// Resolve-never-reject, like the JS: the two input guards return the exact
-/// verbatim strings the Electron_Build used, and every other failure resolves to
+/// verbatim strings the legacy JS build used, and every other failure resolves to
 /// `Err` with a `"Could not inject cookie into the browser: …"` message whose text
 /// has been scrubbed of the cookie value (Requirement 5.1). On success the
 /// connected browser is handed back in an [`InjectedSession`] and is NEVER closed
@@ -1690,7 +1808,7 @@ pub async fn inject_cookie_and_navigate(
     cdp_port: u32,
     cookie: &str,
 ) -> Result<InjectedSession, String> {
-    // The two guard clauses mirror `main.js`'s `if (!cdpPort)` / `if (!cookie)`
+    // The two guard clauses mirror the legacy JS backend's `if (!cdpPort)` / `if (!cookie)`
     // early returns — returned verbatim, WITHOUT the catch-block prefix/redaction.
     if cdp_port == 0 {
         return Err("No CDP port for the Browser_Instance.".to_string());
@@ -1735,7 +1853,7 @@ pub async fn inject_cookie_and_navigate(
 // ─────────────────────────────────────────────────────────────────────────────
 // Task 13.5: per-account session tracking + Copy Cookie (Requirement 5.1)
 //
-// Port of `main.js`'s `_browserSessions` map and the helpers that drive it —
+// Port of the legacy JS backend's `_browserSessions` map and the helpers that drive it —
 // `focusExistingSession` (dedupe by focusing an already-open instance instead of
 // launching a second one, account-browser-launcher Req 4.2/4.4), the
 // `disconnected`-handler `clearSessionOnDisconnect` (clear-on-disconnect, Req
@@ -1744,7 +1862,7 @@ pub async fn inject_cookie_and_navigate(
 // verification, Req 5.2-5.5).
 //
 // The live map lives in [`crate::AppState::browser_sessions`] as
-// `HashMap<String, BrowserSession>`; like `main.js`'s `_browserSessions` it is
+// `HashMap<String, BrowserSession>`; like the legacy JS backend's `_browserSessions` it is
 // intentionally NOT persisted (it describes only this process's live CDP
 // connections). An account with no entry is treated as never-opened, so a
 // selection after the instance closed starts a fresh `/run`
@@ -1760,7 +1878,7 @@ pub async fn inject_cookie_and_navigate(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The lifecycle state of a tracked Browser_Instance, mirroring the `state`
-/// field of `main.js`'s `_browserSessions` entry (`'opening' | 'open'`). The map
+/// field of the legacy JS backend's `_browserSessions` entry (`'opening' | 'open'`). The map
 /// only ever holds these two states — an entry's removal IS the transition to
 /// the closed/absent state — so a "closed" variant is deliberately unrepresentable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1775,7 +1893,7 @@ pub enum SessionState {
 }
 
 /// The live CDP connection backing an `open` session — the Rust form of the
-/// `browser` + `page` fields on `main.js`'s `_browserSessions` entry.
+/// `browser` + `page` fields on the legacy JS backend's `_browserSessions` entry.
 ///
 /// Holds the connected [`Browser`] and the tracked [`Page`] (already navigated to
 /// the authenticated Roblox home page). The CDP message-pump task is NOT stored
@@ -1793,7 +1911,7 @@ pub struct LiveSession {
     pub page: Page,
 }
 
-/// A tracked per-account browser session — the Rust form of a `main.js`
+/// A tracked per-account browser session — the Rust form of a the legacy JS backend
 /// `_browserSessions` entry `{ state, profileId, cdpPort, browser, page }`.
 ///
 /// Stored in [`crate::AppState::browser_sessions`]. `live` is `None` while
@@ -1862,7 +1980,7 @@ impl FocusResult {
 }
 
 /// Bring a page to the foreground via the CDP `Page.bringToFront` command — the
-/// port of `main.js`'s `page.bringToFront()`, which "activates the tab and
+/// port of the legacy JS backend's `page.bringToFront()`, which "activates the tab and
 /// raises/un-minimizes the browser window". Uses the raw CDP command (like the
 /// cookie-injection flow uses `Network.setCookie`) so it depends only on the
 /// generated protocol, not a convenience wrapper.
@@ -1875,7 +1993,7 @@ async fn bring_page_to_front(page: &Page) -> Result<(), String> {
 
 /// Mark an account's session `opening` BEFORE issuing `/run`, so a second
 /// selection arriving mid-open is deduped rather than launching a duplicate
-/// instance — the port of `main.js`'s
+/// instance — the port of the legacy JS backend's
 /// `_browserSessions.set(accountId, { state:'opening', profileId, ... })`.
 ///
 /// Overwrites any prior entry for the account (the open flow only reaches this
@@ -1915,7 +2033,7 @@ pub async fn untrack_session(
 
 /// Transition an account's session to `open` after a fully successful open,
 /// storing the live connection and wiring clear-on-disconnect — the port of
-/// `main.js`'s success tail:
+/// the legacy JS backend's success tail:
 ///
 /// ```js
 /// browser.once('disconnected', () => clearSessionOnDisconnect(accountId));
@@ -1956,7 +2074,7 @@ pub async fn mark_session_open(
     }
 
     // Clear-on-disconnect: the CDP pump task completes when the browser
-    // disconnects (stream ends) — `main.js`'s `browser.on('disconnected', ...)`.
+    // disconnects (stream ends) — the legacy JS backend's `browser.on('disconnected', ...)`.
     // Awaiting it here (rather than storing it in the map) lets us drop the entry
     // exactly when the instance goes away.
     let monitor_sessions = Arc::clone(&sessions);
@@ -1967,7 +2085,7 @@ pub async fn mark_session_open(
 }
 
 /// Restore/activate the Browser_Instance already tracked for an account instead
-/// of launching a second one — the port of `main.js`'s
+/// of launching a second one — the port of the legacy JS backend's
 /// `focusExistingSession(accountId)` (account-browser-launcher Req 4.2).
 ///
 /// Contract, matching the JS resolve-never-reject helper:
@@ -1997,7 +2115,7 @@ pub async fn focus_existing_session(
     };
 
     // 'open': try the exact tracked page first; on failure fall back to the first
-    // open tab (mirrors `main.js`'s `session.page` → `collectBrowserPages(...)[0]`).
+    // open tab (mirrors the legacy JS backend's `session.page` → `collectBrowserPages(...)[0]`).
     match bring_page_to_front(&live.page).await {
         Ok(()) => FocusResult::focused(),
         Err(tracked_err) => match live.browser.pages().await {
@@ -2017,7 +2135,7 @@ pub async fn focus_existing_session(
 }
 
 /// Drop an account's tracked session when its Browser_Instance goes away — the
-/// port of `main.js`'s `clearSessionOnDisconnect(accountId)` (the `disconnected`
+/// port of the legacy JS backend's `clearSessionOnDisconnect(accountId)` (the `disconnected`
 /// handler, account-browser-launcher Req 4.3). Removing the entry IS the
 /// transition to the closed/absent state, since the map only holds
 /// `opening`/`open` sessions.
@@ -2033,7 +2151,7 @@ pub async fn clear_session_on_disconnect(
 }
 
 /// Close a tracked Browser_Instance for an account and confirm it has gone away —
-/// the port of `main.js`'s `closeTrackedBrowserInstance(accountId)`, used by the
+/// the port of the legacy JS backend's `closeTrackedBrowserInstance(accountId)`, used by the
 /// account-removal cleanup (account-browser-launcher Req 8.3) to tear down a live
 /// instance BEFORE deleting its Donut_Profile.
 ///
@@ -2086,7 +2204,7 @@ pub async fn close_tracked_browser_instance(
 /// write-then-read-back verification logic is testable without a real clipboard
 /// and decoupled from the Tauri command layer.
 ///
-/// The Electron_Build used Electron's main-process `clipboard` module directly;
+/// The legacy JS build used legacy JS runtime's main-process `clipboard` module directly;
 /// the Tauri_Build's `browser_copy_cookie` command (Task 13.7) supplies a
 /// concrete implementation backed by `tauri-plugin-clipboard-manager`
 /// (`app.clipboard().write_text(...)` / `.read_text()`), while unit tests supply
@@ -2126,7 +2244,7 @@ impl CopyCookieResult {
 }
 
 /// A human-facing label for an account, used only in user-facing error text — the
-/// port of `main.js`'s `accountLabel(account)`. Prefers the nickname, then the
+/// port of the legacy JS backend's `accountLabel(account)`. Prefers the nickname, then the
 /// username, then the user id, then the internal id, so the message always names
 /// *some* account even for a barely-populated record. (The Rust `Account` fields
 /// are non-`Option` strings, so "present" means non-empty, matching the JS `||`.)
@@ -2145,7 +2263,7 @@ pub fn account_label(account: &Account) -> String {
 }
 
 /// Copy an account's `.ROBLOSECURITY` cookie to the system clipboard with
-/// post-write read-back verification — the port of `main.js`'s
+/// post-write read-back verification — the port of the legacy JS backend's
 /// `copyAccountCookie(accountId)` (account-browser-launcher Req 5.2-5.5).
 ///
 /// ```js
@@ -2161,7 +2279,7 @@ pub fn account_label(account: &Account) -> String {
 /// }
 /// ```
 ///
-/// The flow, matching the Electron_Build step for step:
+/// The flow, matching the legacy JS build step for step:
 ///   1. Unknown account (or an unreadable store) → `Account not found.`, clipboard
 ///      untouched.
 ///   2. No stored cookie → an account-identifying error, clipboard untouched
@@ -2220,37 +2338,37 @@ pub fn copy_account_cookie_with(
 // Wires the Account_Browser_Launcher's two Tauri commands and its push-event
 // surface onto the pieces the earlier 13.x tasks built:
 //
-//   * `browser_open`        <- ipcMain.handle('browser:open',      (_, id) => openAccountBrowser(id))
-//   * `browser_copy_cookie` <- ipcMain.handle('browser:copyCookie',(_, id) => copyAccountCookie(id))
+//   * `browser_open`        <- legacy command handler('browser:open',      (_, id) => openAccountBrowser(id))
+//   * `browser_copy_cookie` <- legacy command handler('browser:copyCookie',(_, id) => copyAccountCookie(id))
 //
 // Events (design IPC_Surface mapping):
 //   * `browser://notify`           <- webContents.send('browser:notify', ...)         (accounts.rs)
-//   * `browser://session-state`    <- ipcRenderer.on('browser:sessionState', ...)     (see note)
-//   * `chrome://download-progress` <- ipcRenderer.on('chrome:download-progress', ...)  (see note)
+//   * `browser://session-state`    <- renderer listener for browser:sessionState       (see note)
+//   * `chrome://download-progress` <- renderer listener for chrome:download-progress    (see note)
 //
-// NOTE on session-state / download-progress: in the Electron_Build these two are
+// NOTE on session-state / download-progress: in the legacy JS build these two are
 // declared as `window.api` subscription points (`onBrowserSessionState`,
 // `onChromeProgress`) but the main process NEVER emits them in the browser-open /
-// copy-cookie flows (grep of `src/main.js` finds no `webContents.send` for either;
+// copy-cookie flows (grep of the legacy JS backend finds no `webContents.send` for either;
 // only `browser:notify` is ever sent, from the `accounts:remove` handler). This
 // is a faithful behavioral port (Requirement 13.1 — no new user-facing behavior),
 // so this module defines the canonical event names as the Tauri channels the
 // adapted `preload.js` (Task 17) listens on, satisfying Requirement 10.2/10.4's
 // "an equivalent event exists for every subscription" bar, WITHOUT introducing
-// emissions the Electron_Build did not make. `browser://notify`'s single emission
+// emissions the legacy JS build did not make. `browser://notify`'s single emission
 // point remains the `accounts_remove` command in `accounts.rs`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Tauri event replacing the Electron `browser:sessionState` `webContents`
+/// Tauri event replacing the legacy JS runtime `browser:sessionState` `webContents`
 /// subscription (`window.api.onBrowserSessionState`). See the section note: the
-/// Electron_Build declares this channel but does not emit on it during the
+/// legacy JS build declares this channel but does not emit on it during the
 /// open/copy flows, so this constant defines the canonical channel name for the
 /// adapted `preload.js` without adding a new emission.
 pub const BROWSER_SESSION_STATE_EVENT: &str = "browser://session-state";
 
-/// Tauri event replacing the Electron `chrome:download-progress` `webContents`
+/// Tauri event replacing the legacy JS runtime `chrome:download-progress` `webContents`
 /// subscription (`window.api.onChromeProgress`, used by the login UI). See the
-/// section note: the Electron_Build declares this channel but its Playwright
+/// section note: the legacy JS build declares this channel but its Playwright
 /// login flow never emits progress on it, so this constant defines the canonical
 /// channel name for the adapted `preload.js` without adding a new emission.
 pub const CHROME_DOWNLOAD_PROGRESS_EVENT: &str = "chrome://download-progress";
@@ -2261,7 +2379,7 @@ pub const CHROME_DOWNLOAD_PROGRESS_EVENT: &str = "chrome://download-progress";
 pub use crate::accounts::BROWSER_NOTIFY_EVENT;
 
 /// The concrete [`Clipboard`] backed by `tauri-plugin-clipboard-manager`, the
-/// Tauri_Build's replacement for Electron's main-process `clipboard` module
+/// Tauri_Build's replacement for legacy JS runtime's main-process `clipboard` module
 /// (design "Overview" rationale). Wraps an [`AppHandle`] and delegates to the
 /// plugin's `ClipboardExt::clipboard().write_text()` / `.read_text()`; any OS
 /// clipboard failure surfaces as `Err(String)` so [`copy_account_cookie_with`]
@@ -2301,7 +2419,7 @@ impl Clipboard for TauriClipboard<'_> {
 ///
 /// `error`/`focused` are omitted when absent (matching the JS object literals),
 /// so a Renderer_UI reading `r.ok` / `r.focused` / `r.error` sees identical
-/// payloads to the Electron_Build.
+/// payloads to the legacy JS build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OpenResult {
     pub ok: bool,
@@ -2341,10 +2459,83 @@ impl OpenResult {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenBatchItemResult {
+    pub account_id: String,
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focused: Option<bool>,
+}
+
+impl OpenBatchItemResult {
+    fn ok(account_id: impl Into<String>) -> Self {
+        Self {
+            account_id: account_id.into(),
+            ok: true,
+            error: None,
+            focused: None,
+        }
+    }
+
+    fn deduped(account_id: impl Into<String>, focused: bool) -> Self {
+        Self {
+            account_id: account_id.into(),
+            ok: true,
+            error: None,
+            focused: Some(focused),
+        }
+    }
+
+    fn err(account_id: impl Into<String>, error: impl Into<String>) -> Self {
+        Self {
+            account_id: account_id.into(),
+            ok: false,
+            error: Some(error.into()),
+            focused: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenBatchResult {
+    pub ok: bool,
+    pub opened: usize,
+    pub total: usize,
+    pub results: Vec<OpenBatchItemResult>,
+}
+
+impl OpenBatchResult {
+    fn from_results(total: usize, results: Vec<OpenBatchItemResult>) -> Self {
+        let opened = results.iter().filter(|r| r.ok).count();
+        Self {
+            ok: opened == total,
+            opened,
+            total,
+            results,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct PreparedBrowserOpen {
+    account: Account,
+    profile_id: String,
+}
+
+struct BatchLaunchedProfile {
+    account: Account,
+    profile_id: String,
+    cdp_port: u32,
+}
+
 /// Map a [`Availability`] failure to the distinct user-facing message each mode
-/// requires — the port of `main.js`'s `availabilityError(code)` (design
+/// requires — the port of the legacy JS backend's `availabilityError(code)` (design
 /// Property 8). [`Availability::Ok`] maps to the JS `default` branch, matching the
-/// Electron switch's fall-through wording.
+/// legacy JS runtime switch's fall-through wording.
 fn availability_error(availability: Availability) -> &'static str {
     match availability {
         Availability::NoToken => {
@@ -2363,7 +2554,7 @@ fn availability_error(availability: Availability) -> &'static str {
     }
 }
 
-/// The full "Open in Browser" orchestration — the direct port of `main.js`'s
+/// The full "Open in Browser" orchestration — the direct port of the legacy JS backend's
 /// `openAccountBrowser(accountId)` (Requirement 5.1). Every check is re-evaluated
 /// per invocation (nothing cached across calls) and runs in the same fixed order
 /// so a failure short-circuits before any later, more expensive step:
@@ -2391,7 +2582,7 @@ pub async fn open_account_browser(
     account_id: &str,
 ) -> OpenResult {
     // Resolved once and threaded into every log call so the token can never leak
-    // into a log entry, mirroring `main.js`'s `launcherSecrets` (which always
+    // into a log entry, mirroring the legacy JS backend's `launcherSecrets` (which always
     // includes `getDonutToken()`).
     let donut_token = get_donut_token(dir);
 
@@ -2483,7 +2674,7 @@ pub async fn open_account_browser(
 
     // Donut Browser is confirmed reachable, so retry any Donut_Profile deletions
     // queued while it was unreachable (account-browser-launcher Req 8.5).
-    // Fire-and-forget, exactly as `main.js`'s
+    // Fire-and-forget, exactly as the legacy JS backend's
     // `Promise.resolve(retryPendingDeletions()).catch(() => {})` — it never blocks
     // or fails the open flow.
     {
@@ -2533,7 +2724,7 @@ pub async fn open_account_browser(
             return OpenResult::err("Could not create a Donut Browser profile for this account.");
         }
     };
-    let profile_id = resolved.profile_id;
+    let mut profile_id = resolved.profile_id;
 
     // 6. Mark 'opening' BEFORE issuing `/run` so a second selection arriving
     //    mid-open is deduped rather than launching a duplicate instance. Any
@@ -2542,6 +2733,65 @@ pub async fn open_account_browser(
 
     let cdp_port = match run_donut_profile(dir, &profile_id).await {
         Ok(cdp_port) => cdp_port,
+        Err(RunProfileError::ProfileNotFound) => {
+            untrack_session(&sessions, account_id).await;
+            clear_profile_mapping_if_current(dir, account_id, &profile_id);
+            logging::log_browser(
+                app,
+                "warn",
+                "Open in Browser: stored Donut profile was missing; recreating it.",
+                json!({ "profileId": profile_id }),
+                Some(&account),
+                None,
+                donut_token.as_deref(),
+            );
+
+            let recreated = match resolve_or_create_profile(dir, &account).await {
+                Ok(resolved) => resolved,
+                Err(create_err) => {
+                    logging::log_browser(
+                        app,
+                        "error",
+                        &format!(
+                            "Open in Browser: could not recreate a missing Donut profile ({}).",
+                            create_err.as_str()
+                        ),
+                        Value::Null,
+                        Some(&account),
+                        None,
+                        donut_token.as_deref(),
+                    );
+                    return OpenResult::err("Could not create a Donut Browser profile for this account.");
+                }
+            };
+            profile_id = recreated.profile_id;
+            mark_session_opening(&sessions, account_id, &profile_id).await;
+            match run_donut_profile(dir, &profile_id).await {
+                Ok(cdp_port) => cdp_port,
+                Err(run_err) => {
+                    untrack_session(&sessions, account_id).await;
+                    logging::log_browser(
+                        app,
+                        "error",
+                        &format!("Open in Browser: /run failed after profile recreation ({}).", run_err.as_str()),
+                        json!({ "profileId": profile_id }),
+                        Some(&account),
+                        None,
+                        donut_token.as_deref(),
+                    );
+                    let message = match run_err {
+                        RunProfileError::RequiresPro => {
+                            "Opening an account browser session requires a Donut Browser Pro subscription."
+                        }
+                        RunProfileError::ProfileNotFound => {
+                            "Donut Browser deleted the recreated profile before it could launch."
+                        }
+                        _ => "Could not launch the browser instance through Donut Browser.",
+                    };
+                    return OpenResult::err(message);
+                }
+            }
+        }
         Err(run_err) => {
             untrack_session(&sessions, account_id).await;
             logging::log_browser(
@@ -2556,6 +2806,9 @@ pub async fn open_account_browser(
             let message = match run_err {
                 RunProfileError::RequiresPro => {
                     "Opening an account browser session requires a Donut Browser Pro subscription."
+                }
+                RunProfileError::ProfileNotFound => {
+                    "Donut Browser deleted the profile before it could launch."
                 }
                 _ => "Could not launch the browser instance through Donut Browser.",
             };
@@ -2612,10 +2865,378 @@ pub async fn open_account_browser(
     OpenResult::ok()
 }
 
+async fn prepare_batch_profile(
+    app: &AppHandle,
+    dir: &Path,
+    account: &Account,
+    donut_token: Option<&str>,
+) -> Result<PreparedBrowserOpen, OpenBatchItemResult> {
+    match resolve_or_create_profile(dir, account).await {
+        Ok(resolved) => Ok(PreparedBrowserOpen {
+            account: account.clone(),
+            profile_id: resolved.profile_id,
+        }),
+        Err(create_err) => {
+            logging::log_browser(
+                app,
+                "error",
+                &format!(
+                    "Open in Browser batch: could not resolve or create a Donut profile ({}).",
+                    create_err.as_str()
+                ),
+                Value::Null,
+                Some(account),
+                None,
+                donut_token,
+            );
+            Err(OpenBatchItemResult::err(
+                account.id.clone(),
+                "Could not create a Donut Browser profile for this account.",
+            ))
+        }
+    }
+}
+
+async fn inject_batch_launched_profiles(
+    app: &AppHandle,
+    sessions: Arc<AsyncMutex<HashMap<String, BrowserSession>>>,
+    launched: Vec<BatchLaunchedProfile>,
+    donut_token: Option<&str>,
+) -> Vec<OpenBatchItemResult> {
+    let mut results = Vec::with_capacity(launched.len());
+    for item in launched {
+        let account = item.account;
+        match inject_cookie_and_navigate(item.cdp_port, &account.cookie).await {
+            Ok(injected) => {
+                mark_session_open(
+                    Arc::clone(&sessions),
+                    account.id.clone(),
+                    item.profile_id.clone(),
+                    item.cdp_port,
+                    injected,
+                )
+                .await;
+                logging::log_browser(
+                    app,
+                    "info",
+                    "Opened the Roblox website in an isolated Donut Browser session.",
+                    json!({ "profileId": item.profile_id }),
+                    Some(&account),
+                    None,
+                    donut_token,
+                );
+                results.push(OpenBatchItemResult::ok(account.id));
+            }
+            Err(inject_err) => {
+                untrack_session(&sessions, &account.id).await;
+                logging::log_browser(
+                    app,
+                    "error",
+                    "Open in Browser batch: cookie injection failed.",
+                    json!({ "profileId": item.profile_id }),
+                    Some(&account),
+                    Some(&account.cookie),
+                    donut_token,
+                );
+                let message = if inject_err.is_empty() {
+                    "Could not inject the cookie into the browser.".to_string()
+                } else {
+                    inject_err
+                };
+                results.push(OpenBatchItemResult::err(account.id, message));
+            }
+        }
+    }
+    results
+}
+
+async fn run_prepared_batch_once(
+    app: &AppHandle,
+    dir: &Path,
+    sessions: Arc<AsyncMutex<HashMap<String, BrowserSession>>>,
+    prepared: Vec<PreparedBrowserOpen>,
+    retry_missing_profiles: bool,
+    donut_token: Option<&str>,
+) -> (
+    Vec<BatchLaunchedProfile>,
+    Vec<OpenBatchItemResult>,
+    Vec<PreparedBrowserOpen>,
+) {
+    if prepared.is_empty() {
+        return (Vec::new(), Vec::new(), Vec::new());
+    }
+
+    for item in &prepared {
+        mark_session_opening(&sessions, &item.account.id, &item.profile_id).await;
+    }
+
+    let profile_ids: Vec<String> = prepared.iter().map(|p| p.profile_id.clone()).collect();
+    let batch = match run_donut_profiles_batch(dir, &profile_ids).await {
+        Ok(batch) => batch,
+        Err(batch_err) => {
+            let message = match batch_err {
+                RunProfileError::RequiresPro => {
+                    "Opening account browser sessions requires a Donut Browser Pro subscription."
+                }
+                _ => "Could not launch browser instances through Donut Browser batch run.",
+            };
+            let mut failures = Vec::with_capacity(prepared.len());
+            for item in prepared {
+                untrack_session(&sessions, &item.account.id).await;
+                logging::log_browser(
+                    app,
+                    "error",
+                    &format!(
+                        "Open in Browser batch: batch /run failed ({}).",
+                        batch_err.as_str()
+                    ),
+                    json!({ "profileId": item.profile_id }),
+                    Some(&item.account),
+                    None,
+                    donut_token,
+                );
+                failures.push(OpenBatchItemResult::err(item.account.id, message));
+            }
+            return (Vec::new(), failures, Vec::new());
+        }
+    };
+
+    let by_profile: HashMap<String, BatchRunProfileResult> = batch
+        .into_iter()
+        .map(|result| (result.profile_id.clone(), result))
+        .collect();
+
+    let mut launched = Vec::new();
+    let mut retry = Vec::new();
+    let mut results = Vec::new();
+    for item in prepared {
+        let account = item.account;
+        let profile_id = item.profile_id;
+        let result = by_profile.get(&profile_id);
+        match result {
+            Some(result) if result.ok => {
+                if let Some(cdp_port) = result.cdp_port {
+                    launched.push(BatchLaunchedProfile {
+                        account,
+                        profile_id,
+                        cdp_port,
+                    });
+                } else {
+                    untrack_session(&sessions, &account.id).await;
+                    results.push(OpenBatchItemResult::err(
+                        account.id,
+                        "Donut Browser launched the profile but did not return a CDP port.",
+                    ));
+                }
+            }
+            Some(result) if retry_missing_profiles && result.is_profile_not_found() => {
+                untrack_session(&sessions, &account.id).await;
+                clear_profile_mapping_if_current(dir, &account.id, &profile_id);
+                logging::log_browser(
+                    app,
+                    "warn",
+                    "Open in Browser batch: stored Donut profile was missing; recreating it.",
+                    json!({ "profileId": profile_id }),
+                    Some(&account),
+                    None,
+                    donut_token,
+                );
+                match prepare_batch_profile(app, dir, &account, donut_token).await {
+                    Ok(recreated) => retry.push(recreated),
+                    Err(err) => results.push(err),
+                }
+            }
+            Some(result) => {
+                untrack_session(&sessions, &account.id).await;
+                results.push(OpenBatchItemResult::err(
+                    account.id,
+                    result
+                        .error
+                        .clone()
+                        .unwrap_or_else(|| "Could not launch the browser instance through Donut Browser.".to_string()),
+                ));
+            }
+            None => {
+                untrack_session(&sessions, &account.id).await;
+                results.push(OpenBatchItemResult::err(
+                    account.id,
+                    "Donut Browser did not report a result for this profile.",
+                ));
+            }
+        }
+    }
+
+    (launched, results, retry)
+}
+
+pub async fn open_account_browsers(
+    app: &AppHandle,
+    dir: &Path,
+    sessions: Arc<AsyncMutex<HashMap<String, BrowserSession>>>,
+    account_ids: Vec<String>,
+) -> OpenBatchResult {
+    let total = account_ids.len();
+    let donut_token = get_donut_token(dir);
+
+    if !cfg!(target_os = "windows") {
+        let error = "Open in Browser is available on Windows only.";
+        let results = account_ids
+            .into_iter()
+            .map(|account_id| OpenBatchItemResult::err(account_id, error))
+            .collect();
+        return OpenBatchResult::from_results(total, results);
+    }
+
+    let accounts = load_accounts(dir).unwrap_or_default();
+    let by_account: HashMap<String, Account> =
+        accounts.into_iter().map(|a| (a.id.clone(), a)).collect();
+
+    let mut results = Vec::new();
+    let mut launchable = Vec::new();
+    for account_id in account_ids {
+        let Some(account) = by_account.get(&account_id).cloned() else {
+            logging::log_browser(
+                app,
+                "error",
+                "Open in Browser batch: account not found.",
+                json!({ "accountId": account_id }),
+                None,
+                None,
+                donut_token.as_deref(),
+            );
+            results.push(OpenBatchItemResult::err(account_id, "Account not found."));
+            continue;
+        };
+
+        if account.cookie.is_empty() {
+            logging::log_browser(
+                app,
+                "error",
+                "Open in Browser batch: no ROBLOSECURITY cookie stored for this account.",
+                Value::Null,
+                Some(&account),
+                None,
+                donut_token.as_deref(),
+            );
+            results.push(OpenBatchItemResult::err(
+                account.id.clone(),
+                format!("No cookie is stored for {}.", account_label(&account)),
+            ));
+            continue;
+        }
+
+        let already_tracked = {
+            let guard = sessions.lock().await;
+            matches!(
+                guard.get(&account.id).map(|s| s.state),
+                Some(SessionState::Opening) | Some(SessionState::Open)
+            )
+        };
+        if already_tracked {
+            let focus = focus_existing_session(&sessions, &account.id).await;
+            results.push(OpenBatchItemResult::deduped(account.id, focus.focused));
+            continue;
+        }
+
+        launchable.push(account);
+    }
+
+    if launchable.is_empty() {
+        return OpenBatchResult::from_results(total, results);
+    }
+
+    let avail = check_donut_availability(dir).await;
+    if !avail.is_ok() {
+        for account in launchable {
+            logging::log_browser(
+                app,
+                "error",
+                &format!(
+                    "Open in Browser batch preflight failed: {}.",
+                    avail.as_error_str().unwrap_or("unavailable")
+                ),
+                Value::Null,
+                Some(&account),
+                None,
+                donut_token.as_deref(),
+            );
+            results.push(OpenBatchItemResult::err(account.id, availability_error(avail)));
+        }
+        return OpenBatchResult::from_results(total, results);
+    }
+
+    {
+        let dir_owned = dir.to_path_buf();
+        tokio::spawn(async move {
+            let _ = retry_pending_deletions(&dir_owned).await;
+        });
+    }
+
+    if let Err(engine_err) = ensure_wayfern_engine(dir).await {
+        for account in launchable {
+            logging::log_browser(
+                app,
+                "error",
+                &format!(
+                    "Open in Browser batch: wayfern engine unavailable ({}).",
+                    engine_err.as_str()
+                ),
+                Value::Null,
+                Some(&account),
+                None,
+                donut_token.as_deref(),
+            );
+            results.push(OpenBatchItemResult::err(
+                account.id,
+                "The Donut Browser \"wayfern\" engine could not be downloaded or confirmed.",
+            ));
+        }
+        return OpenBatchResult::from_results(total, results);
+    }
+
+    let mut prepared = Vec::new();
+    for account in launchable {
+        match prepare_batch_profile(app, dir, &account, donut_token.as_deref()).await {
+            Ok(item) => prepared.push(item),
+            Err(err) => results.push(err),
+        }
+    }
+
+    let (mut launched, run_results, retry) = run_prepared_batch_once(
+        app,
+        dir,
+        Arc::clone(&sessions),
+        prepared,
+        true,
+        donut_token.as_deref(),
+    )
+    .await;
+    results.extend(run_results);
+    if !retry.is_empty() {
+        let (retry_launched, retry_results, _retry_again) = run_prepared_batch_once(
+            app,
+            dir,
+            Arc::clone(&sessions),
+            retry,
+            false,
+            donut_token.as_deref(),
+        )
+        .await;
+        launched.extend(retry_launched);
+        results.extend(retry_results);
+    }
+
+    let injection_results =
+        inject_batch_launched_profiles(app, sessions, launched, donut_token.as_deref()).await;
+    results.extend(injection_results);
+
+    OpenBatchResult::from_results(total, results)
+}
+
 /// `browser:open` — open the Roblox website in an isolated per-account Donut
-/// Browser session. Ports `ipcMain.handle('browser:open', (_, accountId) =>
+/// Browser session. Ports `legacy command handler('browser:open', (_, accountId) =>
 /// openAccountBrowser(accountId))` (Requirement 10.1); the parameter order
-/// matches the Electron handler (a single `accountId`).
+/// matches the legacy handler (a single `accountId`).
 ///
 /// Resolve-never-reject in spirit: it returns `Ok(OpenResult)` for every open
 /// outcome the Renderer_UI branches on, and only `Err` if the app-data directory
@@ -2635,16 +3256,31 @@ pub async fn browser_open(
     crate::logging::log_command_result("browser_open", result)
 }
 
+#[tauri::command]
+pub async fn browser_open_batch(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    account_ids: Vec<String>,
+) -> Result<OpenBatchResult, String> {
+    let result = async {
+        let dir = accounts::store_dir(&app)?;
+        let sessions = Arc::clone(&state.browser_sessions);
+        Ok(open_account_browsers(&app, &dir, sessions, account_ids).await)
+    }
+    .await;
+    crate::logging::log_command_result("browser_open_batch", result)
+}
+
 /// `browser:copyCookie` — copy an account's `.ROBLOSECURITY` cookie to the system
 /// clipboard with read-back verification. Ports
-/// `ipcMain.handle('browser:copyCookie', (_, accountId) =>
+/// `legacy command handler('browser:copyCookie', (_, accountId) =>
 /// copyAccountCookie(accountId))` (Requirement 10.1); the parameter order matches
-/// the Electron handler (a single `accountId`).
+/// the legacy handler (a single `accountId`).
 ///
 /// Uses the real [`TauriClipboard`] (`tauri-plugin-clipboard-manager`) and the
 /// pure [`copy_account_cookie_with`] flow. Logs the outcome via
 /// [`logging::log_browser`] with the cookie supplied purely as a redaction secret
-/// (Requirement 4.3), mirroring `main.js`'s `copyAccountCookie` log points, then
+/// (Requirement 4.3), mirroring the legacy JS backend's `copyAccountCookie` log points, then
 /// returns the `{ ok, error? }` result the Renderer_UI already branches on.
 #[tauri::command]
 pub async fn browser_copy_cookie(
@@ -2662,7 +3298,7 @@ pub async fn browser_copy_cookie(
 
     // The cookie is looked up again here only to feed `log_browser`'s redaction
     // set and to name the account in the success/failure log lines, mirroring how
-    // `main.js`'s `copyAccountCookie` logs with the account + cookie in scope. The
+    // the legacy JS backend's `copyAccountCookie` logs with the account + cookie in scope. The
     // authoritative copy decision is made entirely by `copy_account_cookie_with`.
     let account = load_accounts(&dir)
         .unwrap_or_default()
@@ -2710,7 +3346,7 @@ pub async fn browser_copy_cookie(
             ),
         };
         // The "account not found" line carries no account (there is none); every
-        // other line stamps the account, matching `main.js`'s log calls.
+        // other line stamps the account, matching the legacy JS backend's log calls.
         let account_for_log = if meta.is_null() { account.as_ref() } else { None };
         logging::log_browser(
             &app,
@@ -2728,33 +3364,33 @@ pub async fn browser_copy_cookie(
 
 /// `roblox:openLogin` — open the cookie-capture login window and return the
 /// captured/verified account, or a failure the Renderer_UI branches on. Ports
-/// `ipcMain.handle('roblox:openLogin', ...)` (Requirement 10.1); the Electron
+/// `legacy command handler('roblox:openLogin', ...)` (Requirement 10.1); the legacy JS runtime
 /// handler takes no positional arguments, and neither does this command (preload
 /// calls `invoke('roblox_open_login')`).
 ///
-/// Mirrors `main.js`'s handler faithfully:
+/// Mirrors the legacy JS backend's handler faithfully:
 ///   1. Windows-gated first via [`crate::platform::ensure_windows`]; on a
 ///      non-Windows OS it resolves to `LoginResult::fail("Windows only")` rather
 ///      than proceeding (Requirement 8.4), matching how `browser_open` gates.
 ///   2. Resolves a system Chromium browser via [`ensure_chrome`]. Since this
 ///      distributable ships no bundled browser download (no Playwright), a
 ///      missing browser reports the accurate build-state message and keeps
-///      "Paste Cookie" available — the Tauri_Build's form of `main.js`'s
+///      "Paste Cookie" available — the Tauri_Build's form of the legacy JS backend's
 ///      no-browser fallback.
 ///   3. Stores a cancel `Sender` in [`AppState`], awaits [`run_login_flow`],
 ///      then clears the slot regardless of how the flow ended. The cancel path
-///      is driven by [`login_cancel`], replacing `ipcMain.once('login:cancel')`.
+///      is driven by [`login_cancel`], replacing `legacy one-shot IPC listener('login:cancel')`.
 ///
 /// The `{ success, cookie, username, userId }` / `{ success, error }` shape
 /// [`LoginResult`] serializes to is exactly what the Renderer_UI branches on, so
-/// `invoke('roblox_open_login')` resolves to the same payload the Electron_Build
+/// `invoke('roblox_open_login')` resolves to the same payload the legacy JS build
 /// produced.
 #[tauri::command]
 pub async fn roblox_open_login(
     _app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<LoginResult, String> {
-    // 1. Windows-only, matching the rest of the app (and main.js's win32 browser
+    // 1. Windows-only, matching the rest of the app (and the legacy JS backend's win32 browser
     //    login). Reports gracefully rather than proceeding on a non-Windows OS.
     if let Err(e) = crate::platform::ensure_windows() {
         return Ok(LoginResult::fail(e));
@@ -2762,7 +3398,7 @@ pub async fn roblox_open_login(
 
     // 2. Resolve a system Chromium browser. No bundled-browser fallback exists in
     //    this build, so a missing browser keeps "Paste Cookie" as the path
-    //    forward (main.js's no-browser fallback wording).
+    //    forward (the legacy JS backend's no-browser fallback wording).
     let chrome_path = match ensure_chrome() {
         Some(path) => path,
         None => {
@@ -2772,7 +3408,7 @@ pub async fn roblox_open_login(
         }
     };
 
-    // 3. Store the cancel Sender (replacing `ipcMain.once('login:cancel', ...)`),
+    // 3. Store the cancel Sender (replacing `legacy one-shot IPC listener('login:cancel', ...)`),
     //    run the flow, then clear the slot no matter how it resolved.
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
     {
@@ -2790,12 +3426,12 @@ pub async fn roblox_open_login(
     Ok(result)
 }
 
-/// `login:cancel` — cancel an in-progress login window. Ports the Electron_Build's
-/// `ipcMain.once('login:cancel', ...)` (Requirement 10.1); mapped to a command
+/// `login:cancel` — cancel an in-progress login window. Ports the legacy JS build's
+/// `legacy one-shot IPC listener('login:cancel', ...)` (Requirement 10.1); mapped to a command
 /// since preload calls `invoke('login_cancel')`. Takes the stored cancel `Sender`
 /// out of [`AppState`] and fires it, tripping [`run_login_flow`]'s `cancel_rx`
 /// (which reports "Login window closed"). A no-op when no login is in progress
-/// (no stored sender), matching the Electron `once` listener that simply never
+/// (no stored sender), matching the legacy JS runtime `once` listener that simply never
 /// fires when there is nothing to cancel.
 #[tauri::command]
 pub async fn login_cancel(state: State<'_, AppState>) -> Result<(), String> {
@@ -3307,6 +3943,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn batch_run_result_parses_port_and_missing_profile_error() {
+        let ok = BatchRunProfileResult::from_json(&json!({
+            "profile_id": "prof-ok",
+            "remote_debugging_port": 9333,
+            "error": null
+        }))
+        .expect("batch item parses");
+        assert_eq!(ok.profile_id, "prof-ok");
+        assert!(ok.ok);
+        assert_eq!(ok.cdp_port, Some(9333));
+        assert!(!ok.is_profile_not_found());
+
+        let missing = BatchRunProfileResult::from_json(&json!({
+            "profile_id": "prof-gone",
+            "ok": false,
+            "remote_debugging_port": null,
+            "error": "profile not found"
+        }))
+        .expect("missing item parses");
+        assert_eq!(missing.profile_id, "prof-gone");
+        assert!(!missing.ok);
+        assert_eq!(missing.cdp_port, None);
+        assert!(missing.is_profile_not_found());
+    }
+
     // ── run_donut_profile_at ─────────────────────────────────────────────────
 
     #[tokio::test]
@@ -3337,6 +3999,16 @@ mod tests {
         assert_eq!(
             run_donut_profile_at(&dead_base_url(), Some("tok"), "p").await,
             Err(RunProfileError::RunFailed)
+        );
+    }
+
+    #[tokio::test]
+    async fn run_profile_detects_deleted_profile() {
+        let (base, _rx) =
+            spawn_capture_server(404, "application/json", r#"{"error":"profile not found"}"#);
+        assert_eq!(
+            run_donut_profile_at(&base, Some("tok"), "p").await,
+            Err(RunProfileError::ProfileNotFound)
         );
     }
 
@@ -3477,7 +4149,7 @@ mod tests {
             "example.com",
             &long_cookie_value()
         ));
-        // Value at or below the 100-char threshold (main.js: `value.length > 100`).
+        // Value at or below the 100-char threshold (legacy JS backend: `value.length > 100`).
         assert!(!matches_login_cookie(
             ".ROBLOSECURITY",
             ".roblox.com",

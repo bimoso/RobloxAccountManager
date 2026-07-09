@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Capability set scoped to the single main RobloxAccountManager window. All Tauri commands and events exposed by the backend are reachable only from this window, mirroring the Electron_Build's single-preload boundary.",
+  "description": "Capability set scoped to the single main RobloxAccountManager window. All Tauri commands and events exposed by the backend are reachable only from this window, mirroring the legacy JS build's single-preload boundary.",
   "windows": ["main"],
   "permissions": [
     "core:default",

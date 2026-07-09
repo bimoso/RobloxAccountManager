@@ -4,7 +4,7 @@
 //! RobloxAccountManager is a Windows-only application (Requirement 8.1): the mutex hold,
 //! Roblox process launch/enumeration/termination, the Native_Helper
 //! (`RobloxNative.exe`) invocation, and the Donut Browser "Open in Browser"
-//! flow all depend on Windows-specific mechanisms. The Electron_Build guards
+//! flow all depend on Windows-specific mechanisms. The legacy JS build guards
 //! each of these entry points with `if (process.platform !== 'win32') ...`,
 //! reporting a graceful `{ ok: false, error: 'Windows only' }` (or the
 //! feature-specific variant) rather than exhibiting undefined behavior on a
@@ -29,10 +29,10 @@
 /// The user-facing message reported when a Windows-only feature is invoked on a
 /// non-Windows operating system.
 ///
-/// Matches the Electron_Build's wording, which reports Windows-only backend
+/// Matches the legacy JS build's wording, which reports Windows-only backend
 /// operations as `{ ok: false, error: 'Windows only' }` (Requirement 8.4:
 /// "report that it is unavailable on that operating system gracefully,
-/// consistent with how the Electron_Build already handles this"). Kept as a
+/// consistent with how the legacy JS build already handles this"). Kept as a
 /// single shared constant so every entry point reports identical wording.
 pub const WINDOWS_ONLY: &str = "Windows only";
 
@@ -91,7 +91,7 @@ mod tests {
     /// Directly exercises the non-Windows path regardless of the host the suite
     /// compiles on: the pure gate reports the graceful "unavailable on this
     /// platform" message (`WINDOWS_ONLY`) instead of proceeding, mirroring the
-    /// Electron_Build's `{ ok: false, error: 'Windows only' }` (Requirement 8.4).
+    /// legacy JS build's `{ ok: false, error: 'Windows only' }` (Requirement 8.4).
     #[test]
     fn gate_on_non_windows_reports_unavailable() {
         let result = gate(false);
@@ -102,7 +102,7 @@ mod tests {
         assert_eq!(
             result.err().as_deref(),
             Some(WINDOWS_ONLY),
-            "non-Windows must report the graceful, Electron-consistent message"
+            "non-Windows must report the graceful, legacy JS runtime-consistent message"
         );
     }
 

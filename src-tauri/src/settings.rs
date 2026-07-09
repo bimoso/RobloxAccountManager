@@ -1,9 +1,9 @@
 //! Settings_Store (`settings.rs`).
 //!
-//! This module ports the Electron_Build's settings-persistence section from
-//! `src/main.js` — specifically the `loadSettings()` read path and the runtime
+//! This module ports the legacy JS build's settings-persistence section from
+//! the legacy JS backend — specifically the `loadSettings()` read path and the runtime
 //! defaults `applySettingsDonutDefaults` layers on top of it. In the
-//! Electron_Build:
+//! legacy JS build:
 //!
 //! ```js
 //! const settingsPath = path.join(app.getPath('userData'), 'settings.json');
@@ -15,7 +15,7 @@
 //! }
 //! ```
 //!
-//! and (`src/account-model.js`):
+//! and the legacy account model helper:
 //!
 //! ```js
 //! function applySettingsDonutDefaults(s) {
@@ -32,21 +32,21 @@
 //! [`Settings`] where:
 //!   * every recognized field **present** in the file keeps the file's value,
 //!   * every recognized field **absent** from the file gets its default — using
-//!     the Electron_Build's documented *runtime* defaults, not merely Rust's
+//!     the legacy JS build's documented *runtime* defaults, not merely Rust's
 //!     zero-values (the one default that actually differs is `donutApiPort`,
 //!     which defaults to `10108`; see [`apply_runtime_defaults`]), and
 //!   * every unrecognized/legacy field is preserved via the
 //!     `#[serde(flatten)] extra` catch-all on [`Settings`] (Requirement 11.2).
 //!
-//! ## Deliberate divergence from the Electron_Build on read failure
+//! ## Deliberate divergence from the legacy JS build on read failure
 //!
-//! The Electron_Build's `loadSettings` wraps its read+parse in a bare
+//! The legacy JS build's `loadSettings` wraps its read+parse in a bare
 //! `try { ... } catch { s = {} }`, so a **corrupt** file (a `JSON.parse` throw)
 //! and a **permission/IO** read error both silently collapse to an empty object.
 //! Requirement 11.7 explicitly forbids that: an existing store file that cannot
 //! be read must NOT be silently replaced by an empty store. So this port:
 //!   * treats a **missing** file as "return defaults" (a missing file is not an
-//!     unreadable file — this matches Electron's `fs.existsSync(...) ? ... : {}`
+//!     unreadable file — this matches legacy JS runtime's `fs.existsSync(...) ? ... : {}`
 //!     branch), but
 //!   * returns a distinguishable [`SettingsStoreError`] for a **corrupt** file
 //!     (invalid/malformed settings JSON) vs. a **permission/IO** error on an
@@ -54,7 +54,7 @@
 //!     failure case (Requirement 11.7).
 //!
 //! This is the one place the read path intentionally does not mirror
-//! Electron's swallow-all behavior, and it does so because the requirements
+//! legacy JS runtime's swallow-all behavior, and it does so because the requirements
 //! mandate it.
 //!
 //! ## Secrets
@@ -76,16 +76,16 @@ use serde_json::{Map, Value};
 use crate::encryption;
 use crate::models::Settings;
 
-/// The Settings_Store file name, unchanged from the Electron_Build
+/// The Settings_Store file name, unchanged from the legacy JS build
 /// (`settings.json`). It lives in the per-user application data directory
-/// (`app.getPath('userData')` in Electron, Tauri's `app_data_dir()` configured to
+/// (`app.getPath('userData')` in legacy JS runtime, Tauri's `app_data_dir()` configured to
 /// the same `%APPDATA%\robloxaccountmanager\` location, Requirement 11.6). The command
 /// layer (Task 7.7) resolves that directory from the Tauri `AppHandle` and calls
 /// [`load_from_dir`]; the core load logic here takes a plain path so it is
 /// unit-testable without a live Tauri app.
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 
-/// The Electron_Build's documented runtime default for `donutApiPort`
+/// The legacy JS build's documented runtime default for `donutApiPort`
 /// (`applySettingsDonutDefaults`: `s.donutApiPort = 10108` when absent). This is
 /// the only recognized-field default that differs from the Rust zero-value
 /// (`Option::None`), so it is the one [`apply_runtime_defaults`] must set
@@ -107,7 +107,7 @@ pub const DEFAULT_DONUT_API_PORT: u16 = 10108;
 #[serde(tag = "cause", rename_all = "snake_case")]
 pub enum SettingsStoreError {
     /// The file exists and was read, but its bytes are not valid/parseable
-    /// settings JSON (the corruption case — Electron's `JSON.parse` throw).
+    /// settings JSON (the corruption case — legacy JS runtime's `JSON.parse` throw).
     Corruption {
         store: &'static str,
         path: String,
@@ -202,18 +202,18 @@ pub fn settings_path_in(dir: &Path) -> PathBuf {
     dir.join(SETTINGS_FILE_NAME)
 }
 
-/// Applies the Electron_Build's documented runtime defaults to a freshly loaded
+/// Applies the legacy JS build's documented runtime defaults to a freshly loaded
 /// [`Settings`], leaving any value already present in the file untouched — the
 /// direct port of `applySettingsDonutDefaults`.
 ///
-/// Of the three Donut defaults Electron layers on, only `donutApiPort` differs
+/// Of the three Donut defaults legacy JS runtime layers on, only `donutApiPort` differs
 /// from the Rust struct's own default:
 ///   * `donutApiTokenEnc` absent => `null`, which is already `Option::None` on
 ///     the loaded struct, so no action is needed.
 ///   * `pendingDonutDeletions` absent => `[]`, which is already the empty `Vec`
 ///     produced by `#[serde(default)]` on the struct, so no action is needed.
 ///   * `donutApiPort` absent => `10108`; the struct default is `None`, so this
-///     is the one default that must be set here to match the Electron_Build.
+///     is the one default that must be set here to match the legacy JS build.
 ///
 /// The two no-op cases are called out explicitly (rather than silently relying
 /// on the struct defaults) so the mapping to `applySettingsDonutDefaults` stays
@@ -227,7 +227,7 @@ pub fn apply_runtime_defaults(settings: &mut Settings) {
 }
 
 /// The default [`Settings`] returned when no Settings_Store file exists yet —
-/// the Rust struct default with the Electron runtime defaults applied. Mirrors
+/// the Rust struct default with the legacy JS runtime runtime defaults applied. Mirrors
 /// `loadSettings()` taking the `{}` branch and then running
 /// `applySettingsDonutDefaults`.
 pub fn default_settings() -> Settings {
@@ -241,7 +241,7 @@ pub fn default_settings() -> Settings {
 ///
 /// Behavior (see module docs for the rationale):
 ///   * **Missing file** => [`default_settings`] (missing is not unreadable;
-///     matches Electron's `fs.existsSync(...) ? ... : {}`).
+///     matches legacy JS runtime's `fs.existsSync(...) ? ... : {}`).
 ///   * **Permission/IO error** on an existing file => `Err` identifying it as a
 ///     permission or IO failure; never falls back to defaults (Requirement 11.7).
 ///   * **Corrupt** (unparseable/malformed settings JSON) => `Err` identifying it
@@ -274,7 +274,7 @@ pub fn load_from_file(path: &Path) -> Result<Settings, SettingsStoreError> {
 
 /// Loads the Settings_Store from `<dir>/settings.json`. The command layer
 /// (Task 7.7) resolves `dir` from the Tauri `app_data_dir()` (configured to the
-/// same `%APPDATA%\robloxaccountmanager\` location as the Electron_Build's
+/// same `%APPDATA%\robloxaccountmanager\` location as the legacy JS build's
 /// `app.getPath('userData')`, Requirement 11.6) and calls this.
 pub fn load_from_dir(dir: &Path) -> Result<Settings, SettingsStoreError> {
     load_from_file(&settings_path_in(dir))
@@ -282,11 +282,11 @@ pub fn load_from_dir(dir: &Path) -> Result<Settings, SettingsStoreError> {
 
 // ── Settings save (overlay-merge) + Donut_API_Token save ─────────────────────
 //
-// This section ports `main.js`'s `saveSettings` write primitive and the two IPC
+// This section ports the legacy JS backend's `saveSettings` write primitive and the two IPC
 // handlers layered on it: the general `settings:save` (overlay-merge of a partial
 // update) and the dedicated `settings:saveDonutToken`.
 //
-// `main.js`'s write primitive:
+// the legacy JS backend's write primitive:
 //
 // ```js
 // function saveSettings(s) { fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2), { mode: 0o600 }); }
@@ -299,7 +299,7 @@ pub fn load_from_dir(dir: &Path) -> Result<Settings, SettingsStoreError> {
 
 /// The keys `settings:save` destructures out of the incoming update before
 /// merging, so a general settings write can never persist or wipe key material
-/// or the Donut_API_Token — matching `main.js`:
+/// or the Donut_API_Token — matching the legacy JS backend:
 ///
 /// ```js
 /// const { customKey, customKeyEnc, keyVerifier, donutApiTokenEnc, ...rest } = data;
@@ -311,7 +311,7 @@ pub fn load_from_dir(dir: &Path) -> Result<Settings, SettingsStoreError> {
 /// [`save_donut_token_to_file`], so both are stripped here. These keys are
 /// removed from the *update* only; whatever value they already hold in the
 /// existing store is preserved (it comes through the `...loadSettings()` half of
-/// the spread), exactly as in the Electron_Build.
+/// the spread), exactly as in the legacy JS build.
 pub const STRIPPED_SAVE_KEYS: [&str; 4] =
     ["customKey", "customKeyEnc", "keyVerifier", "donutApiTokenEnc"];
 
@@ -319,7 +319,7 @@ pub const STRIPPED_SAVE_KEYS: [&str; 4] =
 /// [`SettingsStoreError`]).
 ///
 /// A [`save`](save_to_file) first has to *read* the existing store (the
-/// `...loadSettings()` half of the merge). Where `main.js`'s `loadSettings`
+/// `...loadSettings()` half of the merge). Where the legacy JS backend's `loadSettings`
 /// silently collapses a corrupt/unreadable file to `{}` and would then overwrite
 /// it, Requirement 11.7 forbids that: a save must NOT clobber an existing store
 /// it could not read. So a read failure during save surfaces as
@@ -362,7 +362,7 @@ impl fmt::Display for SaveSettingsError {
 
 impl std::error::Error for SaveSettingsError {}
 
-/// Serialize `settings` to the same 2-space-pretty JSON `main.js`'s
+/// Serialize `settings` to the same 2-space-pretty JSON the legacy JS backend's
 /// `JSON.stringify(s, null, 2)` produces and write it to `path`, mapping any
 /// serialize/IO failure to [`SaveSettingsError::Write`].
 fn write_settings_pretty(path: &Path, settings: &Settings) -> Result<(), SaveSettingsError> {
@@ -376,7 +376,7 @@ fn write_settings_pretty(path: &Path, settings: &Settings) -> Result<(), SaveSet
     })
 }
 
-/// Overlay-merge `update` into `existing`, reproducing `main.js`'s shallow spread
+/// Overlay-merge `update` into `existing`, reproducing the legacy JS backend's shallow spread
 /// `{ ...loadSettings(), ...rest }`:
 ///   * every key present in `update` (after stripping [`STRIPPED_SAVE_KEYS`])
 ///     overwrites the corresponding key in `existing`;
@@ -430,14 +430,14 @@ fn merge_settings_update(
 ///   1. read the existing store ([`load_from_file`]); on a read failure the
 ///      store is left untouched and the error is surfaced
 ///      ([`SaveSettingsError::Load`]) rather than clobbered (Requirement 11.7) —
-///      this is the one intentional divergence from `main.js`, which would
+///      this is the one intentional divergence from the legacy JS backend, which would
 ///      overwrite an unreadable file with defaults;
 ///   2. overlay the update (with [`STRIPPED_SAVE_KEYS`] removed) onto it
 ///      ([`merge_settings_update`]);
 ///   3. write the merged result as 2-space-pretty JSON.
 ///
 /// Returns the merged [`Settings`] that was written. The `multiInstance` /
-/// `antiAfk` side effects the Electron handler triggers after the write
+/// `antiAfk` side effects the legacy handler triggers after the write
 /// (starting/stopping the mutex holder and anti-AFK loop) are Native_Helper
 /// concerns handled by the command layer (Task 7.7), not this persistence core.
 pub fn save_to_file(
@@ -588,20 +588,20 @@ pub fn save_donut_token_to_dir(
 
 // ── Generation history (`genhistory.json`) ───────────────────────────────────
 //
-// Ports `main.js`'s `genhistory:read` / `genhistory:write` / `genhistory:clear`
+// Ports the legacy JS backend's `genhistory:read` / `genhistory:write` / `genhistory:clear`
 // handlers. The generation history is its OWN file, `genhistory.json`, in the
 // same per-user application data directory as `settings.json`
 // (`const genHistoryPath = path.join(app.getPath('userData'), 'genhistory.json')`),
 // NOT a field inside the Settings_Store. It holds a flat JSON array capped at
 // 500 entries. Every handler swallows failures to a safe default, matching the
-// Electron_Build's `try { ... } catch { ... }` shape.
+// legacy JS build's `try { ... } catch { ... }` shape.
 
 /// The generation-history file name, alongside `settings.json` in the per-user
 /// application data directory.
 pub const GEN_HISTORY_FILE_NAME: &str = "genhistory.json";
 
 /// The maximum number of generation-history entries kept on write, from
-/// `main.js`'s `list.slice(0, 500)`.
+/// the legacy JS backend's `list.slice(0, 500)`.
 pub const GEN_HISTORY_CAP: usize = 500;
 
 /// The generation-history file path inside the given per-user application data
@@ -675,7 +675,7 @@ pub fn write_gen_history(dir: &Path, list: &[Value]) -> bool {
 /// ```
 ///
 /// Writes the exact two-byte `[]` payload (not pretty-printed) to match the
-/// Electron_Build byte-for-byte. Returns `true` on success, `false` on failure.
+/// legacy JS build byte-for-byte. Returns `true` on success, `false` on failure.
 pub fn clear_gen_history_at(path: &Path) -> bool {
     fs::write(path, "[]").is_ok()
 }
@@ -687,7 +687,7 @@ pub fn clear_gen_history(dir: &Path) -> bool {
 
 // ── Fast Flags (`ClientAppSettings.json`) ────────────────────────────────────
 //
-// Ports `main.js`'s `fflag:read` / `fflag:write` handlers and their path
+// Ports the legacy JS backend's `fflag:read` / `fflag:write` handlers and their path
 // resolution. Fast Flags are NOT stored in the Settings_Store: they live in the
 // installed Roblox client, at
 // `<latest version dir>\ClientSettings\ClientAppSettings.json`, where the "latest
@@ -696,7 +696,7 @@ pub fn clear_gen_history(dir: &Path) -> bool {
 // The file is a flat JSON object of flag name -> value.
 
 /// The `%LOCALAPPDATA%\Roblox` directory, i.e. `os.homedir()\AppData\Local\Roblox`
-/// in `main.js`. Returns `None` if the user profile directory cannot be resolved.
+/// in the legacy JS backend. Returns `None` if the user profile directory cannot be resolved.
 fn roblox_local_dir() -> Option<PathBuf> {
     std::env::var_os("USERPROFILE")
         .map(|home| PathBuf::from(home).join("AppData").join("Local").join("Roblox"))
@@ -817,7 +817,7 @@ pub fn write_fflags(flags: &Value) -> bool {
 
 // ── FPS cap (`GlobalBasicSettings_13.xml`) ───────────────────────────────────
 //
-// Ports `main.js`'s `fps:read` / `fps:write` handlers. The FPS cap is NOT stored
+// Ports the legacy JS backend's `fps:read` / `fps:write` handlers. The FPS cap is NOT stored
 // in the Settings_Store: it lives in Roblox's own
 // `%LOCALAPPDATA%\Roblox\GlobalBasicSettings_13.xml`, inside an
 // `<int name="FramerateCap">VALUE</int>` element (0 = unlimited). Roblox rewrites
@@ -825,7 +825,7 @@ pub fn write_fflags(flags: &Value) -> bool {
 // effect on the next launch.
 
 /// The default FPS cap returned when the settings file or the `FramerateCap`
-/// element is absent, from `main.js`'s `return 60`.
+/// element is absent, from the legacy JS backend's `return 60`.
 pub const DEFAULT_FPS_CAP: i64 = 60;
 
 /// Resolve the Roblox global-settings file path, porting `getGlobalSettingsPath()`:
@@ -841,7 +841,7 @@ fn framerate_cap_element(value: i64) -> String {
 }
 
 /// Locate the first `<int name="FramerateCap">DIGITS</int>` element, emulating
-/// `main.js`'s case-insensitive regex
+/// the legacy JS backend's case-insensitive regex
 /// `/<int\s+name="FramerateCap"\s*>(\d+)<\/int>/i`.
 ///
 /// Returns `(start, end, value)` — the byte range of the whole matched element
@@ -969,7 +969,7 @@ pub fn fps_read_from_file(path: &Path) -> i64 {
 /// ```
 ///
 /// If the file does not exist, returns the same actionable error the
-/// Electron_Build reports. Otherwise it updates an existing `FramerateCap`
+/// legacy JS build reports. Otherwise it updates an existing `FramerateCap`
 /// element in place, or (if none exists) inserts one immediately before the
 /// first `</Item>` block — case-sensitive, matching the un-flagged `/(<\/Item>)/`
 /// regex. If there is no `</Item>` the XML is written back unchanged, exactly as
@@ -1016,7 +1016,7 @@ pub fn fps_read() -> i64 {
 
 /// Write the FPS cap to the Roblox global-settings file, resolving the path via
 /// [`global_settings_path`]. Returns the same not-found error as the
-/// Electron_Build when the path cannot be resolved or the file is absent.
+/// legacy JS build when the path cannot be resolved or the file is absent.
 pub fn fps_write(cap: f64) -> Result<(), String> {
     match global_settings_path() {
         Some(path) => fps_write_to_file(&path, cap),
@@ -1064,7 +1064,7 @@ mod tests {
 
         let settings = load_from_file(&path).expect("missing file must yield defaults, not an error");
 
-        // Electron runtime defaults applied.
+        // legacy JS runtime runtime defaults applied.
         assert_eq!(settings.donut_api_port, Some(DEFAULT_DONUT_API_PORT));
         assert!(settings.pending_donut_deletions.is_empty());
         assert_eq!(settings.donut_api_token_enc, None);
@@ -1103,7 +1103,7 @@ mod tests {
         );
         assert_eq!(settings.key_verifier.as_deref(), Some("gs:AQID.verifier"));
 
-        // Absent recognized field gets the Electron runtime default.
+        // Absent recognized field gets the legacy JS runtime runtime default.
         assert_eq!(settings.donut_api_port, Some(DEFAULT_DONUT_API_PORT));
         assert!(settings.pending_donut_deletions.is_empty());
 
@@ -1369,7 +1369,7 @@ mod save_tests {
         let update = update_from(json!({ "antiAfk": true }));
         let merged = save_to_dir(&dir, &update).expect("save must create the store");
         assert_eq!(merged.anti_afk, true);
-        // Electron runtime default applied via the loaded defaults.
+        // legacy JS runtime runtime default applied via the loaded defaults.
         assert_eq!(merged.donut_api_port, Some(DEFAULT_DONUT_API_PORT));
         assert!(settings_path_in(&dir).exists());
         let _ = fs::remove_dir_all(&dir);
@@ -1865,7 +1865,7 @@ mod save_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(200))]
 
-        // Feature: electron-to-tauri-migration, Property 9: Settings save merges the update into the existing settings
+        // Feature: native-tauri-backend, Property 9: Settings save merges the update into the existing settings
         //
         // Validates: Requirements 3.1
         //
@@ -1999,7 +1999,7 @@ mod load_property_tests {
     ];
 
     /// The value a recognized field takes when it is ABSENT from the stored file:
-    /// the Rust struct default, with the Electron runtime default applied to
+    /// the Rust struct default, with the legacy JS runtime runtime default applied to
     /// `donutApiPort` (`10108`). This mirrors [`default_settings`] serialized.
     fn default_recognized_value(key: &str) -> Value {
         match key {
@@ -2114,7 +2114,7 @@ mod load_property_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(200))]
 
-        // Feature: electron-to-tauri-migration, Property 10: Settings load applies every recognized stored value and defaults every absent one
+        // Feature: native-tauri-backend, Property 10: Settings load applies every recognized stored value and defaults every absent one
         //
         // Validates: Requirements 3.2, 11.2
         //
@@ -2124,7 +2124,7 @@ mod load_property_tests {
         //   * present-applied: every recognized field PRESENT in the file is
         //     reflected in the loaded Settings with the stored value;
         //   * absent-defaulted: every recognized field ABSENT from the file takes
-        //     its Rust default, with the Electron runtime default
+        //     its Rust default, with the legacy JS runtime runtime default
         //     (donutApiPort=10108) applied when absent;
         //   * legacy-preserved: every unrecognized/legacy key survives via the
         //     `extra` catch-all and reappears on re-serialize (round-trip).
@@ -2280,7 +2280,7 @@ mod unreadable_property_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(200))]
 
-        // Feature: electron-to-tauri-migration, Property 21: An unreadable store file is left untouched and its failure cause is reported, never silently treated as empty
+        // Feature: native-tauri-backend, Property 21: An unreadable store file is left untouched and its failure cause is reported, never silently treated as empty
         //
         // **Validates: Requirements 11.7**
         //

@@ -1,9 +1,9 @@
-//! Account_Store (`accounts.json`) persistence, ported from `main.js`'s
+//! Account_Store (`accounts.json`) persistence, ported from the legacy JS backend's
 //! `loadAccounts` / `saveAccounts` / `decryptAccount` section and the
 //! `accounts:*` IPC handlers.
 //!
 //! This task (6.1) implements the READ path only — [`load_from_file`] /
-//! [`load_from_dir`] — matching the Electron_Build's `loadAccounts`:
+//! [`load_from_dir`] — matching the legacy JS build's `loadAccounts`:
 //!
 //! ```js
 //! const dataPath = path.join(app.getPath('userData'), 'accounts.json');
@@ -15,14 +15,14 @@
 //! }
 //! ```
 //!
-//! The Electron_Build collapses *every* failure — a missing file, an
+//! The legacy JS build collapses *every* failure — a missing file, an
 //! unreadable/permission-denied file, a corrupt-JSON file, and even a per-account
 //! decrypt failure (`decryptField(...) ?? ''`) — into either an empty array or a
 //! silently-blanked cookie. The migration must NOT preserve that lossy behavior
 //! for the Account_Store (design "Error Handling" + Property 21 / Property 18):
 //!
 //!   * A **missing** file still yields an empty store — this is the only case the
-//!     Electron_Build's `!fs.existsSync -> []` short-circuit models, and a first
+//!     legacy JS build's `!fs.existsSync -> []` short-circuit models, and a first
 //!     run legitimately has no file yet (Requirement 11.1 talks about an
 //!     *existing* file). This is expressed idiomatically here by treating a read
 //!     that fails with [`std::io::ErrorKind::NotFound`] as "no store yet",
@@ -64,7 +64,7 @@ use crate::encryption::{decrypt_account, encrypt_account};
 use crate::logging;
 use crate::models::Account;
 
-/// The Account_Store file name, identical to the Electron_Build's
+/// The Account_Store file name, identical to the legacy JS build's
 /// `path.join(app.getPath('userData'), 'accounts.json')` leaf. The parent
 /// directory (`%APPDATA%\robloxaccountmanager\`, Tauri's `app_data_dir()`) is supplied by
 /// the caller so this module stays testable without a live Tauri app
@@ -260,7 +260,7 @@ pub fn load_from_dir(
 ///
 /// Behavior (see the module docs for the full rationale):
 ///   * `path` missing (`NotFound`) -> `Ok(AccountLoad::default())` (empty store),
-///     the only case matching the Electron_Build's `!fs.existsSync -> []`;
+///     the only case matching the legacy JS build's `!fs.existsSync -> []`;
 ///   * `path` exists but unreadable (permission/other IO) -> `Err(LoadError::Io)`;
 ///   * `path` readable but not valid JSON -> `Err(LoadError::Corrupt)`;
 ///   * `path` parsed -> `Ok(AccountLoad)` with every entry present (decrypted
@@ -332,7 +332,7 @@ pub fn load_from_file(
 
 // ── Write path: save / add / update / remove / reorder (Task 6.2) ────────────
 //
-// These port the Electron_Build's `saveAccounts` writer and the `accounts:add`
+// These port the legacy JS build's `saveAccounts` writer and the `accounts:add`
 // / `accounts:update` / `accounts:remove` / `accounts:reorder` IPC handlers'
 // store logic:
 //
@@ -348,17 +348,17 @@ pub fn load_from_file(
 //   fs.writeFileSync(dataPath, JSON.stringify(a.map(encryptAccount), null, 2), { mode: 0o600 });
 // }
 //
-// ipcMain.handle('accounts:add', (_, account) => {
+// legacy command handler('accounts:add', (_, account) => {
 //   const accounts = loadAccounts();
 //   const a = { id: Date.now().toString(), ...account, createdAt: ..., lastUsed: null };
 //   accounts.push(a); saveAccounts(accounts); return a;
 // });
-// ipcMain.handle('accounts:update', (_, id, data) => {
+// legacy command handler('accounts:update', (_, id, data) => {
 //   const accounts = loadAccounts(), idx = accounts.findIndex(a => a.id === id);
 //   if (idx !== -1) { accounts[idx] = { ...accounts[idx], ...data }; saveAccounts(accounts); return accounts[idx]; }
 //   return null;
 // });
-// ipcMain.handle('accounts:remove', async (_, id) => {
+// legacy command handler('accounts:remove', async (_, id) => {
 //   const account = loadAccounts().find(a => a.id === id) || null;
 //   let cleanup = { pending: false, notice: null };
 //   if (account) { try { cleanup = await handleAccountRemovalCleanup(account); } catch { ... } }
@@ -367,7 +367,7 @@ pub fn load_from_file(
 //     win.webContents.send('browser:notify', { type: 'warn', message: cleanup.notice });
 //   return { ok: true, pending: cleanup.pending, notice: cleanup.notice };
 // });
-// ipcMain.handle('accounts:reorder', (_, ids) => {
+// legacy command handler('accounts:reorder', (_, ids) => {
 //   const accounts = loadAccounts();
 //   const reordered = ids.map(id => accounts.find(a => a.id === id)).filter(Boolean);
 //   const rest = accounts.filter(a => !ids.includes(a.id));
@@ -383,7 +383,7 @@ pub fn load_from_file(
 // performs IO + encryption. The command layer (Task 6.9) wires them together —
 // load -> transform -> [`save_to_file`] — resolving the encryption inputs from
 // the Settings_Store and the path from Tauri's `app_data_dir()`, exactly as each
-// Electron handler does `loadAccounts()` -> mutate -> `saveAccounts(...)`.
+// legacy handler does `loadAccounts()` -> mutate -> `saveAccounts(...)`.
 
 /// A whole-store failure to WRITE the Account_Store.
 ///
@@ -450,7 +450,7 @@ impl std::error::Error for SaveError {
 /// deduplicating any addition whose identifier already exists". This port
 /// chooses the **reject** arm: `add` returns `Err(AddError::DuplicateId)` and
 /// leaves the store unchanged. Reject (rather than dedupe) is the correct choice
-/// here because the Electron_Build mints each new account's id from
+/// here because the legacy JS build mints each new account's id from
 /// `Date.now().toString()` at the command layer, so a collision with an existing
 /// id is a genuine anomaly rather than an expected re-add; rejecting surfaces it
 /// instead of silently overwriting or duplicating an entry.
@@ -494,7 +494,7 @@ pub fn save_to_dir(
 /// Encrypt each account and write the store to `path`, mirroring
 /// `saveAccounts(a) { fs.writeFileSync(dataPath, JSON.stringify(a.map(encryptAccount), null, 2), { mode: 0o600 }); }`.
 ///
-/// Behavior matched to the Electron_Build:
+/// Behavior matched to the legacy JS build:
 ///   * every entry is run through [`encrypt_account`] (cookie encrypted only when
 ///     non-empty AND not already tagged; `_enc: true` marker re-added), exactly
 ///     like `a.map(encryptAccount)`;
@@ -502,7 +502,7 @@ pub fn save_to_dir(
 ///     `JSON.stringify(..., null, 2)`;
 ///   * the write is a single, direct (non-atomic) `write`, matching
 ///     `fs.writeFileSync` — no temp-file+rename is introduced, to keep the exact
-///     write semantics of the Electron_Build.
+///     write semantics of the legacy JS build.
 ///
 /// Crucially, ALL accounts are encrypted into an in-memory buffer FIRST; if any
 /// one fails encryption/verification the function returns [`SaveError::Encrypt`]
@@ -511,7 +511,7 @@ pub fn save_to_dir(
 /// `a.map(encryptAccount)` throws before `fs.writeFileSync` is ever reached.
 ///
 /// On Unix the file mode is best-effort set to `0o600` after writing, mirroring
-/// the Electron_Build's `{ mode: 0o600 }`; on Windows (the supported target) the
+/// the legacy JS build's `{ mode: 0o600 }`; on Windows (the supported target) the
 /// mode argument is inert just as it is for Node's `fs.writeFileSync`.
 pub fn save_to_file(
     path: &Path,
@@ -558,11 +558,11 @@ pub fn save_to_file(
 /// handler (`accounts.push(a)`), with the added uniqueness guard.
 ///
 /// If no existing entry shares `account.id`, the account is appended and returned
-/// (the Electron handler returns the added account `a`). If an entry with the
+/// (the legacy handler returns the added account `a`). If an entry with the
 /// same id already exists, the store is left UNCHANGED and
 /// [`AddError::DuplicateId`] is returned (see [`AddError`] for why reject, not
 /// dedupe). The caller mints `account.id` (e.g. `Date.now().toString()`) and
-/// fills `created_at` / `last_used` before calling, exactly as the Electron
+/// fills `created_at` / `last_used` before calling, exactly as the legacy JS runtime
 /// handler builds `a` before pushing.
 pub fn add(accounts: &mut Vec<Account>, account: Account) -> Result<Account, AddError> {
     if accounts.iter().any(|a| a.id == account.id) {
@@ -616,8 +616,8 @@ pub fn update(accounts: &mut [Account], id: &str, data: &Map<String, Value>) -> 
 /// a NO-OP that leaves the store unchanged (Requirement 1.3).
 ///
 /// The returned `Option` is the "notify signal" the task calls for, and is what
-/// the command layer (Task 6.9) needs to reproduce the Electron `browser:notify`
-/// push WITHOUT this module depending on an `AppHandle`. In the Electron handler
+/// the command layer (Task 6.9) needs to reproduce the legacy JS runtime `browser:notify`
+/// push WITHOUT this module depending on an `AppHandle`. In the legacy handler
 /// the `browser:notify` event is emitted only when `cleanup.notice` is truthy,
 /// and `cleanup` is produced by `handleAccountRemovalCleanup(account)` which runs
 /// **only if the account existed** (`if (account) { ... }`). Since the Donut
@@ -626,7 +626,7 @@ pub fn update(accounts: &mut [Account], id: &str, data: &Map<String, Value>) -> 
 /// actually removed. The command layer then: on `Some(account)`, runs the
 /// browser cleanup, and emits `browser://notify` iff that cleanup yields a
 /// notice; on `None`, does neither (no cleanup, no notify), preserving the
-/// Electron condition precisely.
+/// legacy JS runtime condition precisely.
 pub fn remove(accounts: &mut Vec<Account>, id: &str) -> Option<Account> {
     let idx = accounts.iter().position(|a| a.id == id)?;
     Some(accounts.remove(idx))
@@ -663,15 +663,15 @@ pub fn reorder(accounts: &[Account], ids: &[String]) -> Vec<Account> {
 // ── Tauri command layer (Task 6.9) ───────────────────────────────────────────
 //
 // These five `#[tauri::command]` functions are the direct counterparts of the
-// Electron `accounts:*` IPC handlers (design IPC_Surface mapping table). Each
-// takes the same parameters, in the same order, as its Electron handler
+// legacy JS runtime `accounts:*` IPC handlers (design IPC_Surface mapping table). Each
+// takes the same parameters, in the same order, as its legacy handler
 // (Requirement 10.1):
 //
-//   accounts_load()               <- ipcMain.handle('accounts:load', ...)
-//   accounts_add(account)         <- ipcMain.handle('accounts:add',  (_, account) => ...)
-//   accounts_remove(id)           <- ipcMain.handle('accounts:remove',(_, id) => ...)
-//   accounts_update(id, data)     <- ipcMain.handle('accounts:update',(_, id, data) => ...)
-//   accounts_reorder(ids)         <- ipcMain.handle('accounts:reorder',(_, ids) => ...)
+//   accounts_load()               <- legacy command handler('accounts:load', ...)
+//   accounts_add(account)         <- legacy command handler('accounts:add',  (_, account) => ...)
+//   accounts_remove(id)           <- legacy command handler('accounts:remove',(_, id) => ...)
+//   accounts_update(id, data)     <- legacy command handler('accounts:update',(_, id, data) => ...)
+//   accounts_reorder(ids)         <- legacy command handler('accounts:reorder',(_, ids) => ...)
 //
 // Each reproduces its handler's `loadAccounts()` -> mutate -> `saveAccounts(...)`
 // flow, resolving the on-disk directory from the Tauri `AppHandle` and the three
@@ -682,8 +682,8 @@ pub fn reorder(accounts: &[Account], ids: &[String]) -> Vec<Account> {
 // direction: no `unwrap`/`expect` on fallible paths).
 
 /// The per-user application-data subdirectory holding `accounts.json` /
-/// `settings.json`, matching the Electron_Build's `app.getPath('userData')`
-/// location. At runtime the Electron_Build resolves `userData` from the app name
+/// `settings.json`, matching the legacy JS build's `app.getPath('userData')`
+/// location. At runtime the legacy JS build resolves `userData` from the app name
 /// (`robloxaccountmanager`), i.e. `%APPDATA%\robloxaccountmanager\`. Tauri's identifier-derived
 /// `app_data_dir()` would instead point at `%APPDATA%\<bundle identifier>\`,
 /// which would NOT find a user's existing files, so [`store_dir`] resolves the
@@ -692,16 +692,16 @@ pub fn reorder(accounts: &[Account], ids: &[String]) -> Vec<Account> {
 /// matches the packaged build's `%APPDATA%\RobloxAccountManager\`).
 pub const STORE_DIR_NAME: &str = "robloxaccountmanager";
 
-/// Tauri event replacing the Electron `browser:notify` `webContents` push that
+/// Tauri event replacing the legacy JS runtime `browser:notify` `webContents` push that
 /// `accounts:remove` conditionally sends (design IPC_Surface mapping note).
 pub const BROWSER_NOTIFY_EVENT: &str = "browser://notify";
 
-/// The value `accounts_remove` returns, matching the Electron handler's
+/// The value `accounts_remove` returns, matching the legacy handler's
 /// `{ ok: true, pending: cleanup.pending, notice: cleanup.notice }` shape so the
 /// Renderer_UI receives the identical payload.
 #[derive(Debug, Clone, Serialize)]
 pub struct RemoveResult {
-    /// Always `true` on a completed removal request (matching Electron `ok: true`).
+    /// Always `true` on a completed removal request (matching legacy JS runtime `ok: true`).
     pub ok: bool,
     /// Whether Donut profile deletion was deferred to the pending-deletion queue.
     pub pending: bool,
@@ -710,7 +710,7 @@ pub struct RemoveResult {
 }
 
 /// Resolve the application-data directory (`%APPDATA%\robloxaccountmanager\`), creating it
-/// if absent, mirroring `path.join(app.getPath('userData'), ...)` where Electron
+/// if absent, mirroring `path.join(app.getPath('userData'), ...)` where legacy JS runtime
 /// guarantees `userData` exists. See [`STORE_DIR_NAME`] for why this is derived
 /// from the roaming-AppData root rather than Tauri's identifier-scoped
 /// `app_data_dir()`.
@@ -746,7 +746,7 @@ fn now_millis() -> i64 {
 ///
 /// Made `pub(crate)` so the Roblox launch flow (`roblox_process.rs`) can stamp an
 /// account's `lastUsed` with the same `new Date().toISOString()`-compatible value
-/// the Electron `_doLaunch` writes, without duplicating the civil-date math.
+/// the legacy JS runtime `_doLaunch` writes, without duplicating the civil-date math.
 pub(crate) fn iso8601_utc_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let dur = SystemTime::now()
@@ -778,7 +778,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 /// `accounts:load` — return the full account list with cookies decrypted.
 ///
-/// Ports `ipcMain.handle('accounts:load', () => loadAccounts())`. The renderer's
+/// Ports `legacy command handler('accounts:load', () => loadAccounts())`. The renderer's
 /// `api.loadAccounts()` consumes the resolved value as the account array
 /// directly (`[accounts] = await Promise.all([api.loadAccounts(), ...])`), so
 /// this returns `Vec<Account>` — the same array shape.
@@ -857,7 +857,7 @@ pub fn accounts_add(app: AppHandle, account: Value) -> Result<Account, String> {
         obj.insert("createdAt".to_string(), Value::String(iso8601_utc_now()));
         obj.insert("lastUsed".to_string(), Value::Null);
         // The renderer omits `nickname` on add; default it so the typed model is
-        // complete (Electron stored it as `undefined`, which is falsy just like "").
+        // complete (legacy JS runtime stored it as `undefined`, which is falsy just like "").
         obj.entry("nickname".to_string())
             .or_insert_with(|| Value::String(String::new()));
 
@@ -887,7 +887,7 @@ pub fn accounts_add(app: AppHandle, account: Value) -> Result<Account, String> {
 /// Returns `Ok(Some(updated))` when `id` exists (persisting the merge) or
 /// `Ok(None)` when it does not — a no-op that neither writes nor errors,
 /// matching the handler's `return null` (Requirement 1.2). `data` is the same
-/// partial object the Electron handler spreads.
+/// partial object the legacy handler spreads.
 #[tauri::command]
 pub fn accounts_update(
     app: AppHandle,
@@ -934,11 +934,11 @@ pub fn accounts_update(
 /// still re-persists the unchanged list; Requirement 1.3).
 ///
 /// INTEGRATION POINT (Task 13): the Donut cleanup `handleAccountRemovalCleanup`
-/// lives in `browser_launcher.rs`, which is not implemented yet. Its Electron
+/// lives in `browser_launcher.rs`, which is not implemented yet. Its legacy JS runtime
 /// precondition is exactly "an account with this id existed" — the value
 /// [`remove`] returns as `Some`. Until it lands, cleanup is the neutral
 /// `{ pending: false, notice: None }`, so no `browser://notify` is emitted (the
-/// Electron event only fires when `cleanup.notice` is truthy). When
+/// legacy JS runtime event only fires when `cleanup.notice` is truthy). When
 /// `browser_launcher` is ready, replace the marked block below with a call into
 /// it on the `Some(account)` branch, and this command becomes `async`.
 #[tauri::command]
@@ -958,7 +958,7 @@ pub fn accounts_remove(app: AppHandle, id: String) -> Result<RemoveResult, Strin
         let removed = remove(&mut accounts, &id);
 
         // ── Donut cleanup integration point (Task 13 / browser_launcher.rs) ──
-        // Electron: `if (account) cleanup = await handleAccountRemovalCleanup(account)`.
+        // legacy JS runtime: `if (account) cleanup = await handleAccountRemovalCleanup(account)`.
         // `removed.is_some()` is that `if (account)` precondition. No cleanup module
         // yet, so this stays the neutral result.
         let mut pending = false;
@@ -976,7 +976,7 @@ pub fn accounts_remove(app: AppHandle, id: String) -> Result<RemoveResult, Strin
             .map_err(|e| e.to_string())?;
 
         // Emit `browser://notify` only when cleanup produced a notice, at the same
-        // point in the flow as the Electron `win.webContents.send('browser:notify', ...)`.
+        // point in the flow as the legacy JS runtime `win.webContents.send('browser:notify', ...)`.
         if let Some(message) = &notice {
             let _ = app.emit(
                 BROWSER_NOTIFY_EVENT,
@@ -1567,7 +1567,7 @@ mod prop_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(200))]
 
-        // Feature: electron-to-tauri-migration, Property 21: An unreadable store file is left untouched and its failure cause is reported, never silently treated as empty
+        // Feature: native-tauri-backend, Property 21: An unreadable store file is left untouched and its failure cause is reported, never silently treated as empty
         //
         // **Validates: Requirements 11.7**
         //
@@ -1721,7 +1721,7 @@ mod load_prop_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(200))]
 
-        // Feature: electron-to-tauri-migration, Property 18: Loading a mixed-validity Account_Store surfaces every decryptable entry and preserves every non-decryptable one unmodified with an error
+        // Feature: native-tauri-backend, Property 18: Loading a mixed-validity Account_Store surfaces every decryptable entry and preserves every non-decryptable one unmodified with an error
         #[test]
         fn mixed_validity_load_surfaces_decryptable_and_preserves_undecryptable(
             specs in prop::collection::vec(entry_strategy(), 0..15)
@@ -1864,7 +1864,7 @@ mod reorder_prop_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(200))]
 
-        // Feature: electron-to-tauri-migration, Property 4: Reordering merges omitted identifiers rather than dropping them
+        // Feature: native-tauri-backend, Property 4: Reordering merges omitted identifiers rather than dropping them
         //
         // **Validates: Requirements 1.4**
         //
@@ -1987,7 +1987,7 @@ mod remove_prop_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(300))]
 
-        // Feature: electron-to-tauri-migration, Property 3: Removal applies to an existing identifier and no-ops otherwise
+        // Feature: native-tauri-backend, Property 3: Removal applies to an existing identifier and no-ops otherwise
         //
         // **Validates: Requirements 1.3**
         //
@@ -2083,7 +2083,7 @@ mod add_prop_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(200))]
 
-        // Feature: electron-to-tauri-migration, Property 1: Adding an account enforces identifier uniqueness
+        // Feature: native-tauri-backend, Property 1: Adding an account enforces identifier uniqueness
         //
         // **Validates: Requirements 1.1**
         //
@@ -2256,7 +2256,7 @@ mod update_prop_tests {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(200))]
 
-        // Feature: electron-to-tauri-migration, Property 2: Editing applies to an existing identifier and no-ops otherwise
+        // Feature: native-tauri-backend, Property 2: Editing applies to an existing identifier and no-ops otherwise
         //
         // **Validates: Requirements 1.2**
         #[test]

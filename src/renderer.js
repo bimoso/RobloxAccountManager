@@ -490,9 +490,11 @@ function toggleSelectMode() {
   _selMode = !_selMode;
   document.body.classList.toggle('select-mode', _selMode);
   document.getElementById('select-btn').classList.toggle('on', _selMode);
-  if (!_selMode) _selectedIds.clear();
+  if (!_selMode) {
+    _selectedIds.clear();
+    document.querySelectorAll('.card.selected').forEach(c => c.classList.remove('selected'));
+  }
   updateBulkBar();
-  render();
 }
 function toggleSelect(id) {
   if (!_selMode) { _selMode = true; document.body.classList.add('select-mode'); document.getElementById('select-btn').classList.add('on'); }
@@ -531,10 +533,21 @@ async function bulkOpenBrowser() {
   if (!sel.length) { toast('Select at least one account', 'err'); return; }
   toast('Opening ' + sel.length + ' browser session' + (sel.length !== 1 ? 's' : '') + '…', 'ok');
   let ok = 0;
-  for (const a of sel) {
-    const r = await api.openAccountBrowser(a.id);
-    if (r && r.ok) ok++; else logEntry('err', 'browser', `Open browser failed for ${a.username || a.id}: ${r?.error || 'error'}`, { accountId: a.id });
-    await new Promise(r => setTimeout(r, 400));
+  if (typeof api.openAccountBrowsers === 'function') {
+    const r = await api.openAccountBrowsers(sel.map(a => a.id));
+    ok = Number(r?.opened || 0);
+    (r?.results || []).forEach(item => {
+      if (item && !item.ok) {
+        const a = accounts.find(x => x.id === item.accountId);
+        logEntry('err', 'browser', `Open browser failed for ${a?.username || item.accountId}: ${item.error || 'error'}`, { accountId: item.accountId });
+      }
+    });
+  } else {
+    for (const a of sel) {
+      const r = await api.openAccountBrowser(a.id);
+      if (r && r.ok) ok++; else logEntry('err', 'browser', `Open browser failed for ${a.username || a.id}: ${r?.error || 'error'}`, { accountId: a.id });
+      await new Promise(r => setTimeout(r, 400));
+    }
   }
   toast('Opened ' + ok + '/' + sel.length + ' browser sessions', ok === sel.length ? 'ok' : 'err');
 }
@@ -868,8 +881,7 @@ setInterval(() => { if (accounts.length) recheckAllCookies(false); }, 60000);
 
 const _gameNameCache = {}; // accountId -> resolved game name
 // Persistent target -> resolved name map. Game names are stable, so caching them
-// across restarts avoids re-resolving every launch. Stored in localStorage
-// (available in the Electron renderer, same as the theme setting).
+// across restarts avoids re-resolving every launch. Stored in WebView localStorage.
 let _gameNamePersist = {};
 try { _gameNamePersist = JSON.parse(localStorage.getItem('mr-gamenames') || '{}'); } catch { _gameNamePersist = {}; }
 function _saveGameNames() { try { localStorage.setItem('mr-gamenames', JSON.stringify(_gameNamePersist)); } catch {} }

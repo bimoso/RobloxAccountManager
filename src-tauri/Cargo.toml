@@ -17,13 +17,13 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["devtools"] }
-# Official Tauri clipboard plugin, replacing Electron's main-process `clipboard`
+# Official Tauri clipboard plugin, replacing legacy JS runtime's main-process `clipboard`
 # module for the Account_Browser_Launcher's Copy Cookie action (design "Overview"
 # rationale). Its Rust `ClipboardExt::clipboard().write_text()/read_text()` pair
 # backs the concrete `browser_launcher::TauriClipboard` (Task 13.7), and the
 # matching `clipboard-manager:*` permissions are scoped in capabilities/default.json.
 tauri-plugin-clipboard-manager = "2"
-# Official Tauri v2 opener plugin, the replacement for Electron's main-process
+# Official Tauri v2 opener plugin, the replacement for legacy JS runtime's main-process
 # `shell.openExternal`. Backs `window.rs`'s `open_external` command (Task 16.1),
 # opening a URL in the OS default handler via `OpenerExt::opener().open_url()`;
 # the matching `opener:allow-open-url` permission is scoped in capabilities/default.json.
@@ -37,16 +37,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["process", "time", "sync", "rt-multi-thread", "macros", "io-util"] }
 
-# Async HTTP client for the Roblox HTTPS calls ported from `main.js`'s
+# Async HTTP client for the Roblox HTTPS calls ported from the legacy JS backend's
 # `httpsGet`/`httpsPost`/`net.request` helpers (version, cookie validation, game
 # name, share-link/private-server resolution). `rustls-tls` avoids a system
 # OpenSSL/native-tls build dependency; `json` is unused (responses are parsed via
-# serde_json to mirror main.js's raw-body parsing), so only the client + redirect
+# serde_json to mirror the legacy JS backend's raw-body parsing), so only the client + redirect
 # control features are enabled.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 # Microsoft's official Win32 bindings. Used here for DPAPI
-# (`CryptProtectData`/`CryptUnprotectData`) to reproduce Electron `safeStorage`'s
+# (`CryptProtectData`/`CryptUnprotectData`) to reproduce legacy safe storage's
 # `safe:` format byte-for-byte (Requirement 11.3), and `LocalFree` to release the
 # blob DPAPI allocates for its output. Later encryption tasks add `GetTickCount64`
 # (already covered by the Win32_System_SystemInformation feature added when needed).
@@ -60,7 +60,7 @@ windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-# Field-encryption primitives, chosen to reproduce the Electron_Build's on-disk
+# Field-encryption primitives, chosen to reproduce the legacy JS build's on-disk
 # formats byte-for-byte (Requirement 11.3). All are the RustCrypto "digest 0.10 /
 # cipher 0.4" generation, so they share compatible trait versions with no conflict:
 #   gs:  -> AES-256-GCM keyed by scrypt(N=2^16, r=8, p=1)          (scrypt + aes-gcm)
@@ -77,15 +77,15 @@ base64 = "0.22"
 getrandom = "0.2"
 
 # WHATWG URL parser (the Rust implementation of the same URL spec browsers use),
-# used by `roblox_process.rs`'s launch-target parser to reproduce `main.js`'s
+# used by `roblox_process.rs`'s launch-target parser to reproduce the legacy JS backend's
 # `new URL(...)` / `searchParams.get(...)` / `pathname` semantics faithfully.
 url = "2"
 
 # CDP (Chrome DevTools Protocol) async client, the Rust-ecosystem replacement for
-# the Electron_Build's `playwright-core` (see design "Login and Account_Browser_
+# the legacy JS build's the CDP helper (see design "Login and Account_Browser_
 # Launcher CDP flows"). Used by `browser_launcher.rs` to (a) launch a non-headless
 # Chromium for the cookie-capture login flow (`Browser::launch` + `with_head()`,
-# ported from `main.js`'s `puppeteerLogin`) and (b) connect to an already-running
+# ported from the legacy JS backend's `puppeteerLogin`) and (b) connect to an already-running
 # Donut Browser instance over CDP for cookie injection (Task 13.4). It drives
 # Chrome over the same protocol Playwright used, so the identical
 # launch/`Network.getAllCookies` / `Network.setCookie` sequences are preserved.

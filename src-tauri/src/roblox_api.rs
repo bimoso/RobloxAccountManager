@@ -1,14 +1,14 @@
-//! Roblox HTTPS API calls, ported from `main.js`'s Roblox networking section.
+//! Roblox HTTPS API calls, ported from the legacy JS backend's Roblox networking section.
 //!
 //! This module is a behavioral port of the Node.js functions that talk to
-//! Roblox's public HTTPS endpoints. The Electron_Build used a mix of Electron's
+//! Roblox's public HTTPS endpoints. The legacy JS build used a mix of legacy JS runtime's
 //! `net.request` and Node's `https` module; here every call goes through
 //! `reqwest`, but the endpoints, headers, request bodies, response parsing, and
 //! error handling are reproduced 1:1 so behavior is unchanged (Requirement 2.1).
 //!
-//! Ported functions (Electron -> Rust):
+//! Ported functions (legacy JS runtime -> Rust):
 //!
-//! | `main.js`            | Rust                          | Endpoint                                                            |
+//! | the legacy JS backend            | Rust                          | Endpoint                                                            |
 //! |----------------------|-------------------------------|--------------------------------------------------------------------|
 //! | `getRobloxVersion`   | [`get_roblox_version`]        | `GET clientsettingscdn.roblox.com/v2/client-version/WindowsPlayer` |
 //! | `fetchUserInfo`      | [`fetch_user_info`]           | `GET users.roblox.com/v1/users/authenticated`                      |
@@ -17,32 +17,32 @@
 //! | `getAccessCode`      | [`get_access_code`]           | `POST apis.roblox.com/sharelinks/v1/resolve` (+ redirect-scrape fallback) |
 //! | `followRedirect`     | [`follow_redirect`]           | `GET <url>` with manual redirect                                   |
 //!
-//! Header parity notes (these are deliberate, matching `main.js` exactly):
+//! Header parity notes (these are deliberate, matching the legacy JS backend exactly):
 //!   * [`fetch_user_info`] sends ONLY `Cookie` + `Accept` — it does NOT send a
-//!     `User-Agent` (the Electron `net.request` call did not), unlike every other
+//!     `User-Agent` (the legacy JS runtime `net.request` call did not), unlike every other
 //!     call here which sends the desktop `User-Agent` string.
 //!   * The shared desktop UA is
 //!     `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36`.
 //!
 //! Every function returns a `Result`; no `unwrap`/`expect` is used on any
-//! fallible operation. Functions that in `main.js` "resolve to null / a status
+//! fallible operation. Functions that in the legacy JS backend "resolve to null / a status
 //! object on error" return `Ok(None)` / an `ok:false` payload for the *expected*
 //! not-found / invalid-cookie cases, and reserve `Err(String)` for genuine
 //! transport/build failures, so the command layer (Task 11.3) and
 //! `roblox_process` (Task 10.2) can map them onto the same renderer-visible
-//! outcomes the Electron_Build produced.
+//! outcomes the legacy JS build produced.
 
 use serde::Serialize;
 use serde_json::Value;
 
 /// Desktop `User-Agent` string sent by every ported call except
-/// [`fetch_user_info`] (which, matching `main.js`, sends none).
+/// [`fetch_user_info`] (which, matching the legacy JS backend, sends none).
 const DESKTOP_UA: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 
 /// Result of validating a `.ROBLOSECURITY` cookie via [`fetch_user_info`].
 ///
-/// Field names are chosen to serialize to the exact shape `main.js`'s
+/// Field names are chosen to serialize to the exact shape the legacy JS backend's
 /// `fetchUserInfo` resolved with (`{ ok, username, userId }` on success,
 /// `{ ok:false, reason }` on failure), so the `roblox_validate_cookie` command
 /// can return this struct straight to the Renderer_UI without reshaping.
@@ -58,7 +58,7 @@ pub struct UserInfo {
     #[serde(rename = "userId", skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     /// A short failure reason (parse error message or truncated response body),
-    /// present only on failure — mirrors `main.js`'s `reason` field.
+    /// present only on failure — mirrors the legacy JS backend's `reason` field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -73,7 +73,7 @@ impl UserInfo {
 }
 
 /// A resolved share link: the place id and link code extracted from Roblox's
-/// `sharelinks/v1/resolve-link` response. Mirrors `main.js`'s
+/// `sharelinks/v1/resolve-link` response. Mirrors the legacy JS backend's
 /// `{ placeId, linkCode }` success payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedShareLink {
@@ -81,7 +81,7 @@ pub struct ResolvedShareLink {
     pub link_code: String,
 }
 
-/// Build a `reqwest` client. `follow_redirects=false` reproduces the Electron
+/// Build a `reqwest` client. `follow_redirects=false` reproduces the legacy JS runtime
 /// `redirect: 'manual'` behavior needed by [`follow_redirect`] and
 /// [`get_access_code`]'s redirect-scrape fallback; the other calls hit endpoints
 /// that answer `200` directly, matching Node's non-following `https.get`.
@@ -102,7 +102,7 @@ fn build_client(follow_redirects: bool) -> Result<reqwest::Client, String> {
 /// `GET https://clientsettingscdn.roblox.com/v2/client-version/WindowsPlayer`
 /// with a 5-second timeout (matching `httpsGet`). On `200`, returns
 /// `clientVersionUpload` if present, else `version`. Returns `Ok(None)` when the
-/// call succeeds but neither field is present (mirroring `main.js`'s `return
+/// call succeeds but neither field is present (mirroring the legacy JS backend's `return
 /// null`), and `Err` only on transport failure or a non-200 status.
 pub async fn get_roblox_version() -> Result<Option<String>, String> {
     let client = build_client(false)?;
@@ -137,7 +137,7 @@ pub async fn get_roblox_version() -> Result<Option<String>, String> {
 ///
 /// `GET https://users.roblox.com/v1/users/authenticated` with
 /// `Cookie: .ROBLOSECURITY=<cookie>` and `Accept: application/json` (and NO
-/// `User-Agent`, matching the Electron `net.request` call). Never returns `Err`:
+/// `User-Agent`, matching the legacy JS runtime `net.request` call). Never returns `Err`:
 /// like the Node promise, every outcome resolves to a [`UserInfo`] — `ok:true`
 /// with `username`/`userId` when `d.id` is present, otherwise `ok:false` with a
 /// `reason` (truncated body, `"parse error"`, or the transport error message).
@@ -273,10 +273,10 @@ async fn get_json(client: &reqwest::Client, url: &str, cookie: &str) -> Option<V
 /// `x-csrf-token` response header it retries the SAME payload once with that
 /// token before moving on. On a `200`, extracts `placeId` and one of
 /// `linkCode`/`privateServerLinkCode`/`accessCode`/`linkcode` from the response
-/// body. Returns `Err` with `main.js`'s user-facing message when nothing
+/// body. Returns `Err` with the legacy JS backend's user-facing message when nothing
 /// resolves.
 ///
-/// `link_type` parameterizes the payload's type field (the Electron_Build
+/// `link_type` parameterizes the payload's type field (the legacy JS build
 /// hardcoded `"Server"`); pass `"Server"` for the private-server/share flow.
 pub async fn resolve_share_link(
     share_code: &str,
@@ -319,7 +319,7 @@ pub async fn resolve_share_link(
 
 /// One POST to `sharelinks/v1/resolve-link`, returning `(status, x-csrf-token
 /// header, body)`. A transport failure or timeout is reported as status `0` with
-/// an empty body, matching `main.js`'s `cb(0, {}, '')`.
+/// an empty body, matching the legacy JS backend's `cb(0, {}, '')`.
 async fn post_resolve_link(
     client: &reqwest::Client,
     cookie: &str,
@@ -359,7 +359,7 @@ async fn post_resolve_link(
 /// `{ shareCode: <linkCode>, shareType: "Server" }`, cookie, CSRF, `Origin` and
 /// `Referer` of `https://www.roblox.com`, and the desktop UA; extracts
 /// `accessCode` from `privateServerInviteData` (checking the top-level,
-/// `resolvedShareData`, and `experienceInviteData` nestings, matching `main.js`).
+/// `resolvedShareData`, and `experienceInviteData` nestings, matching the legacy JS backend).
 ///
 /// Fallback: `GET https://www.roblox.com/games/<placeId>?privateServerLinkCode=<linkCode>`
 /// with manual redirect (5-second timeout) and scrapes `accessCode=` out of the
@@ -449,12 +449,12 @@ pub async fn follow_redirect(url: &str) -> Result<String, String> {
 // ── Tauri command wrappers (Task 11.3) ──────────────────────────────────────
 //
 // These three `#[tauri::command]` functions are the direct counterparts of the
-// Electron `roblox:getVersion` / `roblox:validateCookie` / `roblox:getGameName`
+// legacy JS runtime `roblox:getVersion` / `roblox:validateCookie` / `roblox:getGameName`
 // IPC handlers (design IPC_Surface mapping table). Each takes the same
-// parameters, in the same order, as its Electron handler, and yields the same
+// parameters, in the same order, as its legacy handler, and yields the same
 // user-observable result in the Renderer_UI (Requirement 10.1):
 //
-// | Electron IPC             | command                  | core called          |
+// | legacy IPC             | command                  | core called          |
 // |--------------------------|--------------------------|----------------------|
 // | `roblox:getVersion`      | [`roblox_get_version`]   | [`get_roblox_version`] |
 // | `roblox:validateCookie`  | [`roblox_validate_cookie`] | [`fetch_user_info`] |
@@ -463,11 +463,11 @@ pub async fn follow_redirect(url: &str) -> Result<String, String> {
 /// `roblox:getVersion` — return the current Roblox client version string, or
 /// `null` on any failure.
 ///
-/// Ports `ipcMain.handle('roblox:getVersion', async () => { try { return await
-/// getRobloxVersion(); } catch { return null; } })`. The Electron handler
+/// Ports `legacy command handler('roblox:getVersion', async () => { try { return await
+/// getRobloxVersion(); } catch { return null; } })`. The legacy handler
 /// swallows every error to `null`; here both a transport/parse `Err` and the
 /// "succeeded but no version field" `Ok(None)` collapse to `None`, so the
-/// Renderer_UI receives `null` in exactly the cases the Electron_Build returned
+/// Renderer_UI receives `null` in exactly the cases the legacy JS build returned
 /// `null`. Returns `Ok` unconditionally (never a rejected promise).
 #[tauri::command]
 pub async fn roblox_get_version() -> Result<Option<String>, String> {
@@ -477,7 +477,7 @@ pub async fn roblox_get_version() -> Result<Option<String>, String> {
 /// `roblox:validateCookie` — validate a `.ROBLOSECURITY` cookie, returning the
 /// `{ ok, username, userId }` / `{ ok:false, reason }` payload.
 ///
-/// Ports `ipcMain.handle('roblox:validateCookie', async (_, cookie) => await
+/// Ports `legacy command handler('roblox:validateCookie', async (_, cookie) => await
 /// fetchUserInfo(cookie))`. [`fetch_user_info`] never returns `Err` (every
 /// outcome, including transport failure, resolves to a [`UserInfo`]), matching
 /// the Node promise that always resolves, so the Renderer_UI branches on the
@@ -491,9 +491,9 @@ pub async fn roblox_validate_cookie(cookie: Option<String>) -> Result<UserInfo, 
 /// `roblox:getGameName` — resolve a bare place id or a games/URL target to a
 /// game name, or `null` on any failure.
 ///
-/// Ports `ipcMain.handle('roblox:getGameName', async (_, placeIdOrTarget,
+/// Ports `legacy command handler('roblox:getGameName', async (_, placeIdOrTarget,
 /// cookie) => { try { ... } catch { return null; } })`, preserving the
-/// `(placeIdOrTarget, cookie)` parameter order. The Electron handler returns
+/// `(placeIdOrTarget, cookie)` parameter order. The legacy handler returns
 /// `null` when no place id can be extracted, when neither the primary nor the
 /// universe-fallback lookup yields a name, and on any thrown error; here the
 /// `Ok(None)` cases and a transport/build `Err` all collapse to `None` so the
@@ -1111,7 +1111,7 @@ fn parse_roblosecurity(set_cookie: &str) -> Option<String> {
 // ── Pure helpers (no I/O) ────────────────────────────────────────────────────
 
 /// Coerce a JSON value that may be a number or a string into an id string,
-/// mirroring `main.js`'s `String(d.id)` / numeric `universeId` handling.
+/// mirroring the legacy JS backend's `String(d.id)` / numeric `universeId` handling.
 fn value_to_id_string(v: &Value) -> Option<String> {
     match v {
         Value::String(s) if !s.is_empty() => Some(s.clone()),
@@ -1174,7 +1174,7 @@ pub fn extract_place_id(place_id_or_target: &str) -> Option<String> {
 }
 
 /// Find a `?key=<digits>` or `&key=<digits>` value in `s`, returning the run of
-/// digits. Reproduces `main.js`'s `[?&]<key>=(\d+)` regex without a regex crate.
+/// digits. Reproduces the legacy JS backend's `[?&]<key>=(\d+)` regex without a regex crate.
 fn find_query_number(s: &str, key: &str) -> Option<String> {
     for sep in ['?', '&'] {
         let needle = format!("{sep}{key}=");
@@ -1190,7 +1190,7 @@ fn find_query_number(s: &str, key: &str) -> Option<String> {
 }
 
 /// Parse a `resolve-link` `200` body into a [`ResolvedShareLink`], mirroring
-/// `main.js`'s dual regex (`"placeId":<digits>` and one of
+/// the legacy JS backend's dual regex (`"placeId":<digits>` and one of
 /// `linkCode`/`privateServerLinkCode`/`accessCode`/`linkcode` as a string). A
 /// recursive search over the parsed JSON is used so nested payload shapes resolve
 /// the same way the flat body regex did.
@@ -1205,7 +1205,7 @@ fn parse_share_link_body(body: &str) -> Option<ResolvedShareLink> {
 }
 
 /// Extract an `accessCode` from a `sharelinks/v1/resolve` response, checking the
-/// same three `privateServerInviteData` nestings as `main.js`'s `getAccessCode`.
+/// same three `privateServerInviteData` nestings as the legacy JS backend's `getAccessCode`.
 fn extract_access_code(d: &Value) -> Option<String> {
     let inv = d.get("privateServerInviteData")
         .or_else(|| d.get("resolvedShareData").and_then(|x| x.get("privateServerInviteData")))
@@ -1217,7 +1217,7 @@ fn extract_access_code(d: &Value) -> Option<String> {
 }
 
 /// Scrape an `accessCode=<value>` (up to the next `&`) out of a redirect
-/// `Location` header, reproducing `main.js`'s `/[?&]accessCode=([^&]+)/`.
+/// `Location` header, reproducing the legacy JS backend's `/[?&]accessCode=([^&]+)/`.
 fn scrape_access_code(location: &str) -> Option<String> {
     for sep in ['?', '&'] {
         let needle = format!("{sep}accessCode=");
@@ -1370,7 +1370,7 @@ mod tests {
     }
 
     #[test]
-    fn user_info_serializes_to_electron_shape() {
+    fn user_info_serializes_to_legacy_shape() {
         let ok = UserInfo::ok("Builderman".to_string(), "156".to_string());
         let v = serde_json::to_value(&ok).unwrap();
         assert_eq!(v["ok"], serde_json::json!(true));
@@ -1443,7 +1443,7 @@ mod tests {
     #[test]
     fn parse_share_link_body_resolves_lowercase_linkcode_key() {
         // The `linkcode` (all-lowercase) alternate key is accepted, matching the
-        // set of keys ported from main.js.
+        // set of keys ported from legacy JS backend.
         assert_eq!(
             parse_share_link_body(r#"{"placeId":"42","linkcode":"lc_val"}"#),
             Some(ResolvedShareLink {
