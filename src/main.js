@@ -1009,7 +1009,7 @@ async function resolveOrCreateProfile(account) {
 // Launches the Browser_Instance for a Donut_Profile via POST /v1/profiles/{id}/run
 // (Req 1.1) and extracts the CDP_Port the launcher connects to for cookie
 // injection. The port is read defensively across the shapes Donut Browser may
-// use (`cdpPort`/`cdp_port`/`port`/`debuggingPort`/`remoteDebuggingPort`), since
+// use (`cdpPort`/`cdp_port`/`port`/`debuggingPort`/`remoteDebuggingPort`/`remote_debugging_port`), since
 // only the /run path itself is pinned by the requirements.
 //
 // Resolves to { ok, cdpPort, error: null|'run_failed'|'no_cdp_port' }:
@@ -1017,11 +1017,11 @@ async function resolveOrCreateProfile(account) {
 //   ran, no CDP port  -> { ok:false, cdpPort:null, error:'no_cdp_port' }
 //   ran with a port   -> { ok:true,  cdpPort, error:null }
 async function runDonutProfile(profileId) {
-  const res = await donutHttp('POST', `/v1/profiles/${profileId}/run`);
+  const res = await donutHttp('POST', `/v1/profiles/${profileId}/run`, { headless: false });
   if (!res || !res.ok || !res.json) return { ok: false, cdpPort: null, error: 'run_failed' };
 
   const raw = res.json.cdpPort ?? res.json.cdp_port ?? res.json.port
-    ?? res.json.debuggingPort ?? res.json.remoteDebuggingPort;
+    ?? res.json.debuggingPort ?? res.json.remoteDebuggingPort ?? res.json.remote_debugging_port;
   const cdpPort = Number(raw);
   if (!Number.isInteger(cdpPort) || cdpPort <= 0) return { ok: false, cdpPort: null, error: 'no_cdp_port' };
 

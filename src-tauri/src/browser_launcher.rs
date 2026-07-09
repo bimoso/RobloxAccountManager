@@ -657,7 +657,7 @@ pub fn extract_profile_id(json: &Value) -> Option<String> {
 ///
 /// ```js
 /// const raw = res.json.cdpPort ?? res.json.cdp_port ?? res.json.port
-///   ?? res.json.debuggingPort ?? res.json.remoteDebuggingPort;
+///   ?? res.json.debuggingPort ?? res.json.remoteDebuggingPort ?? res.json.remote_debugging_port;
 /// const cdpPort = Number(raw);
 /// if (!Number.isInteger(cdpPort) || cdpPort <= 0) return no_cdp_port;
 /// ```
@@ -673,6 +673,7 @@ pub fn extract_cdp_port(json: &Value) -> Option<u32> {
         "port",
         "debuggingPort",
         "remoteDebuggingPort",
+        "remote_debugging_port",
     ]
     .into_iter()
     .find_map(|key| match json.get(key) {
@@ -1019,7 +1020,8 @@ pub async fn run_donut_profile_at(
     profile_id: &str,
 ) -> Result<u32, RunProfileError> {
     let path = format!("/v1/profiles/{profile_id}/run");
-    let res = donut_request(base_url, token, "POST", &path, None).await;
+    let body = json!({ "headless": false });
+    let res = donut_request(base_url, token, "POST", &path, Some(&body)).await;
     // 402 Payment Required: /run is a Donut Browser Pro-only endpoint.
     if res.status == 402 {
         return Err(RunProfileError::RequiresPro);
@@ -1041,9 +1043,9 @@ pub async fn run_donut_profile_at(
 ///
 /// ```js
 /// async function runDonutProfile(profileId) {
-///   const res = await donutHttp('POST', `/v1/profiles/${profileId}/run`);
+///   const res = await donutHttp('POST', `/v1/profiles/${profileId}/run`, { headless: false });
 ///   if (!res || !res.ok || !res.json) return { ok:false, cdpPort:null, error:'run_failed' };
-///   const raw = res.json.cdpPort ?? res.json.cdp_port ?? res.json.port ?? res.json.debuggingPort ?? res.json.remoteDebuggingPort;
+///   const raw = res.json.cdpPort ?? res.json.cdp_port ?? res.json.port ?? res.json.debuggingPort ?? res.json.remoteDebuggingPort ?? res.json.remote_debugging_port;
 ///   const cdpPort = Number(raw);
 ///   if (!Number.isInteger(cdpPort) || cdpPort <= 0) return { ok:false, cdpPort:null, error:'no_cdp_port' };
 ///   return { ok:true, cdpPort, error:null };
@@ -3279,6 +3281,10 @@ mod tests {
             extract_cdp_port(&json!({ "remoteDebuggingPort": 9226 })),
             Some(9226)
         );
+        assert_eq!(
+            extract_cdp_port(&json!({ "remote_debugging_port": 9228 })),
+            Some(9228)
+        );
         // Numeric string is coerced (JS Number("9227")).
         assert_eq!(extract_cdp_port(&json!({ "port": "9227" })), Some(9227));
         // cdpPort wins over the lower-priority keys.
@@ -3305,10 +3311,19 @@ mod tests {
 
     #[tokio::test]
     async fn run_profile_returns_cdp_port() {
-        let (base, _rx) = spawn_capture_server(200, "application/json", r#"{"cdpPort":9333}"#);
+        let (base, rx) = spawn_capture_server(200, "application/json", r#"{"cdpPort":9333}"#);
         assert_eq!(
             run_donut_profile_at(&base, Some("tok"), "profile-1").await,
             Ok(9333)
+        );
+        let captured = rx.recv().expect("captured run request");
+        assert!(
+            captured.starts_with("POST /v1/profiles/profile-1/run "),
+            "request line: {captured}"
+        );
+        assert!(
+            captured.contains(r#"{"headless":false}"#),
+            "run body not sent: {captured}"
         );
     }
 

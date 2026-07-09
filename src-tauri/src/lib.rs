@@ -274,10 +274,10 @@ pub fn run() {
             // Rust here (and removed from `tauri.conf.json`'s `windows` list) rather
             // than auto-created from config. Requirements 10.1, 10.2, 10.3.
             use tauri::{WebviewUrl, WebviewWindowBuilder};
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let win = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("RobloxAccountManager")
-                .inner_size(980.0, 760.0)
-                .min_inner_size(945.0, 755.0)
+                .inner_size(1120.0, 760.0)
+                .min_inner_size(900.0, 680.0)
                 .resizable(true)
                 .decorations(false)
                 .initialization_script(include_str!("../../src/preload.js"))
@@ -285,11 +285,14 @@ pub fn run() {
             // Apply the previously saved size/position/maximized state (if any)
             // now that the window exists. Falling back silently on the very
             // first run, when there is nothing saved yet, is intended.
-            use tauri::Manager;
-            use tauri_plugin_window_state::{StateFlags, WindowExt};
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.restore_state(StateFlags::all());
-            }
+            use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
+            let _ = win.restore_state(StateFlags::all());
+            let app_for_state = app.handle().clone();
+            win.on_window_event(move |event| {
+                if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                    let _ = app_for_state.save_window_state(StateFlags::all());
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
