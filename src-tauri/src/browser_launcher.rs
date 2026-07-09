@@ -29,8 +29,8 @@
 //! the HTTPS Roblox path" (the comment the legacy JS backend carries above this section) is
 //! preserved. The request shape is reproduced exactly: an
 //! `Authorization: Bearer {token}` header attached only when a token is present
-//! (Requirement 5.2 / account-browser-launcher Property 25), a JSON body, a hard
-//! 5-second request timeout, and a resolve-never-reject contract — every call
+//! (Requirement 5.2 / account-browser-launcher Property 25), a JSON body, bounded
+//! request timeouts, and a resolve-never-reject contract — every call
 //! returns a classified [`DonutResponse`] instead of surfacing an error, so
 //! callers branch on the classification rather than catching exceptions.
 //!
@@ -83,11 +83,19 @@ use crate::AppState;
 /// has no `donutApiPort` (or a falsy `0`), matching the JS `port || DEFAULT`.
 pub const DEFAULT_DONUT_PORT: u16 = 10108;
 
-/// The hard per-request timeout, from the legacy Donut HTTP helper's
-/// `DEFAULT_TIMEOUT_MS = 5000`. A request that does not complete within this
-/// window is classified [`DonutTransportError::Unreachable`], exactly as the
-/// legacy JS build's `req.setTimeout(timeoutMs, () => { req.destroy(); resolve(unreachable) })`.
+/// The short request timeout used for Donut reachability checks and cheap CRUD.
+/// Keeping this at 5s prevents the UI from hanging when Donut Browser is closed
+/// or the Local API is disabled.
 pub const DEFAULT_TIMEOUT_MS: u64 = 5000;
+
+/// Timeout for Donut operations that may actually spawn browser processes.
+///
+/// `/v1/profiles/{id}/run` and `/v1/profiles/batch/run` can take far longer
+/// than a normal REST read because Donut starts one or more isolated Chromium
+/// processes before returning the `remote_debugging_port` values we need for
+/// cookie injection. If we give up early, Donut may still open windows but this
+/// app loses the CDP ports, so none of those windows can receive cookies.
+pub const DONUT_LAUNCH_TIMEOUT_MS: u64 = 10 * 60 * 1000;
 
 /// The non-success outcome of a [`donut_request`] call — the Rust form of
 /// the legacy Donut HTTP helper's `error: 'unreachable' | 'http'` string field.
@@ -360,6 +368,26 @@ async fn donut_http(
     let base_url = get_donut_base_url(dir);
     let token = get_donut_token(dir);
     donut_request(&base_url, token.as_deref(), method, url_path, body).await
+}
+
+async fn donut_http_with_timeout(
+    dir: &Path,
+    method: &str,
+    url_path: &str,
+    body: Option<&Value>,
+    timeout_ms: u64,
+) -> DonutResponse {
+    let base_url = get_donut_base_url(dir);
+    let token = get_donut_token(dir);
+    donut_request_with_timeout(
+        &base_url,
+        token.as_deref(),
+        method,
+        url_path,
+        body,
+        timeout_ms,
+    )
+    .await
 }
 
 // ── Availability preflight (Req 5.1 / account-browser-launcher Req 3) ─────────
@@ -1070,7 +1098,15 @@ pub async fn run_donut_profile_at(
 ) -> Result<u32, RunProfileError> {
     let path = format!("/v1/profiles/{profile_id}/run");
     let body = json!({ "headless": false });
-    let res = donut_request(base_url, token, "POST", &path, Some(&body)).await;
+    let res = donut_request_with_timeout(
+        base_url,
+        token,
+        "POST",
+        &path,
+        Some(&body),
+        DONUT_LAUNCH_TIMEOUT_MS,
+    )
+    .await;
     // 402 Payment Required: /run is a Donut Browser Pro-only endpoint.
     if res.status == 402 {
         return Err(RunProfileError::RequiresPro);
@@ -1151,7 +1187,14 @@ pub async fn run_donut_profiles_batch(
         "profile_ids": profile_ids,
         "headless": false,
     });
-    let res = donut_http(dir, "POST", PROFILES_BATCH_RUN_PATH, Some(&body)).await;
+    let res = donut_http_with_timeout(
+        dir,
+        "POST",
+        PROFILES_BATCH_RUN_PATH,
+        Some(&body),
+        DONUT_LAUNCH_TIMEOUT_MS,
+    )
+    .await;
     if res.status == 402 {
         return Err(RunProfileError::RequiresPro);
     }
