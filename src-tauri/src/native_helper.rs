@@ -387,7 +387,8 @@ fn spawn_helper(
             std::process::Stdio::piped()
         } else {
             std::process::Stdio::null()
-        });
+        })
+        .kill_on_drop(true);
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -794,6 +795,30 @@ pub async fn stop_anti_afk(app: &AppHandle, state: &AppState) {
     let mut guard = state.anti_afk_proc.lock().await;
     if let Some(mut child) = guard.take() {
         send_log(app, "warn", "afk", "Anti-AFK stopped", serde_json::Value::Null);
+        kill_child(&mut child).await;
+    }
+}
+
+/// Terminate every long-lived Native_Helper child owned by this backend.
+///
+/// This is used during application shutdown. The normal stop commands still keep
+/// their user-facing logs, but shutdown must be quiet and deterministic: no
+/// `RobloxNative.exe` child should survive just because the Tauri window closed
+/// before a settings toggle explicitly stopped it.
+pub async fn shutdown_native_helpers(state: &AppState) {
+    let anti_afk = {
+        let mut guard = state.anti_afk_proc.lock().await;
+        guard.take()
+    };
+    let mutex = {
+        let mut guard = state.mutex_proc.lock().await;
+        guard.take()
+    };
+
+    if let Some(mut child) = anti_afk {
+        kill_child(&mut child).await;
+    }
+    if let Some(mut child) = mutex {
         kill_child(&mut child).await;
     }
 }

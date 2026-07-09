@@ -3905,6 +3905,47 @@ mod tests {
     }
 
     #[test]
+    fn profile_id_reads_real_profile_wrapped_responses() {
+        let created = json!({
+            "profile": {
+                "id": "352a4d7e-4518-4f5e-82f1-693946e5a598",
+                "name": "client-4",
+                "browser": "wayfern",
+                "version": "149.0.7827.114",
+                "proxy_id": "",
+                "launch_hook": null,
+                "process_id": null,
+                "last_launch": null,
+                "release_type": "stable",
+                "camoufox_config": null,
+                "group_id": null,
+                "tags": [],
+                "is_running": false,
+                "proxy_bypass_rules": [],
+                "vpn_id": null
+            }
+        });
+        let fetched = json!({
+            "profile": {
+                "id": "29eb4f39-14cc-4a60-9a12-d87ff0768144",
+                "name": "work · Chromium — renamed",
+                "browser": "wayfern",
+                "version": "149.0.7827.114",
+                "tags": ["work", "client-1"]
+            }
+        });
+
+        assert_eq!(
+            extract_profile_id(&created),
+            Some("352a4d7e-4518-4f5e-82f1-693946e5a598".to_string())
+        );
+        assert_eq!(
+            extract_profile_id(&fetched),
+            Some("29eb4f39-14cc-4a60-9a12-d87ff0768144".to_string())
+        );
+    }
+
+    #[test]
     fn cdp_port_reads_keys_in_priority_order() {
         assert_eq!(extract_cdp_port(&json!({ "cdpPort": 9222 })), Some(9222));
         assert_eq!(extract_cdp_port(&json!({ "cdp_port": 9223 })), Some(9223));
@@ -3946,14 +3987,15 @@ mod tests {
     #[test]
     fn batch_run_result_parses_port_and_missing_profile_error() {
         let ok = BatchRunProfileResult::from_json(&json!({
-            "profile_id": "prof-ok",
-            "remote_debugging_port": 9333,
+            "profile_id": "3deaa62d-677a-4462-befd-b9ac2c6dae5d",
+            "ok": true,
+            "remote_debugging_port": 55400,
             "error": null
         }))
         .expect("batch item parses");
-        assert_eq!(ok.profile_id, "prof-ok");
+        assert_eq!(ok.profile_id, "3deaa62d-677a-4462-befd-b9ac2c6dae5d");
         assert!(ok.ok);
-        assert_eq!(ok.cdp_port, Some(9333));
+        assert_eq!(ok.cdp_port, Some(55400));
         assert!(!ok.is_profile_not_found());
 
         let missing = BatchRunProfileResult::from_json(&json!({
@@ -3973,10 +4015,14 @@ mod tests {
 
     #[tokio::test]
     async fn run_profile_returns_cdp_port() {
-        let (base, rx) = spawn_capture_server(200, "application/json", r#"{"cdpPort":9333}"#);
+        let (base, rx) = spawn_capture_server(
+            200,
+            "application/json",
+            r#"{"profile_id":"3deaa62d-677a-4462-befd-b9ac2c6dae5d","remote_debugging_port":56697,"headless":false}"#,
+        );
         assert_eq!(
             run_donut_profile_at(&base, Some("tok"), "profile-1").await,
-            Ok(9333)
+            Ok(56697)
         );
         let captured = rx.recv().expect("captured run request");
         assert!(

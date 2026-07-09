@@ -273,7 +273,7 @@ pub fn run() {
             // only be attached at window-creation time, the main window is built in
             // Rust here (and removed from `tauri.conf.json`'s `windows` list) rather
             // than auto-created from config. Requirements 10.1, 10.2, 10.3.
-            use tauri::{WebviewUrl, WebviewWindowBuilder};
+            use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
             let win = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("RobloxAccountManager")
                 .inner_size(1120.0, 760.0)
@@ -291,6 +291,8 @@ pub fn run() {
             win.on_window_event(move |event| {
                 if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                     let _ = app_for_state.save_window_state(StateFlags::all());
+                    let state = app_for_state.state::<AppState>();
+                    tauri::async_runtime::block_on(native_helper::shutdown_native_helpers(&state));
                 }
             });
             Ok(())
