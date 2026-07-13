@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "identifier": "com.robloxaccountmanager.app",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../frontend/dist",
+    "beforeBuildCommand": "npm --prefix frontend run build",
+    "beforeDevCommand": "npm --prefix frontend run dev",
+    "devUrl": "http://localhost:5173"
   },
   "app": {
     "withGlobalTauri": true,

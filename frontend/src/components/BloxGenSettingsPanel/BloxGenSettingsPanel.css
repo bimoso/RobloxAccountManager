@@ -1,0 +1,196 @@
+.bloxgen-settings {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  padding: 18px;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--card-edge);
+  border-radius: 15px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--ac) 5%, transparent), transparent 42%),
+    color-mix(in srgb, var(--glass-card) 88%, transparent);
+  box-shadow: var(--shadow-card);
+}
+
+.bloxgen-settings::before {
+  position: absolute;
+  top: -1px;
+  right: 18px;
+  left: 18px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--ac), var(--acB), transparent);
+  opacity: 0.72;
+  content: '';
+}
+
+.bloxgen-settings__heading {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.bloxgen-settings__icon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--ac) 34%, var(--bd));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--ac) 11%, transparent);
+  color: var(--ac-h);
+}
+
+.bloxgen-settings__eyebrow {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--acB);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.bloxgen-settings h3 {
+  margin: 0;
+  color: var(--t1);
+  font-family: var(--font-head);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.bloxgen-settings__status {
+  display: inline-flex;
+  min-height: 27px;
+  padding: 0 9px;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--bd);
+  border-radius: 999px;
+  color: var(--t3);
+  font-size: 9.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.bloxgen-settings__status[data-state='ready'] {
+  border-color: color-mix(in srgb, var(--green) 28%, var(--bd));
+  background: color-mix(in srgb, var(--green) 7%, transparent);
+  color: var(--green);
+}
+
+.bloxgen-settings__copy {
+  max-width: 640px;
+  margin: 0;
+  color: var(--t2);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.bloxgen-settings__label {
+  color: var(--t2);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.bloxgen-settings__field {
+  display: grid;
+  min-height: 44px;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  overflow: hidden;
+  border: 1px solid var(--bd2);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 74%, var(--s1));
+  transition:
+    border-color 180ms var(--smooth),
+    box-shadow 180ms var(--smooth);
+}
+
+.bloxgen-settings__field:focus-within {
+  border-color: color-mix(in srgb, var(--ring) 72%, var(--bd2));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 12%, transparent);
+}
+
+.bloxgen-settings__field[data-invalid='true'] {
+  border-color: color-mix(in srgb, var(--red) 65%, var(--bd2));
+}
+
+.bloxgen-settings__field input {
+  min-width: 0;
+  padding: 0 13px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--t1);
+  font: 12px/1.2 'JetBrains Mono', monospace;
+}
+
+.bloxgen-settings__field input::placeholder {
+  color: var(--t3);
+}
+
+.bloxgen-settings__reveal {
+  display: grid;
+  width: 42px;
+  border: 0;
+  border-left: 1px solid var(--bd);
+  place-items: center;
+  background: transparent;
+  color: var(--t3);
+  cursor: pointer;
+  transition: color 150ms var(--smooth), background-color 150ms var(--smooth);
+}
+
+.bloxgen-settings__reveal:hover,
+.bloxgen-settings__reveal:focus-visible {
+  outline: 0;
+  background: color-mix(in srgb, var(--ac) 9%, transparent);
+  color: var(--t1);
+}
+
+.bloxgen-settings__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.bloxgen-settings__footer p {
+  margin: 0;
+  color: var(--t3);
+  font-size: 10px;
+}
+
+.bloxgen-settings__footer p[data-invalid='true'] {
+  color: var(--red);
+}
+
+.bloxgen-settings__save {
+  min-height: 36px;
+  white-space: nowrap;
+}
+
+@media (max-width: 680px) {
+  .bloxgen-settings__heading {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .bloxgen-settings__status {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .bloxgen-settings__footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bloxgen-settings__field,
+  .bloxgen-settings__reveal {
+    transition-duration: 0.01ms;
+  }
+}

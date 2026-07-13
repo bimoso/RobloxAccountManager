@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Content-Security-Policy carried over verbatim from the Legacy_Frontend
+         (src/index.html) so the React_Frontend is no less restrictive
+         (Requirement 28.2). Allows the Google Fonts stylesheets/font files used
+         below plus the Roblox/BloxGen endpoints and the Tauri IPC origin. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.rbxcdn.com https://*.roblox.com https://cdn.discordapp.com; connect-src 'self' ipc: http://ipc.localhost https://*.roblox.com https://core.bloxgen.net; object-src 'none'; base-uri 'self'; frame-src 'none'"
+    />
+    <title>Roblox Account Manager</title>
+    <!-- Fonts + Material Icons ligature font, matching the Legacy_Frontend.
+         Without the "Material Icons Round" stylesheet the icon ligatures render
+         as their raw text (e.g. "manage_accounts"). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/icon?family=Material+Icons+Round"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Tauri_Bridge: classic script copied verbatim from src/preload.js. Loaded
+         before the React module (modules are deferred) so window.api exists
+         when the app boots, mirroring the Legacy_Frontend load order. -->
+    <script src="/preload.js"></script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

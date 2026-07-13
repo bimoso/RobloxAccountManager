@@ -25,3 +25,6 @@ package-lock.json
 .codex/
 .kimi/
 .playwright-mcp/
+
+scratch/
+test/

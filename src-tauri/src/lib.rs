@@ -107,6 +107,10 @@ pub mod roblox_api;
 /// (`browser://notify` is owned by `accounts_remove` in `accounts.rs`).
 pub mod browser_launcher;
 
+/// Standalone Wayfern provider: manifest resolution, streaming portable
+/// installation, per-account profiles and CDP launch/cookie injection.
+pub mod wayfern;
+
 /// Settings_Store + encryption Tauri command layer (Task 7.7). Hosts the
 /// `settings_*` / `enc_*` / `genhistory_*` / `fflag_*` / `fps_*` `#[tauri::command]`
 /// wrappers that orchestrate `settings.rs`, `encryption.rs`, `accounts.rs`, and
@@ -191,6 +195,10 @@ pub struct AppState {
     /// `_browserSessions` map.
     pub browser_sessions: Arc<AsyncMutex<HashMap<String, browser_launcher::BrowserSession>>>,
 
+    /// Prevent duplicate ~1 GB Wayfern downloads when installation and launch
+    /// are requested at the same time.
+    pub wayfern_install_lock: Arc<AsyncMutex<()>>,
+
     /// `_mutexProc`: the persistent Native_Helper child process holding the
     /// Roblox singleton mutex for the lifetime of a multi-instance hold.
     pub mutex_proc: Arc<AsyncMutex<Option<tokio::process::Child>>>,
@@ -231,6 +239,7 @@ impl Default for AppState {
             miss_counts: Arc::new(AsyncMutex::new(HashMap::new())),
             watch_loop_running: Arc::new(AsyncMutex::new(false)),
             browser_sessions: Arc::new(AsyncMutex::new(HashMap::new())),
+            wayfern_install_lock: Arc::new(AsyncMutex::new(())),
             mutex_proc: Arc::new(AsyncMutex::new(None)),
             anti_afk_proc: Arc::new(AsyncMutex::new(None)),
             launch_lock: Arc::new(AsyncMutex::new(())),
@@ -239,6 +248,19 @@ impl Default for AppState {
             ticket_cache: Arc::new(AsyncMutex::new(HashMap::new())),
             login_cancel_tx: Arc::new(AsyncMutex::new(None)),
         }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn apply_native_window_material(window: &tauri::WebviewWindow) {
+    use window_vibrancy::{apply_mica, apply_tabbed};
+
+    if apply_tabbed(window, Some(true)).is_ok() {
+        return;
+    }
+
+    if let Err(err) = apply_mica(window, Some(true)) {
+        eprintln!("Windows 11 Mica material unavailable: {err:?}");
     }
 }
 
@@ -279,9 +301,12 @@ pub fn run() {
                 .inner_size(1120.0, 760.0)
                 .min_inner_size(900.0, 680.0)
                 .resizable(true)
+                .transparent(true)
                 .decorations(false)
                 .initialization_script(include_str!("../../src/preload.js"))
                 .build()?;
+            #[cfg(target_os = "windows")]
+            apply_native_window_material(&win);
             // Apply the previously saved size/position/maximized state (if any)
             // now that the window exists. Falling back silently on the very
             // first run, when there is nothing saved yet, is intended.
@@ -338,6 +363,8 @@ pub fn run() {
             browser_launcher::browser_open,
             browser_launcher::browser_open_batch,
             browser_launcher::browser_copy_cookie,
+            wayfern::browser_wayfern_status,
+            wayfern::browser_wayfern_install,
             browser_launcher::roblox_open_login,
             browser_launcher::login_cancel,
             packages::packages_load,

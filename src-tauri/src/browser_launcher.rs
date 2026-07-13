@@ -583,6 +583,29 @@ pub async fn ensure_wayfern_engine_at(
     if !versions_res.ok {
         return Err(WayfernError::StatusFailed);
     }
+
+    // Older Donut builds returned a single engine-status object instead of the
+    // current versions array. Keep that wire format working so upgrades do not
+    // strand users on an older Local API while the standalone provider remains
+    // independent from this managed-engine path.
+    if versions_res.json.as_ref().is_some_and(Value::is_object) {
+        if is_wayfern_downloaded(versions_res.json.as_ref()) {
+            return Ok(());
+        }
+        let download = donut_request(
+            base_url,
+            token,
+            "POST",
+            "/v1/engines/wayfern/download",
+            None,
+        )
+        .await;
+        return if download.ok {
+            Ok(())
+        } else {
+            Err(WayfernError::DownloadFailed)
+        };
+    }
     let versions: Vec<String> = versions_res
         .json
         .as_ref()
@@ -803,7 +826,7 @@ pub struct ResolvedProfile {
 /// list (ciphertext-preserving for any entry whose cookie failed to decrypt); a
 /// store read failure yields an empty list so a lookup no-ops rather than hangs,
 /// matching how the legacy JS backend's `loadAccounts()` feeds the profile helpers.
-fn load_accounts(dir: &Path) -> Result<Vec<Account>, ()> {
+pub(crate) fn load_accounts(dir: &Path) -> Result<Vec<Account>, ()> {
     let ctx = crypto_context::resolve(dir);
     accounts::load_from_dir(
         dir,
@@ -2474,7 +2497,7 @@ pub struct OpenResult {
 
 impl OpenResult {
     /// `{ ok: true }` — a fully successful fresh open.
-    fn ok() -> Self {
+    pub(crate) fn ok() -> Self {
         OpenResult {
             ok: true,
             error: None,
@@ -2483,7 +2506,7 @@ impl OpenResult {
     }
 
     /// `{ ok: false, error }` — any stage failure.
-    fn err(message: impl Into<String>) -> Self {
+    pub(crate) fn err(message: impl Into<String>) -> Self {
         OpenResult {
             ok: false,
             error: Some(message.into()),
@@ -2493,7 +2516,7 @@ impl OpenResult {
 
     /// `{ ok: true, focused }` — an already-opening/open account was deduped and
     /// (best-effort) focused, from the JS `return { ok: true, focused: !!focus.focused }`.
-    fn deduped(focused: bool) -> Self {
+    pub(crate) fn deduped(focused: bool) -> Self {
         OpenResult {
             ok: true,
             error: None,
@@ -3293,7 +3316,18 @@ pub async fn browser_open(
     let result = async {
         let dir = accounts::store_dir(&app)?;
         let sessions = Arc::clone(&state.browser_sessions);
-        Ok(open_account_browser(&app, &dir, sessions, &account_id).await)
+        if crate::wayfern::selected(&dir) {
+            Ok(crate::wayfern::open_account_browser(
+                &app,
+                &dir,
+                sessions,
+                Arc::clone(&state.wayfern_install_lock),
+                &account_id,
+            )
+            .await)
+        } else {
+            Ok(open_account_browser(&app, &dir, sessions, &account_id).await)
+        }
     }
     .await;
     crate::logging::log_command_result("browser_open", result)
@@ -3308,7 +3342,18 @@ pub async fn browser_open_batch(
     let result = async {
         let dir = accounts::store_dir(&app)?;
         let sessions = Arc::clone(&state.browser_sessions);
-        Ok(open_account_browsers(&app, &dir, sessions, account_ids).await)
+        if crate::wayfern::selected(&dir) {
+            Ok(crate::wayfern::open_account_browsers(
+                &app,
+                &dir,
+                sessions,
+                Arc::clone(&state.wayfern_install_lock),
+                account_ids,
+            )
+            .await)
+        } else {
+            Ok(open_account_browsers(&app, &dir, sessions, account_ids).await)
+        }
     }
     .await;
     crate::logging::log_command_result("browser_open_batch", result)

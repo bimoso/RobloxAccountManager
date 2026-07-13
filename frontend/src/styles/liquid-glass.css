@@ -1,0 +1,453 @@
+/* Control Deck shell: one atmospheric layer, one structural glass layer, and
+   quiet inner surfaces. Avoid stacking opaque scrims; glass needs something
+   legible behind it to read as glass. */
+
+.app-shell {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  overflow: clip;
+  background:
+    radial-gradient(ellipse at 50% 115%, color-mix(in srgb, var(--ac) 10%, transparent), transparent 52%),
+    var(--bg);
+}
+
+.ambient-backdrop {
+  position: absolute;
+  inset: -12%;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+}
+
+.ambient-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 12%;
+  background: linear-gradient(110deg, transparent 20%, rgba(255, 255, 255, 0.025) 50%, transparent 78%);
+  transform: translate3d(-35%, 0, 0);
+  animation: deck-signal-scan 18s var(--smooth) infinite;
+}
+
+.ambient-backdrop__orb {
+  position: absolute;
+  width: 42vmax;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  filter: blur(70px) saturate(125%);
+  opacity: 0.19;
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+}
+
+.ambient-backdrop__orb--violet {
+  top: -19%;
+  left: -8%;
+  background: radial-gradient(circle, var(--ac), transparent 68%);
+  animation: deck-drift-a 22s ease-in-out infinite alternate;
+}
+
+.ambient-backdrop__orb--cyan {
+  top: -24%;
+  right: -9%;
+  background: radial-gradient(circle, var(--acB), transparent 68%);
+  animation: deck-drift-b 26s ease-in-out infinite alternate;
+}
+
+.ambient-backdrop__orb--blue {
+  bottom: -34%;
+  left: 38%;
+  width: 48vmax;
+  background: radial-gradient(circle, var(--acC), transparent 69%);
+  opacity: 0.14;
+  animation: deck-drift-c 30s ease-in-out infinite alternate;
+}
+
+.ambient-backdrop__mesh {
+  position: absolute;
+  inset: 10%;
+  background-image: radial-gradient(circle at 1px 1px, rgba(176, 191, 255, 0.22) 1px, transparent 1.2px);
+  background-size: 28px 28px;
+  opacity: 0.26;
+  mask-image: radial-gradient(ellipse at 56% 42%, #000 0%, transparent 72%);
+}
+
+.ambient-backdrop__constellation {
+  position: absolute;
+  top: 20%;
+  right: 9%;
+  width: 270px;
+  height: 170px;
+  opacity: 0.22;
+  background:
+    radial-gradient(circle at 11% 74%, var(--acB) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 35% 28%, var(--ac) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 58% 62%, var(--acC) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 83% 18%, var(--acB) 0 2px, transparent 2.5px),
+    linear-gradient(34deg, transparent 28%, rgba(129, 117, 255, 0.22) 28.5% 29%, transparent 29.5%),
+    linear-gradient(150deg, transparent 53%, rgba(75, 209, 255, 0.18) 53.5% 54%, transparent 54.5%);
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--ac) 45%, transparent));
+}
+
+@keyframes deck-drift-a {
+  to { transform: translate3d(18%, 18%, 0) scale(1.08); }
+}
+
+@keyframes deck-drift-b {
+  to { transform: translate3d(-20%, 22%, 0) scale(0.96); }
+}
+
+@keyframes deck-drift-c {
+  to { transform: translate3d(6%, -24%, 0) scale(1.1); }
+}
+
+@keyframes deck-signal-scan {
+  0%, 18% { opacity: 0; transform: translate3d(-35%, 0, 0); }
+  35%, 65% { opacity: 1; }
+  82%, 100% { opacity: 0; transform: translate3d(35%, 0, 0); }
+}
+
+.app-shell > #titlebar,
+.app-shell > .app-body {
+  position: relative;
+  z-index: 10;
+}
+
+.app-body {
+  gap: 10px;
+  padding: 10px;
+  background: transparent;
+}
+
+.app-body > #sidebar,
+.app-content {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid var(--glass-edge);
+  border-radius: 19px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.045), transparent 36%),
+    var(--glass-shell);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
+  backdrop-filter: blur(24px) saturate(145%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 28px 70px -34px rgba(0, 0, 0, 0.88);
+}
+
+.app-body > #sidebar::before,
+.app-content::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(80% 38% at 13% -8%, rgba(255, 255, 255, 0.08), transparent 72%),
+    linear-gradient(90deg, color-mix(in srgb, var(--ac) 8%, transparent), transparent 18%);
+}
+
+.app-content::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 18%;
+  left: 18%;
+  z-index: 0;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--acB) 58%, transparent), transparent);
+}
+
+.app-content > *,
+.app-body > #sidebar > * {
+  position: relative;
+  z-index: 1;
+}
+
+.app-body > #sidebar {
+  flex: 0 0 var(--sb, 236px);
+  border-right-color: var(--glass-edge);
+}
+
+/* Shared surfaces deliberately avoid a second backdrop blur. The shell owns
+   the blur; cards provide hierarchy with tone, edge and spacing. */
+:where(.settings-card, .mixer-card, .chart-card, .credit-card) {
+  border-color: var(--card-edge);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.035), transparent 46%),
+    var(--glass-card);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055), var(--shadow-card);
+}
+
+/* Sidebar */
+.ram-nav {
+  display: flex;
+  height: 100%;
+  padding: 14px 11px 11px;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+.ram-nav__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 26px;
+  padding: 0 10px;
+  color: var(--t3);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.ram-nav__heading span:last-child {
+  color: var(--acB);
+}
+
+.ram-nav__links {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ram-nav__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 44px;
+  padding: 5px 31px 5px 6px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--t2);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: color 180ms var(--smooth), border-color 180ms var(--smooth),
+    background 180ms var(--smooth), box-shadow 180ms var(--smooth);
+}
+
+.ram-nav__item::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -1px;
+  width: 2px;
+  height: 0;
+  border-radius: 3px;
+  background: var(--grad);
+  box-shadow: 0 0 12px var(--ac3);
+  transform: translateY(-50%);
+  transition: height 220ms var(--spring);
+}
+
+.ram-nav__item::after {
+  content: attr(data-order);
+  position: absolute;
+  right: 10px;
+  color: var(--t3);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.54;
+}
+
+.ram-nav__icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--t3);
+  transition: color 180ms var(--smooth), border-color 180ms var(--smooth),
+    background 180ms var(--smooth), box-shadow 180ms var(--smooth);
+}
+
+.ram-nav__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ram-nav__item:hover {
+  border-color: color-mix(in srgb, var(--bd2) 68%, transparent);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--t1);
+}
+
+.ram-nav__item:hover .ram-nav__icon {
+  border-color: var(--bd2);
+  color: var(--t1);
+}
+
+.ram-nav__item.active {
+  border-color: color-mix(in srgb, var(--ac) 36%, var(--bd));
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--ac) 13%, transparent), transparent 88%),
+    rgba(255, 255, 255, 0.045);
+  color: var(--t1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055), 0 12px 30px -22px var(--ac3);
+}
+
+.ram-nav__item.active::before {
+  height: 22px;
+}
+
+.ram-nav__item.active::after {
+  color: var(--acB);
+  opacity: 0.92;
+}
+
+.ram-nav__item.active .ram-nav__icon {
+  border-color: color-mix(in srgb, var(--ac) 42%, transparent);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--ac) 25%, transparent), color-mix(in srgb, var(--acB) 10%, transparent));
+  color: var(--acB);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 8px 18px -14px var(--ac3);
+}
+
+.ram-nav__item:focus-visible {
+  z-index: 2;
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+
+.ram-nav__spacer {
+  min-height: 14px;
+  flex: 1 1 auto;
+}
+
+.ram-nav__afk,
+.ram-nav__status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 8px 9px;
+  border: 1px solid var(--bd);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.ram-nav__afk {
+  justify-content: space-between;
+  margin-bottom: 7px;
+  color: var(--t2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ram-nav__afk-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ram-nav__status {
+  position: relative;
+  color: var(--t2);
+}
+
+.ram-nav__status-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+  color: var(--green);
+}
+
+.ram-nav__status > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ram-nav__status strong {
+  color: var(--t1);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.ram-nav__status small {
+  color: var(--t3);
+  font-size: 8.5px;
+}
+
+.ram-nav__status i {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--green) 65%, transparent);
+}
+
+/* Scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--t3) 42%, transparent) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--t3) 42%, transparent);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--t2) 58%, transparent);
+  background-clip: padding-box;
+}
+
+body.light .app-body > #sidebar,
+body.light .app-content {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.72), transparent 42%),
+    var(--glass-shell);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82), 0 25px 60px -35px rgba(37, 46, 77, 0.34);
+}
+
+body.light :where(.settings-card, .mixer-card, .chart-card, .credit-card) {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.66), transparent 48%), var(--glass-card);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ambient-backdrop::after,
+  .ambient-backdrop__orb {
+    animation: none;
+  }
+
+  .ram-nav__item::before {
+    transition: none;
+  }
+}

@@ -1,0 +1,72 @@
+/* Encryption_Gate — setup/unlock modal bodies rendered inside the shared
+ * Modal surface. The Modal backdrop (fixed, z-index 1000) is what physically
+ * blocks the rest of the app while a gate modal is open (Requirements 7.2, 7.3);
+ * this file only styles the form contents. Colors/radii come from the theme
+ * variables in styles/theme.css. */
+
+.enc-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: min(420px, 82vw);
+  padding: 24px;
+}
+
+.enc-gate__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--t1);
+}
+
+.enc-gate__desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--t2);
+}
+
+.enc-gate__form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.enc-gate__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--t2);
+}
+
+.enc-gate__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--t1);
+  background: var(--s2);
+  border: 1px solid var(--bd2);
+  border-radius: var(--r2);
+}
+
+.enc-gate__input:focus-visible {
+  outline: none;
+  border-color: var(--ac);
+}
+
+.enc-gate__error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--red);
+  background: var(--rd);
+  border: 1px solid var(--red);
+  border-radius: var(--r2);
+  padding: 8px 12px;
+}
+
+.enc-gate__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}

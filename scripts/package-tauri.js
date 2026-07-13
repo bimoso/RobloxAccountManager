@@ -208,7 +208,14 @@ try {
 }
 
 // -- Step 2: Rust release build ----------------------------------------------
-const cargoArgs = ['build', '--release', '--target', RUST_TARGET];
+// `custom-protocol` MUST be enabled for a production build: without it Tauri
+// falls back to loading `build.devUrl` (http://localhost:5173) instead of the
+// embedded `frontendDist` assets, so the packaged exe shows a blank/connection-
+// refused window whenever no dev server is running (see Cargo.toml's
+// `custom-protocol` feature comment: "used for production builds ... DO NOT
+// REMOVE!!"). `tauri build` normally sets this automatically; since this
+// pipeline calls `cargo build` directly it must be passed explicitly.
+const cargoArgs = ['build', '--release', '--target', RUST_TARGET, '--features', 'custom-protocol'];
 console.log('[package-tauri] building Tauri release binary: cargo ' + cargoArgs.join(' ') + ' (cwd: ' + srcTauriDir + ')');
 const cargoResult = spawnSync('cargo', cargoArgs, {
   stdio: 'inherit',

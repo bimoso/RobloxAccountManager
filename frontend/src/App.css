@@ -1,0 +1,52 @@
+/* App shell layout.
+ *
+ * Mirrors the Legacy_Frontend structure (`src/index.html` `#titlebar` +
+ * `#layout` with `#sidebar` and `#main`, `src/styles.css`): a fixed-height
+ * title bar on top, then a flex row filling the rest of the viewport with the
+ * fixed-width sidebar beside the flexible content region. Sizing comes from the
+ * shared theme variables `--tb` (title-bar height) and `--sb` (sidebar width).
+ */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+  color: var(--t1);
+  overflow: hidden;
+  overflow: clip;
+}
+
+/* The title bar occupies a fixed strip at the top; its own component styles
+   (TitleBar.css) handle its internal layout. */
+.app-shell > #titlebar {
+  flex: 0 0 var(--tb, 52px);
+}
+
+/* The row below the title bar: sidebar + content, filling the remaining space. */
+.app-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The sidebar keeps a fixed width and never shrinks. */
+.app-body > #sidebar {
+  flex: 0 0 var(--sb, 236px);
+  min-width: 0;
+  border-right: 1px solid var(--bd);
+  background: var(--s1);
+  overflow: hidden;
+}
+
+/* The content region flexes to fill the rest and hosts the animated pages. */
+.app-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}

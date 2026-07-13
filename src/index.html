@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.rbxcdn.com https://*.roblox.com; connect-src 'self' ipc: http://ipc.localhost https://*.roblox.com https://core.bloxgen.net; object-src 'none'; base-uri 'self'; frame-src 'none'"/>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.rbxcdn.com https://*.roblox.com https://cdn.discordapp.com; connect-src 'self' ipc: http://ipc.localhost https://*.roblox.com https://core.bloxgen.net; object-src 'none'; base-uri 'self'; frame-src 'none'"/>
 <title>RobloxAccountManager</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
@@ -150,6 +150,7 @@
             <button class="bulkbar-ico" onclick="bulkLaunch()" title="Launch selected (opens the launch modal)"><span class="material-icons-round">play_arrow</span></button>
             <button class="bulkbar-ico" onclick="bulkKill()" title="Stop / kill selected"><span class="material-icons-round">stop</span></button>
             <button class="bulkbar-ico" onclick="openAccountActions()" title="Account actions"><span class="material-icons-round">group</span></button>
+            <button class="bulkbar-ico" onclick="openBulkNotes()" title="Add notes to selected"><span class="material-icons-round">sticky_note_2</span></button>
             <button class="bulkbar-ico" onclick="bulkOpenBrowser()" title="Open browser for selected"><span class="material-icons-round">public</span></button>
             <button class="bulkbar-ico" onclick="bulkSelectAll()" title="Select all"><span class="material-icons-round">select_all</span></button>
             <button class="bulkbar-ico danger" onclick="bulkDelete()" title="Delete selected accounts"><span class="material-icons-round">delete</span></button>
@@ -816,6 +817,10 @@
         <strong style="color:var(--t1)">Blank:</strong> opens Roblox normally.
       </div>
     </div>
+    <div class="field">
+      <label>Notes</label>
+      <textarea id="in-notes" rows="4" placeholder="Private note for this account"></textarea>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('m-edit')">Cancel</button>
       <button class="btn btn-primary" onclick="saveEdit()"><span class="material-icons-round">save</span>Save</button>
@@ -979,6 +984,10 @@
         <span class="material-icons-round">person_add</span>
         <span class="aa-item-txt"><span class="aa-item-name">Send friend request</span><span class="aa-item-sub">Each selected account friends a target</span></span>
       </button>
+      <button class="aa-item" onclick="closeModal('m-account-actions');openBulkNotes()">
+        <span class="material-icons-round">sticky_note_2</span>
+        <span class="aa-item-txt"><span class="aa-item-name">Add notes</span><span class="aa-item-sub">Append or replace notes on selected accounts</span></span>
+      </button>
       <button class="aa-item" onclick="bulkCopyCookies()">
         <span class="material-icons-round">content_paste</span>
         <span class="aa-item-txt"><span class="aa-item-name">Copy cookies</span><span class="aa-item-sub">One .ROBLOSECURITY per line</span></span>
@@ -986,6 +995,28 @@
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal('m-account-actions')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- bulk notes modal -->
+<div class="overlay" id="m-bulk-notes" data-backdrop-close="true">
+  <div class="modal" onclick="event.stopPropagation()" style="width:390px">
+    <div class="modal-title">Add notes</div>
+    <div class="modal-sub" id="bulk-notes-who" style="margin-bottom:12px">Selected accounts.</div>
+    <div class="field">
+      <label>Note</label>
+      <textarea id="bulk-notes-text" rows="5" placeholder="Text to save on each selected account"></textarea>
+    </div>
+    <label class="check-row">
+      <input type="checkbox" id="bulk-notes-append" checked/>
+      <span>Append to existing notes</span>
+    </label>
+    <div class="field-hint">Turn this off to replace notes. Saving an empty replacement clears notes on the selection.</div>
+    <div class="mst hidden" id="bulk-notes-status"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('m-bulk-notes')">Cancel</button>
+      <button class="btn btn-primary" id="btn-bulk-notes" onclick="saveBulkNotes()"><span class="material-icons-round">save</span>Save notes</button>
     </div>
   </div>
 </div>

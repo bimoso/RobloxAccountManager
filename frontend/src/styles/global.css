@@ -1,0 +1,50 @@
+/* Global base styles. Theme palettes (body.theme-*) are ported in task 5.1. */
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: var(--font, "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif);
+  background: transparent;
+  color: var(--t1);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
+}
+
+#root {
+  height: 100%;
+  background: transparent;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  touch-action: manipulation;
+}
+
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--ac) 42%, transparent);
+  color: var(--t1);
+}

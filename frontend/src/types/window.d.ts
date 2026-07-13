@@ -1,0 +1,151 @@
+// types/window.d.ts
+//
+// Ambient TypeScript types for `window.api`, the Tauri_Bridge exposed by
+// `src/preload.js` (loaded as a classic script alongside the React bundle).
+//
+// This declaration mirrors EVERY member of `window.api` defined in
+// `src/preload.js` — same names, same parameter order, no additions, removals,
+// or renames (Requirements 2.1, 2.2, 2.4). The React_Frontend adds types only;
+// it never reimplements the IPC layer. `preload.js` remains the single source
+// of truth for command names and parameter shapes.
+
+import type {
+  Account,
+  Package,
+  Settings,
+  GenHistoryEntry,
+  WayfernProgress,
+  WayfernStatus,
+} from './models';
+
+/** Handle returned by an event subscription; call it to unsubscribe (Tauri's `UnlistenFn`). */
+export type UnlistenFn = () => void;
+
+/** Payload of `chrome://download-progress`: browser-download progress reporting. */
+export type ChromeDownloadProgress = unknown;
+
+/** Response of `roblox_get_avatar_thumbnails` (documented shape in preload.js). */
+export interface AvatarThumbnailsResponse {
+  data: Array<{ targetId: number; state: string; imageUrl: string }>;
+}
+
+/** One entry of the `roblox_get_presence` response (userPresenceType: 0/1/2/3). */
+export interface RobloxUserPresence {
+  userPresenceType: number;
+  placeId: number | null;
+  rootPlaceId: number | null;
+  gameId: string | null;
+  universeId: number | null;
+  lastLocation: string;
+  userId: number;
+}
+
+/** Response of `roblox_get_presence` (documented shape in preload.js). */
+export interface PresenceResponse {
+  userPresences: RobloxUserPresence[];
+}
+
+/** Response of `roblox_game_details` (documented shape in preload.js). */
+export interface GameDetails {
+  ok: boolean;
+  name?: string;
+  creator?: string;
+  universeId?: number;
+  playing?: number;
+  iconUrl?: string;
+}
+
+/**
+ * The exact `window.api` surface built by `src/preload.js`. Every member below
+ * corresponds one-to-one, in order, to a member of that object.
+ */
+export interface TauriApi {
+  // ── Window controls ──
+  minimize: () => Promise<void>;
+  maximize: () => Promise<void>;
+  close: () => Promise<void>;
+
+  // ── Account_Store ──
+  loadAccounts: () => Promise<Account[]>;
+  addAccount: (a: Account) => Promise<Account>;
+  removeAccount: (id: string) => Promise<void>;
+  updateAccount: (id: string, data: Partial<Account>) => Promise<Account>;
+  reorderAccounts: (ids: string[]) => Promise<void>;
+
+  // ── Packages ──
+  loadPackages: () => Promise<Package[]>;
+  savePackages: (packages: Package[]) => Promise<boolean>;
+
+  // ── Login (CDP cookie-capture flow) ──
+  openLogin: () => Promise<void>;
+  cancelLogin: () => Promise<void>;
+
+  // ── Roblox launch / process control ──
+  validateCookie: (cookie: string) => Promise<unknown>;
+  refreshCookie: (cookie: string) => Promise<string>;
+  setRobloxVolume: (percent: number) => Promise<void>;
+  killAllRoblox: () => Promise<void>;
+  killOneRoblox: (id: string) => Promise<void>;
+  getRunningCount: () => Promise<number>;
+  onAllRobloxClosed: (cb: () => void) => Promise<UnlistenFn>;
+  launchRoblox: (id: string, cookie: string, target: string) => Promise<void>;
+  openExternal: (url: string) => Promise<void>;
+
+  // ── Settings_Store ──
+  loadSettings: () => Promise<Settings>;
+  saveSettings: (data: Partial<Settings>) => Promise<boolean>;
+  saveDonutToken: (t: string) => Promise<boolean>;
+
+  // ── Encryption_Scheme ──
+  encStatus: () => Promise<{ mode: 'setup' | 'locked' | 'unlocked' }>;
+  encUnlock: (pass: string) => Promise<boolean>;
+  encSetKey: (pass: string) => Promise<boolean>;
+
+  // ── Native_Helper status ──
+  multiInstanceStatus: () => Promise<boolean>;
+  antiAfkStatus: () => Promise<boolean>;
+
+  // ── Generator history ──
+  readGenHistory: () => Promise<GenHistoryEntry[]>;
+  writeGenHistory: (list: GenHistoryEntry[]) => Promise<boolean>;
+  clearGenHistory: () => Promise<boolean>;
+
+  // ── Fast flags / FPS cap ──
+  readFFlags: () => Promise<unknown>;
+  writeFFlags: (flags: unknown) => Promise<boolean>;
+  readFpsCap: () => Promise<number>;
+  writeFpsCap: (cap: number) => Promise<boolean>;
+
+  // ── Push events ──
+  onChromeProgress: (cb: (payload: ChromeDownloadProgress) => void) => Promise<UnlistenFn>;
+  onRobloxClosed: (cb: (accountId: string) => void) => Promise<UnlistenFn>;
+  onRobloxCount: (cb: (count: number) => void) => Promise<UnlistenFn>;
+  onLogEntry: (cb: (payload: unknown) => void) => Promise<UnlistenFn>;
+
+  // ── Roblox metadata ──
+  getRobloxVersion: () => Promise<string>;
+  getGameName: (placeId: string, cookie: string) => Promise<string>;
+  getAvatarThumbnails: (userIds: Array<string | number>) => Promise<AvatarThumbnailsResponse>;
+  robloxApiGet: (url: string) => Promise<unknown>;
+  getPresence: (userIds: Array<string | number>, cookie: string) => Promise<PresenceResponse>;
+  getGameDetails: (placeId: string, cookie: string) => Promise<GameDetails>;
+  sendFriendRequest: (cookie: string, targetUserId: string | number) => Promise<unknown>;
+  changePassword: (cookie: string, currentPassword: string, newPassword: string) => Promise<unknown>;
+  changeDisplayName: (cookie: string, userId: string | number, newDisplayName: string) => Promise<unknown>;
+  quickLogin: (cookie: string, code: string) => Promise<unknown>;
+
+  // ── Account_Browser_Launcher ──
+  openAccountBrowser: (id: string) => Promise<void>;
+  openAccountBrowsers: (ids: string[]) => Promise<void>;
+  copyAccountCookie: (id: string) => Promise<unknown>;
+  getWayfernStatus: () => Promise<WayfernStatus>;
+  installWayfern: () => Promise<WayfernStatus>;
+  onWayfernProgress: (cb: (payload: WayfernProgress) => void) => Promise<UnlistenFn>;
+  onBrowserSessionState: (cb: (payload: unknown) => void) => Promise<UnlistenFn>;
+}
+
+declare global {
+  interface Window {
+    api: TauriApi;
+  }
+}

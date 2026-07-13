@@ -6,6 +6,10 @@ let _selMode = false;
 const _selectedIds = new Set();
 // Accounts the launch modal currently targets (1 from a card, or the selection).
 let _launchTargets = [];
+let _bulkNoteTargets = [];
+let _lastUsedTimer = null;
+let _activePage = 'accounts';
+let _renderAfterDrag = false;
 // Presence (online / in-game / in-studio) per userId, refreshed on a poll.
 const _presence = {}; // userId -> { type, placeId, universeId, name }
 
@@ -159,6 +163,7 @@ async function continueInit() {
   detectRobloxVersion();
   startRunningPoll();
   startPresencePoll();
+  startLastUsedTick();
   logEntry('info', 'system', 'RobloxAccountManager started', { version: 'v1', accounts: accounts.length, platform: navigator.platform });
   try { const k = localStorage.getItem('bloxgen_apikey'); if (k) { const el = document.getElementById('gen-apikey'); if (el) el.value = k; } } catch {}
   try { const afkStat = await api.antiAfkStatus(); if (afkStat && afkStat.enabled) logEntry('info', 'afk', `Anti-AFK is enabled on startup (active: ${afkStat.active})`, { enabled: afkStat.enabled, active: afkStat.active }); } catch {}
@@ -396,12 +401,38 @@ function settingsTab(tab) {
   if (tab === 'sounds') typeof soundRenderPage === 'function' && soundRenderPage();
 }
 
+const PAGE_ORDER = ['accounts','packages','charts','mixer','generator','settings','logs','credits'];
+
 function goTo(p) {
   if (p === 'sounds' || p === 'themes') { goTo('settings'); settingsTab(p); return; }
-  document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+  const nextPage = document.getElementById('page-' + p);
+  if (!nextPage) return;
+
+  closeCardMenu();
+  if (p !== 'accounts') clearSelection(true);
+  if (_dragging) finishDrag(false);
+
+  const oldPage = document.querySelector('.page.active');
+  const oldName = _activePage;
+  const forward = PAGE_ORDER.indexOf(p) >= PAGE_ORDER.indexOf(oldName);
+  _activePage = p;
+
+  document.querySelectorAll('.page').forEach(x => {
+    if (x !== oldPage && x !== nextPage) {
+      x.classList.remove('active','page-enter-left','page-enter-right','page-exit-left','page-exit-right');
+    }
+  });
+  if (oldPage && oldPage !== nextPage) {
+    oldPage.classList.add(forward ? 'page-exit-left' : 'page-exit-right');
+    oldPage.classList.remove('active');
+    nextPage.classList.add(forward ? 'page-enter-right' : 'page-enter-left', 'active');
+    requestAnimationFrame(() => nextPage.classList.remove('page-enter-right','page-enter-left'));
+    setTimeout(() => oldPage.classList.remove('page-exit-left','page-exit-right'), 320);
+  } else {
+    nextPage.classList.add('active');
+  }
   document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('active'));
-  document.getElementById('page-' + p).classList.add('active');
-  document.getElementById('nav-' + p).classList.add('active');
+  document.getElementById('nav-' + p)?.classList.add('active');
   if (p === 'settings') {
     document.getElementById('stat-count').textContent = accounts.length;
     refreshMultiStatus();
@@ -410,19 +441,73 @@ function goTo(p) {
   if (p === 'charts' && !chartsLoaded) loadCharts();
   if (p === 'packages') renderPackages();
   if (p === 'mixer') mixInit();
+  updateBulkBar();
   // generator page
 }
 
 function markLaunched(id) {
   _launchedIds.add(id);
+  const idx = accounts.findIndex(a => a.id === id);
+  if (idx !== -1) accounts[idx] = { ...accounts[idx], lastUsed: new Date().toISOString() };
   const card = document.querySelector(`.card[data-id="${id}"]`);
   if (card) {
     card.classList.add('is-live');
     const dot = card.querySelector('.card-dot');
     if (dot) { dot.classList.add('launched'); dot.title = 'Launched'; }
-
+    const used = card.querySelector('.card-last-used');
+    if (used) used.textContent = lastUsedText(accounts[idx] || { lastUsed: new Date().toISOString() });
   }
   refreshPkgAvatarStatus();
+}
+
+function accountNotes(a) {
+  return String((a && (a.notes ?? a.note)) || '').trim();
+}
+
+function notePreview(a) {
+  return accountNotes(a).replace(/\s+/g, ' ');
+}
+
+function relativeTime(value) {
+  if (!value) return null;
+  const t = new Date(value).getTime();
+  if (!Number.isFinite(t)) return null;
+  const diff = Math.max(0, Date.now() - t);
+  const min = 60 * 1000;
+  const hour = 60 * min;
+  const day = 24 * hour;
+  if (diff < 45 * 1000) return 'just now';
+  if (diff < hour) {
+    const n = Math.max(1, Math.round(diff / min));
+    return n + ' min ago';
+  }
+  if (diff < day) {
+    const n = Math.round(diff / hour);
+    return n + ' hour' + (n === 1 ? '' : 's') + ' ago';
+  }
+  if (diff < 7 * day) {
+    const n = Math.round(diff / day);
+    return n + ' day' + (n === 1 ? '' : 's') + ' ago';
+  }
+  return new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function lastUsedText(a) {
+  const rel = relativeTime(a && a.lastUsed);
+  return rel ? 'Last used ' + rel : 'Never launched';
+}
+
+function refreshLastUsedLabels() {
+  document.querySelectorAll('.card[data-id]').forEach(card => {
+    const a = accounts.find(x => x.id === card.dataset.id);
+    const el = card.querySelector('.card-last-used');
+    if (a && el) el.textContent = lastUsedText(a);
+  });
+}
+
+function startLastUsedTick() {
+  if (_lastUsedTimer) return;
+  _lastUsedTimer = setInterval(refreshLastUsedLabels, 60000);
 }
 
 async function killOne(id) {
@@ -486,41 +571,65 @@ function refreshPkgAvatarStatus() {
 }
 
 // ── Multi-select + bulk actions ────────────────────────────────────────────
-function toggleSelectMode() {
-  _selMode = !_selMode;
+function syncSelectionCards() {
+  document.querySelectorAll('.card[data-id]').forEach(c => {
+    const selected = _selectedIds.has(c.dataset.id);
+    c.classList.toggle('selected', selected);
+    c.setAttribute('aria-selected', selected ? 'true' : 'false');
+  });
+}
+
+function setSelectMode(on, clear) {
+  _selMode = !!on;
+  if (clear) _selectedIds.clear();
   document.body.classList.toggle('select-mode', _selMode);
-  document.getElementById('select-btn').classList.toggle('on', _selMode);
-  if (!_selMode) {
-    _selectedIds.clear();
-    document.querySelectorAll('.card.selected').forEach(c => c.classList.remove('selected'));
-  }
+  document.getElementById('select-btn')?.classList.toggle('on', _selMode);
+  syncSelectionCards();
   updateBulkBar();
+}
+
+function clearSelection(exitMode) {
+  _selectedIds.clear();
+  if (exitMode) _selMode = false;
+  document.body.classList.toggle('select-mode', _selMode);
+  document.getElementById('select-btn')?.classList.toggle('on', _selMode);
+  syncSelectionCards();
+  updateBulkBar();
+}
+
+function toggleSelectMode() {
+  if (_selMode) clearSelection(true);
+  else setSelectMode(true, false);
 }
 function toggleSelect(id) {
-  if (!_selMode) { _selMode = true; document.body.classList.add('select-mode'); document.getElementById('select-btn').classList.add('on'); }
+  if (!_selMode) setSelectMode(true, false);
   if (_selectedIds.has(id)) _selectedIds.delete(id); else _selectedIds.add(id);
-  const card = document.querySelector(`.card[data-id="${id}"]`);
-  if (card) card.classList.toggle('selected', _selectedIds.has(id));
-  updateBulkBar();
+  syncSelectionCards();
+  if (_selectedIds.size === 0) setSelectMode(false, false);
+  else updateBulkBar();
 }
 function bulkSelectAll() {
+  if (!_selMode) setSelectMode(true, false);
   visibleAccounts().forEach(a => _selectedIds.add(a.id));
-  document.querySelectorAll('.card[data-id]').forEach(c => c.classList.add('selected'));
+  syncSelectionCards();
   updateBulkBar();
 }
 function bulkClear() {
-  _selectedIds.clear();
-  document.querySelectorAll('.card.selected').forEach(c => c.classList.remove('selected'));
-  updateBulkBar();
+  clearSelection(true);
 }
 function updateBulkBar() {
   const bar = document.getElementById('bulkbar');
+  if (!bar) return;
   const n = _selectedIds.size;
-  document.getElementById('bulk-count').textContent = n;
-  bar.classList.toggle('show', _selMode && n > 0);
+  const count = document.getElementById('bulk-count');
+  if (count) count.textContent = n;
+  bar.classList.toggle('show', _activePage === 'accounts' && _selMode && n > 0);
 }
 function selectedAccounts() {
   return accounts.filter(a => _selectedIds.has(a.id));
+}
+function _cardActionHit(target) {
+  return !!(target && target.closest && target.closest('button,input,textarea,select,a,.card-row,.card-kill,.drag-handle,.card-ingame,[data-card-action]'));
 }
 
 function bulkLaunch() {
@@ -583,6 +692,44 @@ function bulkDisplayName() {
   const sel = selectedAccounts();
   if (!sel.length) { toast('Select at least one account', 'err'); return; }
   openDisplayNameFor(sel);
+}
+function openBulkNotes() {
+  const sel = selectedAccounts();
+  if (!sel.length) { toast('Select at least one account', 'err'); return; }
+  _bulkNoteTargets = sel;
+  document.getElementById('bulk-notes-who').textContent = sel.length + ' selected account' + (sel.length !== 1 ? 's' : '') + '.';
+  document.getElementById('bulk-notes-text').value = '';
+  document.getElementById('bulk-notes-append').checked = true;
+  setStatus('bulk-notes-status', 'hidden', '');
+  openModal('m-bulk-notes');
+  setTimeout(() => document.getElementById('bulk-notes-text').focus(), 120);
+}
+async function saveBulkNotes() {
+  const text = document.getElementById('bulk-notes-text').value.trim();
+  const append = document.getElementById('bulk-notes-append').checked;
+  if (!text && append) { toast('Write a note first', 'err'); return; }
+  const btn = document.getElementById('btn-bulk-notes');
+  const members = _bulkNoteTargets.slice();
+  if (!members.length) { toast('No selected accounts', 'err'); return; }
+  btn.disabled = true;
+  setStatus('bulk-notes-status', 'load', '<div class="spin"></div>Saving notes...');
+  let ok = 0;
+  for (const a of members) {
+    const current = accountNotes(a);
+    const notes = append && current && text ? current + '\n' + text : text;
+    try {
+      const updated = await api.updateAccount(a.id, { notes });
+      if (updated) {
+        const idx = accounts.findIndex(x => x.id === a.id);
+        if (idx !== -1) accounts[idx] = updated;
+        ok++;
+      }
+    } catch {}
+  }
+  btn.disabled = false;
+  setStatus('bulk-notes-status', ok === members.length ? 'ok' : 'err', '<span class="material-icons-round">' + (ok === members.length ? 'check_circle' : 'error_outline') + '</span>Saved ' + ok + '/' + members.length);
+  render();
+  setTimeout(() => { closeModal('m-bulk-notes'); toast('Notes saved for ' + ok + ' account' + (ok !== 1 ? 's' : ''), ok ? 'ok' : 'err'); }, 450);
 }
 async function bulkCopyCookies() {
   const sel = selectedAccounts();
@@ -674,7 +821,21 @@ function updatePresenceBadges(list) {
   });
 }
 
+function isDragActive() {
+  return !!(_dragging || _dragPlaceholder || document.body.classList.contains('account-dragging'));
+}
+
+function flushDeferredRender() {
+  if (!_renderAfterDrag) return;
+  _renderAfterDrag = false;
+  render();
+}
+
 function render() {
+  if (isDragActive()) {
+    _renderAfterDrag = true;
+    return;
+  }
   const grid = document.getElementById('grid'), empty = document.getElementById('empty'), sub = document.getElementById('acct-sub');
   sub.textContent = accounts.length ? accounts.length + ' account' + (accounts.length !== 1 ? 's' : '') + ' saved' : 'No accounts saved';
   const savedCount = document.getElementById('sb-saved-count');
@@ -689,8 +850,11 @@ function render() {
     grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--t3);font-size:12.5px;padding:40px 0">No accounts match your search or filter.</div>';
     return;
   }
-  grid.innerHTML = list.map((a, i) => `
-    <div class="card${_launchedIds.has(a.id) ? ' is-live' : ''}${_cookieStatus[a.id] === 'dead' ? ' cookie-dead' : ''}${_selectedIds.has(a.id) ? ' selected' : ''}" data-id="${a.id}" style="animation-delay:${i * 18}ms">
+  grid.innerHTML = list.map((a, i) => {
+    const note = notePreview(a);
+    const used = lastUsedText(a);
+    return `
+    <div class="card${_launchedIds.has(a.id) ? ' is-live' : ''}${_cookieStatus[a.id] === 'dead' ? ' cookie-dead' : ''}${_selectedIds.has(a.id) ? ' selected' : ''}" data-id="${a.id}" role="button" tabindex="0" aria-selected="${_selectedIds.has(a.id) ? 'true' : 'false'}">
       <div class="card-check" title="Select"><span class="material-icons-round">check</span></div>
       <div class="card-dot${_launchedIds.has(a.id) ? ' launched' : ''}" title="${_launchedIds.has(a.id) ? 'Launched' : 'Not launched'}"></div>
       ${_launchedIds.has(a.id) ? `<button class="card-kill" onclick="event.stopPropagation();killOne('${a.id}')" title="Kill this instance"><span class="material-icons-round">close</span></button>` : ''}
@@ -702,12 +866,16 @@ function render() {
           ${_statusBadge(a)}
           <span class="card-expired" title="This account's cookie is no longer valid. Re-add the account to refresh it."><span class="material-icons-round">error_outline</span>Expired</span>
         </div>
-        <div class="card-uid">${a.userId ? 'ID ' + a.userId : 'No ID'}</div>
+        <div class="card-meta">
+          <div class="card-uid">${a.userId ? 'ID ' + a.userId : 'No ID'}</div>
+          <div class="card-last-used">${esc(used)}</div>
+        </div>
       </div>
       ${_ingameLine(a)}
       <div class="card-game ${a.gameTarget ? 'visible' : ''}" id="gt-${a.id}" title="${esc(a.gameTarget || '')}">
         ${a.gameTarget ? esc(truncate(_gameNameCache[a.id] || extractTargetLabel(a.gameTarget), 22)) : ''}
       </div>
+      ${note ? `<div class="card-note" title="${esc(accountNotes(a))}"><span class="material-icons-round">sticky_note_2</span><span>${esc(truncate(note, 58))}</span></div>` : ''}
       <div class="card-row">
         <button class="btn btn-launch" onclick="openLaunch('${a.id}')">
           Start
@@ -719,7 +887,8 @@ function render() {
           <span class="material-icons-round">delete_outline</span>
         </button>
       </div>
-    </div>`).join('') + `<div class="card-add" onclick="openLogin()"><span class="material-icons-round card-add-icon">add</span><span class="card-add-label">Add account</span></div>`;
+    </div>`;
+  }).join('') + `<div class="card-add" onclick="openLogin()"><span class="material-icons-round card-add-icon">add</span><span class="card-add-label">Add account</span></div>`;
   // Scope per-render work to the cards actually on screen. The grid is rebuilt
   // each render, so cached avatars/names still paint instantly; only uncached
   // lookups for visible cards hit the network, and filtered-out accounts are
@@ -733,12 +902,15 @@ function render() {
     card.addEventListener('contextmenu', e => { e.preventDefault(); showCardMenu(card.dataset.id, e.clientX, e.clientY); });
     const chk = card.querySelector('.card-check');
     if (chk) chk.addEventListener('click', e => { e.stopPropagation(); toggleSelect(card.dataset.id); });
-    if (_selMode) {
-      card.addEventListener('click', e => {
-        if (e.target.closest('button') || e.target.closest('.card-kill')) return;
-        toggleSelect(card.dataset.id);
-      });
-    }
+    card.addEventListener('click', e => {
+      if (_cardActionHit(e.target)) return;
+      toggleSelect(card.dataset.id);
+    });
+    card.addEventListener('keydown', e => {
+      if ((e.key !== 'Enter' && e.key !== ' ') || _cardActionHit(e.target)) return;
+      e.preventDefault();
+      toggleSelect(card.dataset.id);
+    });
   });
   initDrag();
 }
@@ -949,16 +1121,18 @@ function updateGameLabel(accountId) {
 function truncate(s, n) { return s.length > n ? s.slice(0, n) + '\u2026' : s; }
 
 let _dragSaveTimer = null;
-let _dragging = null, _dragClone = null, _dragOffX = 0, _dragOffY = 0, _dragOverId = null;
+let _dragging = null, _dragPlaceholder = null, _dragGrid = null;
+let _dragOffX = 0, _dragOffY = 0, _dragMoved = false, _dragStartX = 0, _dragStartY = 0;
+let _dragBaseLeft = 0, _dragBaseTop = 0, _dragFrame = 0, _dragNextX = 0, _dragNextY = 0;
 
 function initDrag() {
   const grid = document.getElementById('grid');
 
   grid.querySelectorAll('.card').forEach(card => {
     const handle = card.querySelector('.drag-handle');
-    const startEl = handle || card;
+    if (!handle) return;
 
-    startEl.addEventListener('mousedown', e => {
+    handle.addEventListener('mousedown', e => {
       if (e.button !== 0) return;
       if (e.target.closest('button')) return;
       e.preventDefault();
@@ -967,22 +1141,15 @@ function initDrag() {
       const rect = card.getBoundingClientRect();
       _dragOffX = e.clientX - rect.left;
       _dragOffY = e.clientY - rect.top;
+      _dragStartX = e.clientX;
+      _dragStartY = e.clientY;
+      _dragBaseLeft = rect.left;
+      _dragBaseTop = rect.top;
+      _dragNextX = rect.left;
+      _dragNextY = rect.top;
+      _dragMoved = false;
 
-      // Create floating clone
-      _dragClone = card.cloneNode(true);
-      _dragClone.querySelectorAll('.card-kill, .drag-handle').forEach(el => el.remove());
-      _dragClone.style.cssText = `
-        position:fixed;left:${rect.left}px;top:${rect.top}px;
-        width:${rect.width}px;height:${rect.height}px;
-        opacity:0.85;pointer-events:none;z-index:9999;
-        box-shadow:0 16px 40px rgba(0,0,0,.6);
-        transform:scale(1.04);border-color:var(--ac);
-        transition:box-shadow .15s;border-radius:var(--r);
-        background:var(--s2);border:1px solid var(--ac);
-      `;
-      if (grid.classList.contains('list-view')) _dragClone.classList.add('drag-list-clone');
-      document.body.appendChild(_dragClone);
-      card.style.opacity = '0.3';
+      _dragGrid = grid;
 
       document.addEventListener('mousemove', onDragMove);
       document.addEventListener('mouseup', onDragEnd);
@@ -990,10 +1157,128 @@ function initDrag() {
   });
 }
 
+function beginFloatingDrag() {
+  if (!_dragging || _dragPlaceholder) return;
+  const grid = _dragGrid || document.getElementById('grid');
+  const rect = _dragging.getBoundingClientRect();
+  _dragBaseLeft = rect.left;
+  _dragBaseTop = rect.top;
+
+  _dragPlaceholder = document.createElement('div');
+  _dragPlaceholder.className = 'card-slot';
+  _dragPlaceholder.setAttribute('aria-hidden', 'true');
+  _dragPlaceholder.style.height = rect.height + 'px';
+  grid.insertBefore(_dragPlaceholder, _dragging);
+
+  _dragging.classList.add('dragging', 'drag-floating');
+  if (grid.classList.contains('list-view')) _dragging.classList.add('drag-list-clone');
+  _dragging.style.position = 'fixed';
+  _dragging.style.left = rect.left + 'px';
+  _dragging.style.top = rect.top + 'px';
+  _dragging.style.width = rect.width + 'px';
+  _dragging.style.height = rect.height + 'px';
+  _dragging.style.margin = '0';
+  _dragging.style.zIndex = '9999';
+  _dragging.style.pointerEvents = 'none';
+  _dragging.style.willChange = 'transform';
+  _dragging.style.transition = 'transform 95ms cubic-bezier(.2,.8,.2,1), box-shadow 180ms ease, opacity 180ms ease';
+  document.body.appendChild(_dragging);
+  document.body.classList.add('account-dragging');
+}
+
+function updateFloatingDrag(x, y) {
+  _dragNextX = x;
+  _dragNextY = y;
+  if (_dragFrame) return;
+  _dragFrame = requestAnimationFrame(() => {
+    _dragFrame = 0;
+    if (!_dragging) return;
+    const dx = _dragNextX - _dragBaseLeft;
+    const dy = _dragNextY - _dragBaseTop;
+    _dragging.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(1.025)`;
+  });
+}
+
+function dragGridItems() {
+  const grid = _dragGrid || document.getElementById('grid');
+  if (!grid) return [];
+  return Array.from(grid.children).filter(el =>
+    (el.matches('.card[data-id]') || el.classList.contains('card-slot')) && el !== _dragging
+  );
+}
+
+function insertionIndexFromPointer(x, y) {
+  const items = dragGridItems();
+  if (!items.length) return 0;
+
+  const entries = items
+    .map(el => ({ el, rect: el.getBoundingClientRect() }))
+    .sort((a, b) => Math.abs(a.rect.top - b.rect.top) > 12
+      ? a.rect.top - b.rect.top
+      : a.rect.left - b.rect.left);
+
+  const rows = [];
+  for (const entry of entries) {
+    const row = rows[rows.length - 1];
+    if (!row || Math.abs(entry.rect.top - row.top) > 24) {
+      rows.push({ top: entry.rect.top, bottom: entry.rect.bottom, items: [entry] });
+    } else {
+      row.items.push(entry);
+      row.top = Math.min(row.top, entry.rect.top);
+      row.bottom = Math.max(row.bottom, entry.rect.bottom);
+    }
+  }
+
+  rows.forEach(row => {
+    row.items.sort((a, b) => a.rect.left - b.rect.left);
+    row.center = (row.top + row.bottom) / 2;
+  });
+
+  if (y < rows[0].top) return 0;
+  if (y > rows[rows.length - 1].bottom) return entries.length;
+
+  let rowIndex = 0;
+  let closest = Infinity;
+  rows.forEach((row, index) => {
+    const distance = Math.abs(y - row.center);
+    if (distance < closest) {
+      closest = distance;
+      rowIndex = index;
+    }
+  });
+
+  const row = rows[rowIndex];
+  const rowStart = rows.slice(0, rowIndex).reduce((sum, r) => sum + r.items.length, 0);
+  for (let i = 0; i < row.items.length; i++) {
+    const rect = row.items[i].rect;
+    if (x < rect.left + rect.width / 2) return rowStart + i;
+  }
+  return rowStart + row.items.length;
+}
+
+function movePlaceholderToPointer(x, y) {
+  if (!_dragGrid || !_dragPlaceholder) return;
+  const items = dragGridItems();
+  const currentIndex = items.indexOf(_dragPlaceholder);
+  if (currentIndex < 0) return;
+
+  let desiredIndex = insertionIndexFromPointer(x, y);
+  desiredIndex = Math.max(0, Math.min(desiredIndex, items.length));
+
+  const withoutSlot = items.filter(el => el !== _dragPlaceholder);
+  const refIndex = desiredIndex > currentIndex ? desiredIndex - 1 : desiredIndex;
+  const ref = withoutSlot[refIndex] || null;
+
+  if ((_dragPlaceholder.nextSibling || null) === ref) return;
+  animateGridReorder(() => _dragGrid.insertBefore(_dragPlaceholder, ref));
+}
+
 function onDragMove(e) {
-  if (!_dragging || !_dragClone || !_dragging.isConnected) return;
-  _dragClone.style.left = (e.clientX - _dragOffX) + 'px';
-  _dragClone.style.top  = (e.clientY - _dragOffY) + 'px';
+  if (!_dragging || !_dragging.isConnected) return;
+  if (!_dragMoved && Math.hypot(e.clientX - _dragStartX, e.clientY - _dragStartY) < 4) return;
+  _dragMoved = true;
+  beginFloatingDrag();
+  updateFloatingDrag(e.clientX - _dragOffX, e.clientY - _dragOffY);
 
   // nudge the scroll when the cursor gets near the top/bottom edge
   const wrap = document.querySelector('.grid-wrap');
@@ -1003,27 +1288,25 @@ function onDragMove(e) {
     else if (e.clientY > wr.bottom - 60) wrap.scrollTop += 16;
   }
 
-  // Find the card under the cursor (the clone is hidden for the hit-test so it
-  // never matches itself).
-  _dragClone.style.display = 'none';
-  const el = document.elementFromPoint(e.clientX, e.clientY);
-  _dragClone.style.display = '';
-  const target = el ? el.closest('.card[data-id]') : null;
-  if (!target || target === _dragging) return;
-  const newId = target.dataset.id;
-  if (newId === _dragOverId) return; // already settled against this neighbour
-  _dragOverId = newId;
+  movePlaceholderToPointer(e.clientX, e.clientY);
+}
 
-  // Live-reorder by moving the dragged node in place -- no full re-render, so
-  // the node (and its listeners) persists and the grid only reflows. Direction
-  // mirrors the old swap-to-target-index behaviour.
-  const grid = document.getElementById('grid');
-  const cards = Array.from(grid.querySelectorAll('.card[data-id]'));
-  const srcPos = cards.indexOf(_dragging);
-  const tgtPos = cards.indexOf(target);
-  if (srcPos < 0 || tgtPos < 0) return;
-  grid.insertBefore(_dragging, srcPos < tgtPos ? target.nextSibling : target);
-  _syncAccountsOrderFromDom();
+function animateGridReorder(mutator) {
+  const items = dragGridItems;
+  const first = new Map(items().map(item => [item, item.getBoundingClientRect()]));
+  mutator();
+  items().forEach(item => {
+    const before = first.get(item);
+    if (!before) return;
+    const after = item.getBoundingClientRect();
+    const dx = before.left - after.left;
+    const dy = before.top - after.top;
+    if (!dx && !dy) return;
+    item.animate(
+      [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
+      { duration: 360, easing: 'cubic-bezier(.2,.8,.2,1)' }
+    );
+  });
 }
 
 // Reorder the `accounts` array to match the current on-screen card order.
@@ -1040,21 +1323,87 @@ function _syncAccountsOrderFromDom() {
   accounts = accounts.map(a => (visSet.has(a.id) ? queue[qi++] : a));
 }
 
-function onDragEnd() {
+function resetFloatingCard(card) {
+  card.classList.remove('dragging', 'drag-floating', 'drag-list-clone');
+  card.style.position = '';
+  card.style.left = '';
+  card.style.top = '';
+  card.style.width = '';
+  card.style.height = '';
+  card.style.margin = '';
+  card.style.zIndex = '';
+  card.style.pointerEvents = '';
+  card.style.willChange = '';
+  card.style.transition = '';
+  card.style.transform = '';
+}
+
+function persistDraggedOrder() {
+  _syncAccountsOrderFromDom();
+  clearTimeout(_dragSaveTimer);
+  _dragSaveTimer = setTimeout(() => {
+    api.reorderAccounts(accounts.map(a => a.id))
+      .then(() => toast('Account order saved', 'ok'))
+      .catch(() => toast('Could not save account order', 'err'));
+  }, 400);
+}
+
+function finishDrag(saveOrder) {
   document.removeEventListener('mousemove', onDragMove);
   document.removeEventListener('mouseup', onDragEnd);
 
-  if (_dragClone) { _dragClone.remove(); _dragClone = null; }
-  if (_dragging) { _dragging.style.opacity = ''; _dragging = null; }
-  _dragOverId = null;
+  if (_dragFrame) {
+    cancelAnimationFrame(_dragFrame);
+    _dragFrame = 0;
+  }
 
-  // settle the DOM and rebind the drag handlers with one render
-  render();
+  if (_dragging && _dragPlaceholder) {
+    const card = _dragging;
+    const slot = _dragPlaceholder;
+    const grid = _dragGrid || document.getElementById('grid');
+    if (!saveOrder || !_dragMoved) {
+      grid.insertBefore(card, slot);
+      slot.remove();
+      resetFloatingCard(card);
+      _dragging = null;
+      _dragPlaceholder = null;
+      _dragGrid = null;
+      document.body.classList.remove('account-dragging');
+      flushDeferredRender();
+      return;
+    }
 
-  clearTimeout(_dragSaveTimer);
-  _dragSaveTimer = setTimeout(() => {
-    api.reorderAccounts(accounts.map(a => a.id));
-  }, 400);
+    const slotRect = slot.getBoundingClientRect();
+    const dx = slotRect.left - _dragBaseLeft;
+    const dy = slotRect.top - _dragBaseTop;
+    card.style.transition = 'transform 300ms cubic-bezier(.18,.9,.24,1), box-shadow 260ms ease, opacity 220ms ease';
+    card.style.transform = `translate3d(${dx}px, ${dy}px, 0) scale(1)`;
+    window.setTimeout(() => {
+      if (!slot.isConnected) return;
+      grid.insertBefore(card, slot);
+      slot.remove();
+      resetFloatingCard(card);
+      persistDraggedOrder();
+      document.body.classList.remove('account-dragging');
+      flushDeferredRender();
+    }, 310);
+    _dragging = null;
+    _dragPlaceholder = null;
+    _dragGrid = null;
+    return;
+  } else if (_dragging) {
+    resetFloatingCard(_dragging);
+    _dragging = null;
+  }
+
+  if (_dragPlaceholder) { _dragPlaceholder.remove(); _dragPlaceholder = null; }
+  _dragGrid = null;
+  document.body.classList.remove('account-dragging');
+  flushDeferredRender();
+}
+
+function onDragEnd() {
+  finishDrag(true);
 }
 
 function loadAvatar(id, uid) {
@@ -1352,6 +1701,7 @@ function openEdit(id) {
   document.getElementById('edit-title').textContent = 'Edit - ' + (editAcc.nickname || editAcc.username);
   document.getElementById('in-nickname').value = editAcc.nickname || '';
   document.getElementById('in-target').value = editAcc.gameTarget || '';
+  document.getElementById('in-notes').value = accountNotes(editAcc);
   openModal('m-edit');
   setTimeout(() => document.getElementById('in-target').focus(), 220);
 }
@@ -1359,7 +1709,8 @@ async function saveEdit() {
   if (!editAcc) return;
   const target = document.getElementById('in-target').value.trim();
   const nickname = document.getElementById('in-nickname').value.trim();
-  const updated = await api.updateAccount(editAcc.id, { gameTarget: target, nickname });
+  const notes = document.getElementById('in-notes').value.trim();
+  const updated = await api.updateAccount(editAcc.id, { gameTarget: target, nickname, notes });
   if (updated) {
     const idx = accounts.findIndex(a => a.id === editAcc.id);
     if (idx !== -1) {
@@ -2241,7 +2592,7 @@ document.addEventListener('keydown', e => {
     closeAllCdd();
     const editEl = document.getElementById('m-edit');
     if (editEl.classList.contains('open')) {
-      if (document.activeElement !== document.getElementById('in-target') && document.activeElement !== document.getElementById('in-nickname')) closeModal('m-edit');
+      if (document.activeElement !== document.getElementById('in-target') && document.activeElement !== document.getElementById('in-nickname') && document.activeElement !== document.getElementById('in-notes')) closeModal('m-edit');
     } else document.querySelectorAll('.overlay.open').forEach(m => m.classList.remove('open'));
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'n') { e.preventDefault(); openLogin(); }

@@ -1,0 +1,133 @@
+/* ============================================================================
+ * theme.css — 12 theme palettes (Requirement 3.1)
+ *
+ * Ported VERBATIM from the Legacy_Frontend (src/styles.css). Colors are NOT
+ * recreated: the React Theme_System only adds/removes the body class and does
+ * not reimplement any color values (see design.md).
+ *
+ * Theme -> class convention (matches src/renderer.js `applyTheme`):
+ *   - dark  -> :root defaults (no body class)
+ *   - light -> body.light
+ *   - midnight, aurora, sunset, crimson, ocean, grape, forest, amber, rose,
+ *     graphite -> body.theme-<name>
+ *
+ * The legacy stylesheet layers three `:root` blocks and three `body.light`
+ * blocks (base -> "NOVA" redesign -> liquid-glass override) plus two
+ * `body.theme-*` blocks. The CSS cascade resolves later rules over earlier
+ * ones. These blocks are reproduced here in the SAME document order so every
+ * theme resolves to byte-identical computed values as in the Legacy_Frontend.
+ * ==========================================================================*/
+
+/* ── Layer 1: base palette (src/styles.css lines 2-21) ─────────────────────*/
+:root{
+  --bg:#0e0e10;--s1:#111114;--s2:#18181d;--s3:#1f1f26;--s4:#26262f;--ac-h:#7d6dff;
+  --bd:rgba(255,255,255,0.07);--bd2:rgba(255,255,255,0.13);
+  --t1:#f0f0f5;--t2:#aaaab2;--t3:#73737d;
+  --ac:#5c5ce0;--ac2:rgba(92,92,224,0.35);--ac3:rgba(92,92,224,0.5);
+  --green:#3ecf8e;--gd:rgba(62,207,142,0.1);
+  --red:#f06f6f;--rd:rgba(240,111,111,0.1);
+  --r:10px;--r2:8px;
+  --ease:cubic-bezier(0.25,0.1,0.25,1);
+  --spring:cubic-bezier(0.34,1.4,0.64,1);
+  --smooth:cubic-bezier(0.4,0,0.2,1);
+  --dur:180ms;--tb:56px;--sb:230px;
+}
+body.light{
+  --bg:#f4f4f8;--s1:#ffffff;--s2:#ebebf0;--s3:#e0e0e8;--s4:#d0d0dc;
+  --bd:rgba(0,0,0,0.08);--bd2:rgba(0,0,0,0.15);
+  --t1:#0e0e1a;--t2:#555570;--t3:#9898b4;
+  --ac:#5c5ce0;--ac2:rgba(92,92,224,0.3);--ac3:rgba(92,92,224,0.45);
+  --green:#1a9e62;--gd:rgba(26,158,98,0.1);
+  --red:#d94f4f;--rd:rgba(217,79,79,0.1);
+}
+
+/* ── Layer 1b: accent themes (dark-based recolors) (src/styles.css 498-507) ─*/
+body.theme-midnight{--bg:#0a0e1a;--s1:#0f1424;--s2:#141a2e;--s3:#1b2238;--s4:#232c46;--bd:rgba(120,150,255,.1);--bd2:rgba(120,150,255,.2);--ac:#4f7cff;--ac2:rgba(79,124,255,.35);--ac3:rgba(79,124,255,.5)}
+body.theme-aurora{--bg:#07140f;--s1:#0c1a14;--s2:#11221b;--s3:#172c23;--s4:#1f382d;--bd:rgba(120,255,220,.1);--bd2:rgba(120,255,220,.2);--ac:#2dd4bf;--ac2:rgba(45,212,191,.32);--ac3:rgba(45,212,191,.48);--green:#34e2b0;--gd:rgba(52,226,176,.12)}
+body.theme-sunset{--bg:#170b12;--s1:#1f0f18;--s2:#281320;--s3:#331a29;--s4:#412235;--bd:rgba(255,170,140,.1);--bd2:rgba(255,170,140,.2);--ac:#ff7a59;--ac2:rgba(255,122,89,.32);--ac3:rgba(255,122,89,.5)}
+body.theme-crimson{--bg:#160a0c;--s1:#1e0e11;--s2:#271216;--s3:#33181d;--s4:#412027;--bd:rgba(255,120,130,.1);--bd2:rgba(255,120,130,.2);--ac:#f43f5e;--ac2:rgba(244,63,94,.32);--ac3:rgba(244,63,94,.5)}
+body.theme-ocean{--bg:#07121a;--s1:#0b1925;--s2:#0f2030;--s3:#15293d;--s4:#1d364f;--bd:rgba(110,190,255,.1);--bd2:rgba(110,190,255,.2);--ac:#38bdf8;--ac2:rgba(56,189,248,.3);--ac3:rgba(56,189,248,.48)}
+body.theme-grape{--bg:#120a1c;--s1:#190f27;--s2:#211333;--s3:#2b1944;--s4:#382158;--bd:rgba(190,140,255,.1);--bd2:rgba(190,140,255,.2);--ac:#a855f7;--ac2:rgba(168,85,247,.32);--ac3:rgba(168,85,247,.5)}
+body.theme-forest{--bg:#0a1410;--s1:#0f1d16;--s2:#13251c;--s3:#1a3025;--s4:#234031;--bd:rgba(140,220,160,.1);--bd2:rgba(140,220,160,.2);--ac:#4ade80;--ac2:rgba(74,222,128,.3);--ac3:rgba(74,222,128,.48);--green:#4ade80;--gd:rgba(74,222,128,.12)}
+body.theme-amber{--bg:#161106;--s1:#1e170a;--s2:#271e0d;--s3:#332813;--s4:#41331b;--bd:rgba(255,200,110,.1);--bd2:rgba(255,200,110,.2);--ac:#f59e0b;--ac2:rgba(245,158,11,.3);--ac3:rgba(245,158,11,.48)}
+body.theme-rose{--bg:#170b11;--s1:#200f18;--s2:#29131f;--s3:#351a29;--s4:#432235;--bd:rgba(255,150,190,.1);--bd2:rgba(255,150,190,.2);--ac:#fb7185;--ac2:rgba(251,113,133,.3);--ac3:rgba(251,113,133,.48)}
+body.theme-graphite{--bg:#0d0e10;--s1:#131418;--s2:#1a1c21;--s3:#23262d;--s4:#2e323a;--bd:rgba(160,170,190,.1);--bd2:rgba(160,170,190,.2);--ac:#94a3b8;--ac2:rgba(148,163,184,.28);--ac3:rgba(148,163,184,.45)}
+
+/* ── Layer 2: "NOVA" redesign palette override (src/styles.css 712-744) ────*/
+:root{
+  /* fresh default (dark) palette — cool obsidian violet */
+  --bg:#08080f;--s1:#111120;--s2:#171728;--s3:#1f1f33;--s4:#2a2a42;
+  --bd:rgba(150,150,255,.09);--bd2:rgba(150,150,255,.2);
+  --t1:#f2f2fb;--t2:#a6a6c6;--t3:#6e6e90;
+  --ac:#7c66ff;--ac-h:#a68bff;--ac2:rgba(124,102,255,.32);--ac3:rgba(124,102,255,.55);
+  --acB:#25d9e6;                                   /* gradient end */
+  --grad:linear-gradient(135deg,var(--ac) 0%,var(--acB) 100%);
+  --grad-soft:linear-gradient(135deg,rgba(124,102,255,.9),rgba(37,217,230,.85));
+  --green:#31e0a4;--gd:rgba(49,224,164,.12);
+  --red:#ff6b7d;--rd:rgba(255,107,125,.12);
+
+  --font:'Plus Jakarta Sans','Inter',system-ui,sans-serif;
+  --font-head:'Space Grotesk','Plus Jakarta Sans',sans-serif;
+
+  --glass-blur:26px;--glass-sat:160%;
+  --glass-1:color-mix(in srgb, var(--s1) 66%, transparent);
+  --glass-2:color-mix(in srgb, var(--s2) 70%, transparent);
+  --glass-3:color-mix(in srgb, var(--s3) 74%, transparent);
+  --glass-hi:rgba(255,255,255,.09);
+  --glass-edge:rgba(255,255,255,.10);
+  --glass-shadow:0 18px 50px -18px rgba(0,0,0,.7);
+  --r:16px;--r2:12px;--tb:52px;--sb:236px;
+}
+body.light{
+  --bg:#eef0f8;--s1:#ffffff;--s2:#f2f3fb;--s3:#e7e8f4;--s4:#d7d9ec;
+  --bd:rgba(40,40,90,.08);--bd2:rgba(40,40,90,.16);
+  --t1:#14142b;--t2:#5a5a7a;--t3:#9a9ac0;
+  --glass-1:color-mix(in srgb, var(--s1) 70%, transparent);
+  --glass-2:color-mix(in srgb, var(--s2) 74%, transparent);
+  --glass-3:color-mix(in srgb, var(--s3) 78%, transparent);
+  --glass-hi:rgba(255,255,255,.6);--glass-edge:rgba(255,255,255,.7);
+  --glass-shadow:0 18px 44px -20px rgba(60,60,120,.3);
+}
+
+/* ── Layer 3: liquid-glass override layer (src/styles.css 927-961) ─────────*/
+:root{
+  --bg:#070a12;--s1:#0b1020;--s2:#11182a;--s3:#18213a;--s4:#222d49;
+  --bd:rgba(166,181,232,.105);--bd2:rgba(176,190,239,.21);
+  --t1:#f4f7ff;--t2:#a8b3c7;--t3:#707d94;
+  --ac:#8b7cff;--ac-h:#b9b0ff;--acB:#46d8ff;--acC:#4d78ff;
+  --ac2:rgba(139,124,255,.20);--ac3:rgba(139,124,255,.40);
+  --green:#45dfa4;--gd:rgba(69,223,164,.12);
+  --red:#ff6b84;--rd:rgba(255,107,132,.12);
+  --on-accent:#07101b;--ring:#a89cff;
+  --grad:linear-gradient(135deg,color-mix(in srgb,var(--ac) 70%,white) 0%,var(--ac) 100%);
+  --grad-soft:linear-gradient(135deg,color-mix(in srgb,var(--ac) 78%,transparent),color-mix(in srgb,var(--acB) 62%,transparent));
+  --glass-1:rgba(10,15,28,.66);--glass-2:rgba(15,22,39,.66);--glass-3:rgba(22,31,53,.72);
+  --glass-shell:rgba(8,12,23,.62);--glass-card:rgba(14,20,35,.72);
+  --glass-hi:rgba(255,255,255,.09);--glass-edge:rgba(179,193,239,.13);
+  --card-edge:rgba(177,191,235,.12);--glass-shadow:0 22px 58px -24px rgba(0,0,0,.78);
+  --shadow-card:0 16px 38px -30px rgba(0,0,0,.9);
+  --r:14px;--r2:11px;--tb:58px;--sb:236px;
+}
+body.light{
+  --bg:#edf1fa;--s1:#ffffff;--s2:#f4f6fc;--s3:#e9edf7;--s4:#dce3f1;
+  --bd:rgba(32,46,86,.09);--bd2:rgba(32,46,86,.17);
+  --t1:#12182a;--t2:#526078;--t3:#8290a8;
+  --ac:#6458dc;--ac-h:#4d43be;--acB:#078aad;--acC:#416fe0;
+  --ac2:rgba(100,88,220,.14);--ac3:rgba(100,88,220,.28);
+  --on-accent:#07101b;--ring:#6458dc;
+  --grad:linear-gradient(135deg,color-mix(in srgb,var(--ac) 66%,white) 0%,var(--ac) 100%);
+  --glass-1:rgba(255,255,255,.68);--glass-2:rgba(255,255,255,.58);--glass-3:rgba(255,255,255,.74);
+  --glass-shell:rgba(246,248,253,.66);--glass-card:rgba(255,255,255,.64);
+  --glass-hi:rgba(255,255,255,.86);--glass-edge:rgba(255,255,255,.74);--card-edge:rgba(37,53,90,.10);
+  --glass-shadow:0 18px 44px -22px rgba(46,62,84,.28);--shadow-card:0 16px 34px -28px rgba(50,63,94,.34);
+}
+body.theme-midnight{--bg:#08090e;--s1:#101217;--s2:#171b22;--s3:#202630;--s4:#29313d;--ac:#6ee7f9;--acB:#fbd38d;--acC:#b794f4;--ac2:rgba(110,231,249,.22);--ac3:rgba(110,231,249,.38);--bd:rgba(255,255,255,.08);--bd2:rgba(255,255,255,.18)}
+body.theme-aurora{--bg:#06100d;--s1:#0d1814;--s2:#14211c;--s3:#1c2c25;--s4:#263930;--ac:#35e0a1;--acB:#8dd7ff;--acC:#ffd166;--ac2:rgba(53,224,161,.22);--ac3:rgba(53,224,161,.4)}
+body.theme-sunset{--bg:#120b0d;--s1:#1c1214;--s2:#251a1b;--s3:#302325;--s4:#3d2d2f;--ac:#ff8f70;--acB:#ffd166;--acC:#b8f2e6;--ac2:rgba(255,143,112,.22);--ac3:rgba(255,143,112,.38)}
+body.theme-crimson{--bg:#11090d;--s1:#1b1015;--s2:#24171d;--s3:#301f27;--s4:#3e2933;--ac:#ff5f7e;--acB:#f6c65b;--acC:#54d6c8;--ac2:rgba(255,95,126,.22);--ac3:rgba(255,95,126,.38)}
+body.theme-ocean{--bg:#071012;--s1:#0e181b;--s2:#142126;--s3:#1d2d34;--s4:#273a43;--ac:#49d6ff;--acB:#34e6a6;--acC:#f7c96b;--ac2:rgba(73,214,255,.2);--ac3:rgba(73,214,255,.36)}
+body.theme-grape{--bg:#100b16;--s1:#181220;--s2:#21192a;--s3:#2b2237;--s4:#382d46;--ac:#c084fc;--acB:#5eead4;--acC:#f9d56e;--ac2:rgba(192,132,252,.22);--ac3:rgba(192,132,252,.38)}
+body.theme-forest{--bg:#07100b;--s1:#0f1812;--s2:#17221b;--s3:#202d24;--s4:#2b3b30;--ac:#7ee787;--acB:#5eead4;--acC:#f4c95d;--ac2:rgba(126,231,135,.22);--ac3:rgba(126,231,135,.38)}
+body.theme-amber{--bg:#11100a;--s1:#1a1810;--s2:#232116;--s3:#2e2a1d;--s4:#3b3626;--ac:#f6c65b;--acB:#42d6a4;--acC:#7cc4ff;--ac2:rgba(246,198,91,.22);--ac3:rgba(246,198,91,.36)}
+body.theme-rose{--bg:#120b10;--s1:#1c1219;--s2:#261a22;--s3:#32232d;--s4:#402e39;--ac:#ff7aa8;--acB:#f6d365;--acC:#5eead4;--ac2:rgba(255,122,168,.22);--ac3:rgba(255,122,168,.38)}
+body.theme-graphite{--bg:#090a0c;--s1:#111318;--s2:#181b21;--s3:#22262d;--s4:#2d333b;--ac:#d7dde6;--acB:#42d6a4;--acC:#f3c15f;--ac2:rgba(215,221,230,.16);--ac3:rgba(66,214,164,.3)}

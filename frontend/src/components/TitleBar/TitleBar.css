@@ -1,0 +1,215 @@
+.ram-titlebar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: var(--tb, 58px);
+  padding: 0 10px 0 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--bd);
+  background: linear-gradient(180deg, rgba(10, 14, 27, 0.82), rgba(7, 10, 18, 0.56));
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-app-region: drag;
+}
+
+.ram-titlebar::after {
+  content: '';
+  position: absolute;
+  right: 56px;
+  bottom: -1px;
+  left: 56px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--ac), var(--acB), transparent);
+  opacity: 0.42;
+}
+
+.ram-titlebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: var(--sb, 236px);
+  height: 100%;
+  flex: 0 0 var(--sb, 236px);
+}
+
+.ram-titlebar__logo {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 11px;
+  background: var(--grad);
+  color: var(--on-accent, #080b13);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 8px 22px -10px var(--ac3);
+}
+
+.ram-titlebar__logo::after {
+  content: '';
+  position: absolute;
+  inset: -45% 55% 55% -45%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.52);
+  filter: blur(7px);
+}
+
+.ram-titlebar__brand-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+
+.ram-titlebar__name {
+  color: var(--t1);
+  font-family: var(--font-head);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+}
+
+.ram-titlebar__kicker {
+  color: var(--t3);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.ram-titlebar__telemetry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.ram-titlebar__version,
+.ram-titlebar__running {
+  display: inline-flex;
+  align-items: center;
+  min-height: 27px;
+  border: 1px solid var(--bd);
+  border-radius: 9px;
+  background: rgba(14, 20, 36, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: var(--t2);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.ram-titlebar__version {
+  gap: 8px;
+  max-width: 250px;
+  padding: 0 10px 0 8px;
+}
+
+.ram-titlebar__version > span {
+  color: var(--acB);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.ram-titlebar__version code {
+  overflow: hidden;
+  color: var(--t2);
+  font: inherit;
+  text-overflow: ellipsis;
+}
+
+.ram-titlebar__running {
+  gap: 7px;
+  padding: 0 10px;
+  color: var(--t1);
+}
+
+.ram-titlebar__running::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--green) 65%, transparent);
+}
+
+.ram-titlebar__drag {
+  height: 100%;
+  min-width: 20px;
+  flex: 1;
+}
+
+.ram-titlebar__controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 3px;
+  -webkit-app-region: no-drag;
+}
+
+.ram-titlebar__btn {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--t3);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: color 180ms var(--smooth), background 180ms var(--smooth),
+    border-color 180ms var(--smooth), transform 120ms var(--smooth);
+}
+
+.ram-titlebar__btn:hover {
+  border-color: var(--bd);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--t1);
+}
+
+.ram-titlebar__btn:active {
+  transform: scale(0.94);
+}
+
+.ram-titlebar__btn:focus-visible {
+  outline: 2px solid var(--ring, var(--ac));
+  outline-offset: 1px;
+}
+
+.ram-titlebar__btn.is-close:hover {
+  border-color: color-mix(in srgb, var(--red) 42%, transparent);
+  background: var(--rd);
+  color: var(--red);
+}
+
+body.light .ram-titlebar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(245, 247, 252, 0.58));
+}
+
+body.light .ram-titlebar__version,
+body.light .ram-titlebar__running {
+  background: rgba(255, 255, 255, 0.56);
+}
+
+@media (max-width: 1040px) {
+  .ram-titlebar__brand {
+    min-width: 196px;
+    flex-basis: 196px;
+  }
+
+  .ram-titlebar__version {
+    max-width: 190px;
+  }
+}

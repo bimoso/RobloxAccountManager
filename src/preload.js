@@ -159,6 +159,9 @@
     openAccountBrowser: (id) => invoke('browser_open', { accountId: id }),
     openAccountBrowsers: (ids) => invoke('browser_open_batch', { accountIds: ids }),
     copyAccountCookie: (id) => invoke('browser_copy_cookie', { accountId: id }),
+    getWayfernStatus: () => invoke('browser_wayfern_status'),
+    installWayfern: () => invoke('browser_wayfern_install'),
+    onWayfernProgress: (cb) => on('wayfern://download-progress', (e) => cb(e.payload)),
     onBrowserSessionState: (cb) => on('browser://session-state', (e) => cb(e.payload)),
   };
 })();

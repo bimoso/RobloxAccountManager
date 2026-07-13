@@ -1,0 +1,28 @@
+/* Modal — backdrop + centered content surface.
+ * Colors and radii come from the theme variables in styles/theme.css; this file
+ * only lays out the overlay. Animation of opacity + scale is driven by
+ * framer-motion in index.tsx (Requirements 5.1, 5.2). */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.modal-content {
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  background: var(--s1);
+  color: var(--t1);
+  border: 1px solid var(--bd2);
+  border-radius: var(--r);
+  box-shadow: var(--glass-shadow, 0 18px 50px -18px rgba(0, 0, 0, 0.7));
+  /* transform-origin keeps the scale animation anchored to the center */
+  transform-origin: center;
+}

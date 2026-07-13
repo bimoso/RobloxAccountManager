@@ -1,0 +1,55 @@
+:root {
+  --ram-toast-surface: #111827;
+  --sileo-state-success: oklch(0.78 0.15 171);
+  --sileo-state-error: oklch(0.67 0.2 20);
+  --sileo-state-warning: oklch(0.8 0.15 82);
+  --sileo-state-info: oklch(0.73 0.14 225);
+  --sileo-state-action: oklch(0.7 0.17 285);
+  --sileo-duration: 520ms;
+  --sileo-width: min(350px, calc(100vw - 32px));
+}
+
+body.light {
+  --ram-toast-surface: #f8faff;
+}
+
+.ram-sileo-title {
+  color: var(--t1) !important;
+  font-family: var(--font-body) !important;
+  font-size: 12.5px !important;
+  font-weight: 750 !important;
+  letter-spacing: -0.012em !important;
+  text-transform: none !important;
+}
+
+.ram-sileo-description {
+  color: var(--t2) !important;
+  font-family: var(--font-body) !important;
+  font-size: 11.5px !important;
+  line-height: 1.55 !important;
+}
+
+.ram-sileo-badge {
+  border: 1px solid color-mix(in srgb, currentColor 24%, transparent) !important;
+  box-shadow: 0 0 18px -8px currentColor !important;
+}
+
+.ram-sileo-button {
+  font-family: var(--font-body) !important;
+  font-weight: 700 !important;
+}
+
+[data-sileo-toast] {
+  filter: drop-shadow(0 18px 34px rgba(0, 0, 0, 0.3));
+}
+
+[data-sileo-pill],
+[data-sileo-body] {
+  stroke: color-mix(in srgb, var(--acB) 13%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --sileo-duration: 0ms;
+  }
+}

@@ -33,9 +33,12 @@ tauri-plugin-opener = "2"
 # the next time the window is created, so the app reopens at whatever size the
 # user last left it at instead of always resetting to the built-in default.
 tauri-plugin-window-state = "2"
+# Native Windows/macOS backdrop effects. Use the current upstream crate so the
+# frameless WebView2 window gets the latest Windows 11 Mica/Tabbed material.
+window-vibrancy = "0.7.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["process", "time", "sync", "rt-multi-thread", "macros", "io-util"] }
+tokio = { version = "1", features = ["process", "time", "sync", "rt-multi-thread", "macros", "io-util", "fs"] }
 
 # Async HTTP client for the Roblox HTTPS calls ported from the legacy JS backend's
 # `httpsGet`/`httpsPost`/`net.request` helpers (version, cookie validation, game
@@ -43,7 +46,11 @@ tokio = { version = "1", features = ["process", "time", "sync", "rt-multi-thread
 # OpenSSL/native-tls build dependency; `json` is unused (responses are parsed via
 # serde_json to mirror the legacy JS backend's raw-body parsing), so only the client + redirect
 # control features are enabled.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+
+# The official Wayfern Windows build is a large portable ZIP. Keep extraction
+# support focused on the standard Deflate method used by Chromium archives.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # Microsoft's official Win32 bindings. Used here for DPAPI
 # (`CryptProtectData`/`CryptUnprotectData`) to reproduce legacy safe storage's

@@ -1,0 +1,1200 @@
+/* Accounts is an operational surface, not a gallery of generic glass cards.
+ * Blur stays at the shell; cards use precise tonal layers, restrained status
+ * colour and compositor-only drag motion. */
+
+.acc-page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.acc-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 92% 4%, color-mix(in srgb, var(--ac) 8%, transparent), transparent 30%),
+    linear-gradient(180deg, color-mix(in srgb, var(--s1) 34%, transparent), transparent 34%);
+}
+
+/* ── Page heading ────────────────────────────────────────────────────── */
+.acc-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 24px 28px 16px;
+  flex: 0 0 auto;
+}
+
+.acc-header__copy {
+  min-width: 0;
+}
+
+.acc-eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--acB, var(--ac));
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.acc-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: var(--t1);
+  font-size: clamp(25px, 2.3vw, 32px);
+  font-weight: 720;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.acc-title__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 25px;
+  height: 21px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--ac) 32%, var(--bd));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--ac) 11%, var(--s2));
+  color: color-mix(in srgb, var(--ac) 78%, white);
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+}
+
+.acc-header__copy > p {
+  margin: 8px 0 0;
+  color: var(--t2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.acc-header__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+/* ── Shared controls ─────────────────────────────────────────────────── */
+.acc-btn,
+.acc-viewtoggle button,
+.acc-launch,
+.acc-iconbtn,
+.acc-selbar button {
+  font: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.acc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--s3) 74%, transparent);
+  color: var(--t2);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+  transition:
+    color 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease,
+    transform 150ms var(--spring);
+}
+
+.acc-btn:hover {
+  border-color: var(--bd2);
+  background: var(--s3);
+  color: var(--t1);
+  transform: translateY(-1px);
+}
+
+.acc-btn:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.acc-btn--accent {
+  border-color: color-mix(in srgb, var(--ac) 54%, transparent);
+  background: var(--grad, var(--ac));
+  color: var(--on-accent, #07101b);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 30%, transparent),
+    0 8px 22px -12px var(--ac);
+}
+
+.acc-btn--accent:hover {
+  border-color: color-mix(in srgb, var(--ac) 70%, white);
+  background: var(--grad, var(--ac));
+  color: var(--on-accent, #07101b);
+  filter: brightness(1.06);
+}
+
+.acc-btn--sm {
+  min-height: 36px;
+}
+
+.acc-btn:focus-visible,
+.acc-viewtoggle button:focus-visible,
+.acc-launch:focus-visible,
+.acc-iconbtn:focus-visible,
+.acc-check:focus-visible,
+.acc-selbar button:focus-visible,
+.acc-search:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring, var(--ac2));
+}
+
+.acc-viewtoggle {
+  display: inline-flex;
+  align-items: center;
+  height: 36px;
+  padding: 3px;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--s2) 84%, transparent);
+}
+
+.acc-viewtoggle button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--t3);
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.acc-viewtoggle button:hover {
+  color: var(--t1);
+}
+
+.acc-viewtoggle button.active {
+  background: color-mix(in srgb, var(--ac) 14%, var(--s3));
+  color: color-mix(in srgb, var(--ac) 74%, white);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ac) 25%, var(--bd));
+}
+
+/* ── Search / filtering command strip ───────────────────────────────── */
+.acc-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 204px;
+  gap: 10px;
+  padding: 0 28px 12px;
+  flex: 0 0 auto;
+}
+
+.acc-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  height: 42px;
+  padding: 0 8px 0 13px;
+  border: 1px solid var(--bd);
+  border-radius: 11px;
+  background:
+    linear-gradient(110deg, color-mix(in srgb, white 3%, transparent), transparent 42%),
+    color-mix(in srgb, var(--s2) 82%, transparent);
+  color: var(--t3);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.acc-search:focus-within {
+  border-color: color-mix(in srgb, var(--ac) 64%, var(--bd));
+  background: color-mix(in srgb, var(--s2) 96%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--ac) 9%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 7%, transparent);
+}
+
+.acc-search__icon {
+  flex: 0 0 auto;
+  transition: color 150ms ease, transform 220ms var(--spring);
+}
+
+.acc-search:focus-within .acc-search__icon {
+  color: var(--acB);
+  transform: scale(1.06);
+}
+
+.acc-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--t1);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.acc-search input::placeholder {
+  color: var(--t3);
+}
+
+.acc-search input::-webkit-search-cancel-button {
+  display: none;
+  appearance: none;
+}
+
+.acc-search__clear {
+  width: 24px;
+  height: 24px;
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--bd2) 72%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--s3) 70%, transparent);
+  color: var(--t3);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+
+.acc-search__clear:hover {
+  border-color: color-mix(in srgb, var(--ac) 42%, var(--bd2));
+  background: color-mix(in srgb, var(--ac) 8%, var(--s3));
+  color: var(--t1);
+}
+
+.acc-search__clear:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--ring, var(--ac2));
+}
+
+.acc-search__count {
+  min-width: 38px;
+  height: 23px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--bd2) 62%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--s3) 58%, transparent);
+  color: var(--t3);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.acc-filter {
+  position: relative;
+  min-width: 0;
+}
+
+.acc-filter__icon {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  z-index: 2;
+  pointer-events: none;
+  color: var(--t3);
+  transform: translateY(-50%);
+}
+
+.acc-filter > *:last-child {
+  width: 100%;
+}
+
+.acc-filter button {
+  padding-left: 36px;
+}
+
+/* ── Grid / scrolling ────────────────────────────────────────────────── */
+.acc-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 5px 28px 30px;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--s4) transparent;
+}
+
+.acc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(286px, 1fr));
+  gap: 12px;
+  align-items: stretch;
+}
+
+.acc-grid.list {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+/* ── Operational account card ───────────────────────────────────────── */
+.acc-cardwrap {
+  min-width: 0;
+  border-radius: 16px;
+  transform-origin: 50% 50%;
+}
+
+.acc-cardwrap > .acc-cardmenu-shell,
+.acc-cardmenu-shell,
+.acc-cardwrap .acc-card {
+  height: 100%;
+}
+
+.acc-cardmenu-shell {
+  position: relative;
+}
+
+.acc-card {
+  --account-status: var(--acB, var(--ac));
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 224px;
+  flex-direction: column;
+  padding: 15px 15px 13px 17px;
+  overflow: hidden;
+  border: 1px solid var(--card-edge, var(--bd));
+  border-radius: 15px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, white 3.8%, transparent), transparent 30%),
+    color-mix(in srgb, var(--glass-card, var(--s2)) 96%, black 4%);
+  color: var(--t1);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 5.5%, transparent),
+    var(--shadow-card, 0 16px 34px -24px rgba(0, 0, 0, 0.72));
+  cursor: default;
+  contain: layout style paint;
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 200ms ease,
+    transform 200ms var(--spring);
+}
+
+.acc-card.is-live {
+  --account-status: var(--green);
+}
+
+.acc-card.is-expired {
+  --account-status: var(--red);
+}
+
+.acc-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 96% -8%,
+    color-mix(in srgb, var(--account-status) 8%, transparent),
+    transparent 38%
+  );
+  opacity: 0.9;
+}
+
+.acc-card__statusline {
+  position: absolute;
+  top: 17px;
+  bottom: 17px;
+  left: 0;
+  width: 2px;
+  border-radius: 0 3px 3px 0;
+  background: var(--account-status);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--account-status) 35%, transparent);
+  opacity: 0.78;
+}
+
+.acc-card:hover {
+  border-color: color-mix(in srgb, var(--account-status) 28%, var(--bd2));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, white 5.5%, transparent), transparent 32%),
+    color-mix(in srgb, var(--glass-card, var(--s2)) 92%, var(--account-status) 8%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
+    0 22px 42px -28px rgba(0, 0, 0, 0.9),
+    0 0 0 1px color-mix(in srgb, var(--account-status) 8%, transparent);
+  transform: translateY(-2px);
+}
+
+.acc-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.acc-card__identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.acc-card__avatar {
+  position: relative;
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 46px;
+  place-items: center;
+  overflow: visible;
+  border: 1px solid color-mix(in srgb, white 10%, var(--bd));
+  border-radius: 13px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--ac) 42%, var(--s4)), var(--s2));
+  color: color-mix(in srgb, var(--ac) 70%, white);
+  font-size: 16px;
+  font-weight: 760;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 12%, transparent);
+}
+
+.acc-card__avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  object-fit: cover;
+}
+
+.acc-card__presence {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--s2);
+  border-radius: 50%;
+  background: var(--t3);
+}
+
+.acc-card__presence--ready {
+  background: var(--acB, var(--ac));
+}
+
+.acc-card__presence--live {
+  background: var(--green);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--green) 58%, transparent);
+}
+
+.acc-card__presence--expired {
+  background: var(--red);
+}
+
+.acc-card__id {
+  min-width: 0;
+}
+
+.acc-card__name {
+  margin: 0;
+  overflow: hidden;
+  color: var(--t1);
+  font-size: 14px;
+  font-weight: 720;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acc-card__handle {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--t3);
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  font-size: 9.5px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acc-card__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+.acc-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 112px;
+  height: 24px;
+  padding: 0 7px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--account-status) 22%, var(--bd));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--account-status) 7%, var(--s3));
+  color: color-mix(in srgb, var(--account-status) 70%, white);
+  font-size: 9.5px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acc-status__dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.acc-status--live .acc-status__dot {
+  animation: acc-live-pulse 1.8s ease-in-out infinite;
+}
+
+.acc-iconbtn {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--t3);
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.acc-iconbtn:hover {
+  border-color: var(--bd);
+  background: var(--s3);
+  color: var(--t1);
+}
+
+.acc-card__meta {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 1px;
+  margin-top: 13px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--bd) 78%, transparent);
+  border-radius: 9px;
+  background: var(--bd);
+}
+
+.acc-card__meta > span {
+  display: grid;
+  grid-template-columns: 14px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  background: color-mix(in srgb, var(--s2) 92%, transparent);
+  color: var(--t3);
+}
+
+.acc-card__meta-label {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.acc-card__meta code,
+.acc-card__meta strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--t2);
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  font-size: 8.5px;
+  font-weight: 550;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acc-card__note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  margin-top: 8px;
+  padding: 0 3px;
+  overflow: hidden;
+  color: var(--t2);
+  font-size: 10px;
+}
+
+.acc-card__note svg {
+  flex: 0 0 auto;
+  color: var(--acB, var(--ac));
+}
+
+.acc-card__note span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acc-card__note.is-empty {
+  color: var(--t3);
+  opacity: 0.68;
+}
+
+.acc-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--bd) 75%, transparent);
+}
+
+.acc-card__session {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.acc-card__session-icon {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  flex: 0 0 27px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--account-status) 22%, var(--bd));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--account-status) 7%, var(--s3));
+  color: var(--account-status);
+}
+
+.acc-card__session > span:last-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.acc-card__session small {
+  color: var(--t3);
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.acc-card__session strong {
+  overflow: hidden;
+  color: var(--t2);
+  font-size: 9.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acc-launch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 86px;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--ac) 42%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--ac) 13%, var(--s3));
+  color: color-mix(in srgb, var(--ac) 72%, white);
+  font-size: 10.5px;
+  font-weight: 720;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    border-color 150ms ease,
+    transform 150ms var(--spring),
+    box-shadow 150ms ease;
+}
+
+.acc-launch:hover {
+  border-color: color-mix(in srgb, var(--ac) 66%, transparent);
+  background: var(--grad, var(--ac));
+  color: var(--on-accent, #07101b);
+  box-shadow: 0 8px 20px -12px var(--ac);
+  transform: translateY(-1px);
+}
+
+.acc-launch:active {
+  transform: translateY(0) scale(0.97);
+}
+
+/* ── Selection ───────────────────────────────────────────────────────── */
+.acc-check {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: grid;
+  width: 25px;
+  height: 25px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--bd2);
+  border-radius: 8px;
+  background: var(--s3);
+  color: transparent;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease, border-color 140ms ease, transform 140ms var(--spring);
+}
+
+.acc-check:hover {
+  border-color: var(--ac);
+  transform: scale(1.06);
+}
+
+.acc-card.selectable {
+  cursor: pointer;
+}
+
+.acc-card.selectable .acc-card__head-actions {
+  visibility: hidden;
+}
+
+.acc-card.selected {
+  border-color: color-mix(in srgb, var(--ac) 72%, var(--bd));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ac) 9%, transparent), transparent 42%),
+    var(--glass-card, var(--s2));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 7%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--ac) 12%, transparent),
+    0 18px 36px -26px black;
+}
+
+.acc-card.selected .acc-check {
+  border-color: var(--ac);
+  background: var(--grad, var(--ac));
+  color: var(--on-accent, #07101b);
+}
+
+/* ── Floating bulk command bar ───────────────────────────────────────── */
+.acc-selbar {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--bd2);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--glass-shell, var(--s1)) 92%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  backdrop-filter: blur(22px) saturate(140%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent),
+    0 22px 55px -18px rgba(0, 0, 0, 0.78);
+  transform: translateX(-50%);
+  animation: acc-bulk-enter 230ms var(--spring) both;
+}
+
+.acc-selbar__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 5px 0 11px;
+  border: 1px solid color-mix(in srgb, var(--ac) 20%, var(--bd));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--ac) 8%, var(--s3));
+  color: var(--t1);
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.acc-selbar__x,
+.acc-selbar__ico {
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--t2);
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease, transform 140ms var(--spring);
+}
+
+.acc-selbar__x {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+
+.acc-selbar__ico {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.acc-selbar__x:hover,
+.acc-selbar__ico:hover {
+  border-color: var(--bd);
+  background: var(--s3);
+  color: var(--t1);
+  transform: translateY(-1px);
+}
+
+.acc-selbar__ico.danger {
+  color: var(--red);
+}
+
+.acc-selbar__ico.danger:hover {
+  border-color: color-mix(in srgb, var(--red) 35%, transparent);
+  background: color-mix(in srgb, var(--red) 12%, var(--s3));
+}
+
+.acc-selbar__div {
+  width: 1px;
+  height: 20px;
+  margin: 0 3px;
+  background: var(--bd);
+}
+
+/* ── Physical drag / reorder ─────────────────────────────────────────── */
+.acc-cardwrap.draggable {
+  cursor: grab;
+  touch-action: pan-y;
+}
+
+.acc-cardwrap.draggable:active {
+  cursor: grabbing;
+}
+
+.acc-drop-slot {
+  display: flex;
+  height: 100%;
+  min-height: 224px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px dashed color-mix(in srgb, var(--ac) 52%, var(--bd));
+  border-radius: 15px;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--ac) 4%, transparent) 0 8px,
+      transparent 8px 16px
+    ),
+    color-mix(in srgb, var(--ac) 4%, var(--s2));
+  color: color-mix(in srgb, var(--ac) 72%, white);
+  box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--ac) 4%, transparent);
+  contain: layout paint style;
+  will-change: transform;
+}
+
+.acc-drop-slot__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--ac) 24%, var(--bd));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ac) 10%, var(--s3));
+}
+
+.acc-drop-slot > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.acc-drop-slot strong {
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+
+.acc-drop-slot small {
+  color: var(--t3);
+  font-size: 9px;
+}
+
+.acc-cardwrap.settling .acc-drop-slot {
+  border-style: solid;
+  background: color-mix(in srgb, var(--ac) 8%, var(--s2));
+}
+
+.acc-drag-clone {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1000;
+  pointer-events: none;
+  isolation: isolate;
+  contain: layout paint style;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+  transform-origin: 50% 24px;
+}
+
+.acc-drag-clone .acc-card {
+  height: 100%;
+  border-color: color-mix(in srgb, var(--ac) 48%, var(--bd2));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, white 7%, transparent), transparent 34%),
+    color-mix(in srgb, var(--glass-card, var(--s2)) 93%, var(--ac) 7%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 10%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--ac) 14%, transparent),
+    0 28px 58px -20px rgba(0, 0, 0, 0.88);
+  transition: none;
+}
+
+.acc-drag-clone.settling .acc-card {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 8%, transparent),
+    0 12px 26px -16px rgba(0, 0, 0, 0.7);
+}
+
+.acc-drag-grip {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 23px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--ac) 44%, var(--bd));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--s1) 90%, transparent);
+  color: color-mix(in srgb, var(--ac) 76%, white);
+  font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transform: translateX(-50%);
+  box-shadow: 0 8px 18px -10px black;
+}
+
+body.acc-dragging {
+  cursor: grabbing !important;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body.acc-dragging * {
+  cursor: grabbing !important;
+}
+
+.acc-card,
+.acc-card * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.acc-card img {
+  -webkit-user-drag: none;
+}
+
+/* ── List density ────────────────────────────────────────────────────── */
+.acc-grid.list .acc-card {
+  min-height: 88px;
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 13px 12px 17px;
+}
+
+.acc-grid.list .acc-card__head {
+  min-width: 230px;
+  flex: 0 1 32%;
+}
+
+.acc-grid.list .acc-card__avatar {
+  width: 40px;
+  height: 40px;
+  flex-basis: 40px;
+}
+
+.acc-grid.list .acc-card__meta {
+  min-width: 260px;
+  flex: 1;
+  margin-top: 0;
+}
+
+.acc-grid.list .acc-card__note {
+  display: none;
+}
+
+.acc-grid.list .acc-card__footer {
+  min-width: 218px;
+  flex: 0 0 auto;
+  margin-top: 0;
+  padding: 0 0 0 13px;
+  border-top: 0;
+  border-left: 1px solid var(--bd);
+}
+
+.acc-grid.list .acc-drop-slot {
+  min-height: 88px;
+}
+
+.acc-grid.list .acc-check {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* ── Light surface tuning ────────────────────────────────────────────── */
+body.light .acc-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), transparent 34%),
+    color-mix(in srgb, var(--glass-card, white) 94%, var(--account-status) 6%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.86),
+    0 18px 32px -25px rgba(37, 42, 70, 0.35);
+}
+
+body.light .acc-card__presence {
+  border-color: var(--s1);
+}
+
+/* ── Motion and responsive behavior ─────────────────────────────────── */
+@keyframes acc-bulk-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@keyframes acc-live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 30%, transparent);
+  }
+  50% {
+    opacity: 0.7;
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+@media (max-width: 980px) {
+  .acc-header {
+    align-items: flex-start;
+    padding-inline: 22px;
+  }
+
+  .acc-header__actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .acc-toolbar,
+  .acc-scroll {
+    padding-right: 22px;
+    padding-left: 22px;
+  }
+
+  .acc-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+
+  .acc-grid.list .acc-card__meta {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .acc-header {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .acc-header__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .acc-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .acc-grid.list .acc-card__head {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .acc-grid.list .acc-card__footer {
+    min-width: 92px;
+  }
+
+  .acc-grid.list .acc-card__session {
+    display: none;
+  }
+
+  .acc-selbar {
+    max-width: calc(100vw - 24px);
+    overflow-x: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .acc-cardwrap,
+  .acc-selbar,
+  .acc-status--live .acc-status__dot {
+    animation: none;
+  }
+
+  .acc-card,
+  .acc-btn,
+  .acc-launch,
+  .acc-iconbtn,
+  .acc-check,
+  .acc-viewtoggle button,
+  .acc-selbar button {
+    transition-duration: 0.01ms;
+  }
+
+  .acc-card:hover,
+  .acc-btn:hover,
+  .acc-launch:hover {
+    transform: none;
+  }
+}

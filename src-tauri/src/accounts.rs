@@ -53,6 +53,7 @@
 //! (Task 6.9) resolves them from the Settings_Store and resolves the on-disk path
 //! from Tauri's `app_data_dir()` before calling [`load_from_dir`].
 
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -642,21 +643,47 @@ pub fn remove(accounts: &mut Vec<Account>, id: &str) -> Option<Account> {
 /// return [...reordered, ...rest];
 /// ```
 ///
-/// Semantics matched exactly:
-///   * `reordered`: for each submitted id, in submitted order, the matching
-///     account (ids that match no account are skipped — the `.filter(Boolean)`);
-///   * `rest`: every account whose id is NOT in `ids`, in the store's PRIOR
-///     relative order (never dropped — the criterion's "merge, not remove");
+/// Safe semantics (including legacy/corrupt stores and malformed submissions
+/// that contain duplicate ids):
+///   * `reordered`: for each submitted id, in submitted order, consume the next
+///     still-unconsumed matching account; ids with no remaining match are skipped;
+///   * `rest`: every account occurrence that was not consumed, in the store's
+///     PRIOR relative order (never dropped — the criterion's "merge, not remove");
 ///   * result: `reordered` followed by `rest`.
 ///
 /// This is a pure transform returning a new `Vec`; it does not mutate its input,
 /// matching the handler's `saveAccounts([...reordered, ...rest])`.
 pub fn reorder(accounts: &[Account], ids: &[String]) -> Vec<Account> {
-    let mut reordered: Vec<Account> = ids
-        .iter()
-        .filter_map(|id| accounts.iter().find(|a| &a.id == id).cloned())
-        .collect();
-    reordered.extend(accounts.iter().filter(|a| !ids.contains(&a.id)).cloned());
+    let mut positions_by_id: HashMap<&str, VecDeque<usize>> = HashMap::new();
+    for (index, account) in accounts.iter().enumerate() {
+        positions_by_id
+            .entry(account.id.as_str())
+            .or_default()
+            .push_back(index);
+    }
+
+    let mut consumed = vec![false; accounts.len()];
+    let mut reordered = Vec::with_capacity(accounts.len());
+
+    for id in ids {
+        let Some(index) = positions_by_id
+            .get_mut(id.as_str())
+            .and_then(VecDeque::pop_front)
+        else {
+            continue;
+        };
+
+        consumed[index] = true;
+        reordered.push(accounts[index].clone());
+    }
+
+    reordered.extend(
+        accounts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !consumed[*index])
+            .map(|(_, account)| account.clone()),
+    );
     reordered
 }
 
@@ -1501,6 +1528,49 @@ mod write_tests {
         let store = vec![account("a", "A", ""), account("b", "B", "")];
         let out = reorder(&store, &[]);
         assert_eq!(ids_of(&out), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn reorder_repeated_submitted_ids_consume_a_unique_account_only_once() {
+        let store = vec![
+            account("a", "A", ""),
+            account("b", "B", ""),
+            account("c", "C", ""),
+        ];
+
+        let out = reorder(
+            &store,
+            &["c".into(), "c".into(), "a".into(), "a".into(), "c".into()],
+        );
+
+        // Repeated submitted ids cannot clone the same source occurrence. The
+        // omitted account remains present and follows in its prior order.
+        assert_eq!(ids_of(&out), vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn reorder_duplicate_store_ids_consume_distinct_occurrences_and_preserve_rest() {
+        let store = vec![
+            account("a", "A first", ""),
+            account("b", "B", ""),
+            account("a", "A second", ""),
+            account("c", "C", ""),
+            account("a", "A omitted", ""),
+        ];
+
+        let out = reorder(&store, &["a".into(), "a".into(), "ghost".into()]);
+        let nicknames: Vec<&str> = out
+            .iter()
+            .map(|account| account.nickname.as_str())
+            .collect();
+
+        // Each submitted occurrence consumes the next matching source account.
+        // The remaining duplicate and all other omitted entries retain their
+        // original relative order after the consumed prefix.
+        assert_eq!(
+            nicknames,
+            vec!["A first", "A second", "B", "C", "A omitted"]
+        );
     }
 }
 
