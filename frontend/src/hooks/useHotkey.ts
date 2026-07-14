@@ -7,7 +7,7 @@
 // on the given target (the window by default) and invokes `handler` when the
 // pressed key matches the declared {@link HotkeyCombo}. Key matching is
 // case-insensitive (so `f` matches both `f` and `F`, mirroring the legacy
-// renderer's `e.key === 'f' || e.key === 'F'` check in `src/renderer.js`).
+// legacy renderer's `e.key === 'f' || e.key === 'F'` check).
 //
 // Because the Logs page component is only mounted while the Logs page is
 // active, mounting the Ctrl+F hotkey inside it naturally scopes the shortcut to

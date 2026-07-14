@@ -32,7 +32,7 @@ export const MAX_LOG_ENTRIES = 2000;
 
 /**
  * The known session-log categories, mirroring the legacy renderer's `LOG_CATS`
- * (`src/renderer.js`) and the Requirement 23 timeline categories: launch
+ * and the Requirement 23 timeline categories: launch
  * (lanzamiento), crash (caída), kill, close (cierre), cookie, afk, enc
  * (cifrado), system (sistema) and browser (navegador).
  */
@@ -52,7 +52,7 @@ export type LogCategory =
  *
  * Field names and shape mirror the `log://entry` payload emitted by the
  * Tauri_Backend (`src-tauri/src/logging.rs` `LogEntry`) and consumed by the
- * legacy renderer (`src/renderer.js`:
+ * retired legacy renderer:
  * `api.onLogEntry(data => logEntry(data.level, data.category, data.message, data.meta))`).
  *
  * `category` is typed as a wide `string` (not the {@link LogCategory} union) so

@@ -16,7 +16,7 @@
 //
 // Matching is CASE-INSENSITIVE and literal (plain substring, no regex), mirroring
 // the Legacy_Frontend's Ctrl+F, which calls `window.find(q, false, ...)` with the
-// `aCaseSensitive` argument set to `false` (`src/renderer.js`). "logText contains
+// `aCaseSensitive` argument set to `false` (legacy behavior). "logText contains
 // query" is therefore interpreted case-insensitively throughout: a query that is
 // not a substring of `logText` under a case-insensitive comparison never produces
 // a match — the invariant Property 42 checks on its negative branch.

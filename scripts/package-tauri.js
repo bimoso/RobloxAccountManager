@@ -7,12 +7,14 @@
 // later step) copies it into `dist/`.
 //
 // Pipeline order (this file, Task 19.1):
-//   1. Native_Helper build step  -> runs scripts/build-native.js so
-//      src/RobloxNative.exe is (re)compiled BEFORE the Rust build. This mirrors
+//   1. React frontend build      -> runs `npm run build` inside frontend/ so
+//      Cargo always embeds the current UI, preload bridge and visual assets.
+//   2. Native_Helper build step  -> runs scripts/build-native.js so
+//      native-helper/RobloxNative.exe is (re)compiled BEFORE the Rust build. This mirrors
 //      the npm `prebuild` lifecycle and satisfies Requirement
 //      12.5 (invoke the Native_Helper build step before packaging) and
 //      Requirement 9.2 (prebuild the native helper).
-//   2. Release build            -> `cargo build --release
+//   3. Release build             -> `cargo build --release
 //      --target x86_64-pc-windows-msvc` inside `src-tauri/`, yielding
 //      src-tauri/target/x86_64-pc-windows-msvc/release/robloxaccountmanager.exe.
 //
@@ -27,16 +29,21 @@ const RUST_TARGET = 'x86_64-pc-windows-msvc';
 
 const projectRoot = path.join(__dirname, '..');
 const buildNativeScript = path.join(__dirname, 'build-native.js');
+const frontendDir = path.join(projectRoot, 'frontend');
+const frontendDistDir = path.join(frontendDir, 'dist');
+const frontendIndex = path.join(frontendDistDir, 'index.html');
+const frontendPreload = path.join(frontendDistDir, 'preload.js');
+const frontendBannerSource = path.join(frontendDir, 'assets', 'Bimo.gif');
+const frontendAssetsDir = path.join(frontendDistDir, 'assets');
 const srcTauriDir = path.join(projectRoot, 'src-tauri');
-const srcDir = path.join(projectRoot, 'src');
+const nativeHelperDir = path.join(projectRoot, 'native-helper');
 const distDir = path.join(projectRoot, 'dist');
 
 // Source-of-truth locations for the packaging assembly (Task 19.2).
-const appIcon = path.join(srcDir, 'icon.ico'); // the application icon embedded into the portable exe (Req 12.4)
-const tauriIcon = path.join(srcTauriDir, 'icons', 'icon.ico'); // what bundle.icon points at / cargo embeds
+const appIcon = path.join(srcTauriDir, 'icons', 'icon.ico'); // the application icon embedded into the portable exe (Req 12.4)
 const releaseBinary = path.join(srcTauriDir, 'target', RUST_TARGET, 'release', 'robloxaccountmanager.exe');
-const nativeExeSrc = path.join(srcDir, 'RobloxNative.exe');
-const nativeCsSrc = path.join(srcDir, 'RobloxNative.cs');
+const nativeExeSrc = path.join(nativeHelperDir, 'RobloxNative.exe');
+const nativeCsSrc = path.join(nativeHelperDir, 'RobloxNative.cs');
 
 function fail(message) {
   console.error('[package-tauri] ' + message);
@@ -65,6 +72,47 @@ function copyRequired(from, to, label) {
   }
   fs.copyFileSync(from, to);
   console.log('[package-tauri]   ' + label + ': ' + from + ' -> ' + to);
+}
+
+// Fail before Cargo when the web bundle is incomplete or stale. In particular,
+// loading a missing preload.js through Vite/Tauri's HTML fallback returns
+// index.html and crashes with `Unexpected token '<'`; comparing the emitted GIF
+// byte-for-byte also proves the package contains the current Bimo.gif rather
+// than yesterday's cached banner.
+function assertFrontendArtifactsCurrent() {
+  if (!fs.existsSync(frontendIndex)) {
+    fail('frontend build did not produce ' + frontendIndex + '.');
+  }
+  if (!fs.existsSync(frontendPreload)) {
+    fail('frontend build did not produce preload.js; refusing to package an HTML fallback as JavaScript.');
+  }
+  const preloadText = fs.readFileSync(frontendPreload, 'utf8').trimStart();
+  if (preloadText.startsWith('<')) {
+    fail('frontend preload.js contains HTML (`Unexpected token <`); refusing to package it.');
+  }
+
+  const indexText = fs.readFileSync(frontendIndex, 'utf8');
+  if (!indexText.includes('https://cdn.discordapp.com')) {
+    fail('frontend CSP does not allow the Discord avatar CDN.');
+  }
+  if (!indexText.includes('src="./preload.js"')) {
+    fail('frontend index.html does not reference the packaged preload bridge relatively.');
+  }
+
+  if (!fs.existsSync(frontendBannerSource)) {
+    fail('Credits banner source not found at ' + frontendBannerSource + '.');
+  }
+  if (!fs.existsSync(frontendAssetsDir)) {
+    fail('frontend build did not produce its assets directory.');
+  }
+  const emittedCurrentBanner = fs.readdirSync(frontendAssetsDir)
+    .filter((name) => name.toLowerCase().endsWith('.gif'))
+    .some((name) => filesIdentical(frontendBannerSource, path.join(frontendAssetsDir, name)));
+  if (!emittedCurrentBanner) {
+    fail('frontend build did not emit the current Bimo.gif banner byte-for-byte; refusing to package stale artwork.');
+  }
+
+  console.log('[package-tauri] frontend artifact gate OK: preload is JavaScript, Discord CSP is allowed, and current Bimo.gif is emitted.');
 }
 
 // Req 9.3 / 12.6 (Native_Helper present + consistent with bundled source):
@@ -112,21 +160,14 @@ function assertNativeHelperConsistent(exePath, csPath) {
     new Date(csMtime).toISOString() + ') -> produced from the bundled source (Req 9.3).');
 }
 
-// Req 12.4 (icon embedding): the icon Tauri/winres embeds into the compiled exe
-// comes from tauri.conf.json's `bundle.icon` (src-tauri/icons/icon.ico), read at
-// cargo-build time via build.rs. Mirror src/icon.ico into that location BEFORE
-// the release build runs so the embedded icon is stable and expected.
+// Req 12.4 (icon embedding): the canonical icon Tauri/winres embeds into the
+// compiled executable lives at src-tauri/icons/icon.ico, exactly where
+// tauri.conf.json's bundle.icon points. Validate it BEFORE the release build.
 function ensureAppIconEmbedded() {
   if (!fs.existsSync(appIcon)) {
     fail('Application icon not found at ' + appIcon + ' (Req 12.4 requires embedding it).');
   }
-  if (filesIdentical(appIcon, tauriIcon)) {
-    console.log('[package-tauri] embedded icon already matches application icon (' + appIcon + ').');
-    return;
-  }
-  fs.mkdirSync(path.dirname(tauriIcon), { recursive: true });
-  fs.copyFileSync(appIcon, tauriIcon);
-  console.log('[package-tauri] synced application icon into build icon: ' + appIcon + ' -> ' + tauriIcon + ' (Req 12.4).');
+  console.log('[package-tauri] canonical embedded icon is present (' + appIcon + ').');
 }
 
 // Req 12.3 (asInvoker / no elevation): assert the produced exe does not request
@@ -162,7 +203,29 @@ function assertNoElevation(exePath) {
 // When run as a CLI (`node scripts/package-tauri.js`) the guard at the bottom
 // invokes main(), preserving the original top-to-bottom behavior exactly.
 function main() {
-// -- Step 1: Native_Helper build step (prebuild-before-packaging) ------------
+// -- Step 1: Frontend build + artifact freshness gate ------------------------
+// package-tauri.js is also exposed as `npm run build:tauri`, so it must never
+// assume somebody remembered to run the frontend build separately.
+const npmExecutable = process.platform === 'win32'
+  ? (process.env.ComSpec || 'cmd.exe')
+  : 'npm';
+const npmArgs = process.platform === 'win32'
+  ? ['/d', '/s', '/c', 'npm run build']
+  : ['run', 'build'];
+console.log('[package-tauri] building current React frontend before Cargo ...');
+const frontendResult = spawnSync(npmExecutable, npmArgs, {
+  stdio: 'inherit',
+  cwd: frontendDir,
+});
+if (frontendResult.error) {
+  fail('failed to invoke the frontend build (' + frontendResult.error.message + ').');
+}
+if (frontendResult.status !== 0) {
+  fail('frontend build failed (exit ' + frontendResult.status + '); Cargo was not started.');
+}
+assertFrontendArtifactsCurrent();
+
+// -- Step 2: Native_Helper build step (prebuild-before-packaging) ------------
 // Run build-native.js in a child Node process using the SAME node executable
 // that is running this script. build-native.js is non-fatal by design, so a
 // missing csc/non-Windows host will not stop packaging here on its own. What
@@ -185,7 +248,7 @@ if (nativeResult.error) {
   console.warn('[package-tauri] Native_Helper build step exited with code ' + nativeResult.status + ' (verifying outcome).');
 }
 
-// -- Step 1a: Native_Helper outcome + consistency gate (Req 9.3 / 12.6) ------
+// -- Step 2a: Native_Helper outcome + consistency gate (Req 9.3 / 12.6) ------
 // Runs BEFORE the long cargo build so the pipeline fails fast, and well before
 // any dist/ assembly so a failure never produces a partial distributable.
 // FAILS the build if RobloxNative.exe is missing (build step failed with no
@@ -194,9 +257,9 @@ if (nativeResult.error) {
 console.log('[package-tauri] verifying Native_Helper executable exists and is consistent with RobloxNative.cs (Req 9.3) ...');
 assertNativeHelperConsistent(nativeExeSrc, nativeCsSrc);
 
-// -- Step 1b: Icon embedding prep (Req 12.4 / 12.6) --------------------------
+// -- Step 2b: Icon embedding prep (Req 12.4 / 12.6) --------------------------
 // Must run BEFORE the release build so cargo/winres embeds the app icon.
-// ensureAppIconEmbedded() hard-fails (process.exit) when src/icon.ico is absent.
+// ensureAppIconEmbedded() hard-fails (process.exit) when the canonical icon is absent.
 // We additionally wrap it so that ANY unexpected error while preparing the
 // embedded icon fails the build with a clear message and non-zero exit.
 console.log('[package-tauri] ensuring application icon is embedded (Req 12.4) ...');
@@ -207,7 +270,7 @@ try {
     '. Failing the build rather than producing a distributable without the correct embedded icon.');
 }
 
-// -- Step 2: Rust release build ----------------------------------------------
+// -- Step 3: Rust release build ----------------------------------------------
 // `custom-protocol` MUST be enabled for a production build: without it Tauri
 // falls back to loading `build.devUrl` (http://localhost:5173) instead of the
 // embedded `frontendDist` assets, so the packaged exe shows a blank/connection-
@@ -231,7 +294,7 @@ if (cargoResult.status !== 0) {
 
 console.log('[package-tauri] cargo release build complete.');
 
-// -- Step 3: Assemble the portable distributable under dist/ -----------------
+// -- Step 4: Assemble the portable distributable under dist/ -----------------
 // (Task 19.2) The distributable is a single portable exe (Req 12.1) placed
 // directly under the project's dist/ (Req 12.2), accompanied by the two
 // Native_Helper sidecar files (RobloxNative.exe + RobloxNative.cs, Req 9.2).
@@ -265,11 +328,11 @@ console.log('[package-tauri] copied portable exe: ' + releaseBinary + ' -> ' + d
 copyRequired(nativeExeSrc, distNativeExe, 'Native_Helper executable (RobloxNative.exe)');
 copyRequired(nativeCsSrc, distNativeCs, 'Native_Helper source (RobloxNative.cs)');
 
-// -- Step 4: Assert no elevation manifest (Req 12.3 / asInvoker) --------------
+// -- Step 5: Assert no elevation manifest (Req 12.3 / asInvoker) --------------
 console.log('[package-tauri] verifying ' + path.basename(distRobloxAccountManager) + ' requests no admin elevation (Req 12.3) ...');
 assertNoElevation(distRobloxAccountManager);
 
-// -- Step 5: Success summary -------------------------------------------------
+// -- Step 6: Success summary -------------------------------------------------
 console.log('');
 console.log('[package-tauri] SUCCESS - portable distributable assembled in ' + distDir + ':');
 for (const f of [distRobloxAccountManager, distNativeExe, distNativeCs]) {
@@ -290,6 +353,19 @@ module.exports = {
   copyRequired,
   ensureAppIconEmbedded,
   assertNativeHelperConsistent,
+  assertFrontendArtifactsCurrent,
   assertNoElevation,
-  paths: { appIcon, tauriIcon, releaseBinary, nativeExeSrc, nativeCsSrc, distDir },
+  paths: {
+    appIcon,
+    releaseBinary,
+    nativeExeSrc,
+    nativeCsSrc,
+    distDir,
+    frontendDir,
+    frontendDistDir,
+    frontendIndex,
+    frontendPreload,
+    frontendBannerSource,
+    frontendAssetsDir,
+  },
 };

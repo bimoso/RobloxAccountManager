@@ -1,10 +1,10 @@
 // types/window.d.ts
 //
 // Ambient TypeScript types for `window.api`, the Tauri_Bridge exposed by
-// `src/preload.js` (loaded as a classic script alongside the React bundle).
+// `src-tauri/preload.js` (loaded as a classic script alongside the React bundle).
 //
 // This declaration mirrors EVERY member of `window.api` defined in
-// `src/preload.js` — same names, same parameter order, no additions, removals,
+// `src-tauri/preload.js` — same names, same parameter order, no additions, removals,
 // or renames (Requirements 2.1, 2.2, 2.4). The React_Frontend adds types only;
 // it never reimplements the IPC layer. `preload.js` remains the single source
 // of truth for command names and parameter shapes.
@@ -56,7 +56,7 @@ export interface GameDetails {
 }
 
 /**
- * The exact `window.api` surface built by `src/preload.js`. Every member below
+ * The exact `window.api` surface built by `src-tauri/preload.js`. Every member below
  * corresponds one-to-one, in order, to a member of that object.
  */
 export interface TauriApi {

@@ -16,7 +16,7 @@
 //!
 //! Per the design's IPC_Surface mapping table, the legacy JS runtime `log:entry`
 //! `webContents` channel (subscribed via `window.api.onLogEntry`) maps to the
-//! Tauri `log://entry` event. The Renderer_UI (`src/renderer.js`) reads the
+//! Tauri `log://entry` event. The React log store reads the
 //! payload fields `ts`, `level`, `category`, `message`, and `meta` directly:
 //!
 //! ```js

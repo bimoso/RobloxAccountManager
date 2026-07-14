@@ -47,7 +47,7 @@ export interface NavPage {
  * the `Sidebar` render order and every page's ordinal index. The ordinal index
  * of a page is its 1-based position in this array (Requirement 4.2/4.3).
  *
- * Order and icons mirror the Legacy_Frontend sidebar in `src/index.html`.
+ * Order and icons mirror the retired Legacy_Frontend sidebar.
  */
 export const NAV_PAGES: readonly NavPage[] = [
   { id: 'accounts', label: 'Accounts', icon: 'manage_accounts' },

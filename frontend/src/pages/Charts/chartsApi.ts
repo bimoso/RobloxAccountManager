@@ -1,6 +1,6 @@
 // pages/Charts/chartsApi.ts
 //
-// Charts data source. Mirrors the Legacy_Frontend (`src/renderer.js`,
+// Charts data source. Mirrors the retired Legacy_Frontend,
 // `fetchRobloxGames`): a per-tab listing is loaded from the official Roblox
 // explore-api through the Tauri_Bridge (`ipc.robloxApiGet`), then game icons
 // are resolved through the Roblox thumbnails-api. This module owns the impure

@@ -286,12 +286,11 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(AppState::default())
         .setup(|app| {
-            // Tauri has no equivalent of legacy JS runtime's `webPreferences.preload`, and
-            // `src/index.html` only loads `renderer.js` (it must stay byte-for-byte
-            // unchanged, Requirement 10.3). So the adapted `preload.js` — which
-            // builds the flat `window.api.*` surface `renderer.js` consumes — is
+            // Tauri has no equivalent of the legacy JS runtime's
+            // `webPreferences.preload`. The canonical `src-tauri/preload.js` builds
+            // the flat `window.api.*` surface consumed by the React frontend and is
             // injected here as a webview *initialization script*, guaranteed to run
-            // at document-start before `renderer.js`. Because an init script can
+            // at document-start before the application bundle. Because an init script can
             // only be attached at window-creation time, the main window is built in
             // Rust here (and removed from `tauri.conf.json`'s `windows` list) rather
             // than auto-created from config. Requirements 10.1, 10.2, 10.3.
@@ -303,7 +302,7 @@ pub fn run() {
                 .resizable(true)
                 .transparent(true)
                 .decorations(false)
-                .initialization_script(include_str!("../../src/preload.js"))
+                .initialization_script(include_str!("../preload.js"))
                 .build()?;
             #[cfg(target_os = "windows")]
             apply_native_window_material(&win);

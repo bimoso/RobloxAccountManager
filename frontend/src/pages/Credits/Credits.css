@@ -1,6 +1,6 @@
 /* pages/Credits/Credits.css
  *
- * Credits page styles, ported from the Legacy_Frontend (`src/styles.css`,
+ * Credits page styles, ported from the retired Legacy_Frontend stylesheet,
  * "credits" section) so the palette/parity is preserved. Every color, radius
  * and timing token comes from the theme CSS variables set by the Theme_System,
  * so the page follows the active theme automatically. */

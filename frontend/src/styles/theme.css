@@ -1,11 +1,11 @@
 /* ============================================================================
  * theme.css — 12 theme palettes (Requirement 3.1)
  *
- * Ported VERBATIM from the Legacy_Frontend (src/styles.css). Colors are NOT
+ * Ported VERBATIM from the retired Legacy_Frontend stylesheet. Colors are NOT
  * recreated: the React Theme_System only adds/removes the body class and does
  * not reimplement any color values (see design.md).
  *
- * Theme -> class convention (matches src/renderer.js `applyTheme`):
+ * Theme -> class convention (matches the retired renderer's `applyTheme`):
  *   - dark  -> :root defaults (no body class)
  *   - light -> body.light
  *   - midnight, aurora, sunset, crimson, ocean, grape, forest, amber, rose,
@@ -18,7 +18,7 @@
  * theme resolves to byte-identical computed values as in the Legacy_Frontend.
  * ==========================================================================*/
 
-/* ── Layer 1: base palette (src/styles.css lines 2-21) ─────────────────────*/
+/* ── Layer 1: ported base palette ─────────────────────────────────────────*/
 :root{
   --bg:#0e0e10;--s1:#111114;--s2:#18181d;--s3:#1f1f26;--s4:#26262f;--ac-h:#7d6dff;
   --bd:rgba(255,255,255,0.07);--bd2:rgba(255,255,255,0.13);
@@ -41,7 +41,7 @@ body.light{
   --red:#d94f4f;--rd:rgba(217,79,79,0.1);
 }
 
-/* ── Layer 1b: accent themes (dark-based recolors) (src/styles.css 498-507) ─*/
+/* ── Layer 1b: ported accent themes (dark-based recolors) ─────────────────*/
 body.theme-midnight{--bg:#0a0e1a;--s1:#0f1424;--s2:#141a2e;--s3:#1b2238;--s4:#232c46;--bd:rgba(120,150,255,.1);--bd2:rgba(120,150,255,.2);--ac:#4f7cff;--ac2:rgba(79,124,255,.35);--ac3:rgba(79,124,255,.5)}
 body.theme-aurora{--bg:#07140f;--s1:#0c1a14;--s2:#11221b;--s3:#172c23;--s4:#1f382d;--bd:rgba(120,255,220,.1);--bd2:rgba(120,255,220,.2);--ac:#2dd4bf;--ac2:rgba(45,212,191,.32);--ac3:rgba(45,212,191,.48);--green:#34e2b0;--gd:rgba(52,226,176,.12)}
 body.theme-sunset{--bg:#170b12;--s1:#1f0f18;--s2:#281320;--s3:#331a29;--s4:#412235;--bd:rgba(255,170,140,.1);--bd2:rgba(255,170,140,.2);--ac:#ff7a59;--ac2:rgba(255,122,89,.32);--ac3:rgba(255,122,89,.5)}
@@ -53,7 +53,7 @@ body.theme-amber{--bg:#161106;--s1:#1e170a;--s2:#271e0d;--s3:#332813;--s4:#41331
 body.theme-rose{--bg:#170b11;--s1:#200f18;--s2:#29131f;--s3:#351a29;--s4:#432235;--bd:rgba(255,150,190,.1);--bd2:rgba(255,150,190,.2);--ac:#fb7185;--ac2:rgba(251,113,133,.3);--ac3:rgba(251,113,133,.48)}
 body.theme-graphite{--bg:#0d0e10;--s1:#131418;--s2:#1a1c21;--s3:#23262d;--s4:#2e323a;--bd:rgba(160,170,190,.1);--bd2:rgba(160,170,190,.2);--ac:#94a3b8;--ac2:rgba(148,163,184,.28);--ac3:rgba(148,163,184,.45)}
 
-/* ── Layer 2: "NOVA" redesign palette override (src/styles.css 712-744) ────*/
+/* ── Layer 2: ported "NOVA" redesign palette override ─────────────────────*/
 :root{
   /* fresh default (dark) palette — cool obsidian violet */
   --bg:#08080f;--s1:#111120;--s2:#171728;--s3:#1f1f33;--s4:#2a2a42;
@@ -89,7 +89,7 @@ body.light{
   --glass-shadow:0 18px 44px -20px rgba(60,60,120,.3);
 }
 
-/* ── Layer 3: liquid-glass override layer (src/styles.css 927-961) ─────────*/
+/* ── Layer 3: ported liquid-glass override layer ──────────────────────────*/
 :root{
   --bg:#070a12;--s1:#0b1020;--s2:#11182a;--s3:#18213a;--s4:#222d49;
   --bd:rgba(166,181,232,.105);--bd2:rgba(176,190,239,.21);

@@ -1,7 +1,7 @@
 /* App shell layout.
  *
- * Mirrors the Legacy_Frontend structure (`src/index.html` `#titlebar` +
- * `#layout` with `#sidebar` and `#main`, `src/styles.css`): a fixed-height
+ * Mirrors the retired Legacy_Frontend structure (`#titlebar` plus `#layout`
+ * with `#sidebar` and `#main`): a fixed-height
  * title bar on top, then a flex row filling the rest of the viewport with the
  * fixed-width sidebar beside the flexible content region. Sizing comes from the
  * shared theme variables `--tb` (title-bar height) and `--sb` (sidebar width).

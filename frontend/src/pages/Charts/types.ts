@@ -8,7 +8,7 @@
 /**
  * A single game shown in the Charts listing.
  *
- * Shape mirrors the projection the Legacy_Frontend (`src/renderer.js`,
+ * Shape mirrors the projection from the retired Legacy_Frontend,
  * `fetchRobloxGames`) built from the Roblox explore-api response plus the
  * thumbnails-api icon lookup.
  */

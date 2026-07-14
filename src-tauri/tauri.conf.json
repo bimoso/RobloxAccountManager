@@ -21,8 +21,8 @@
     "targets": ["nsis"],
     "icon": ["icons/icon.png", "icons/icon.ico"],
     "resources": {
-      "../src/RobloxNative.exe": "RobloxNative.exe",
-      "../src/RobloxNative.cs": "RobloxNative.cs"
+      "../native-helper/RobloxNative.exe": "RobloxNative.exe",
+      "../native-helper/RobloxNative.cs": "RobloxNative.cs"
     }
   }
 }

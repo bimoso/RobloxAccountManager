@@ -2,8 +2,8 @@
 //
 // Custom application title bar (task 29.1).
 //
-// Reproduces the Legacy_Frontend `#titlebar` (`src/index.html` +
-// `src/renderer.js`): window controls (minimize / maximize / close), a
+// Reproduces the retired Legacy_Frontend `#titlebar`: window controls
+// (minimize / maximize / close), a
 // light/dark theme toggle, the detected Roblox version badge, and a
 // running-instance counter.
 //

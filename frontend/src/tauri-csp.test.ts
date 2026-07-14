@@ -21,7 +21,7 @@ import { dirname, resolve } from 'node:path';
  *   - `src-tauri/tauri.conf.json` sets `app.security.csp` to `null`. With Tauri,
  *     `null` disables Tauri's own CSP header injection; the Legacy_Frontend instead
  *     enforced its policy through a `<meta http-equiv="Content-Security-Policy">`
- *     tag in `src/index.html`. That exact policy is reproduced below as
+ *     tag. The canonical tag now lives in `frontend/index.html`; that exact policy is reproduced below as
  *     `LEGACY_FRONTEND_META_CSP` for documentation and as the reference point for
  *     the "no less restrictive" comparison, should the config CSP ever be
  *     populated in the future.
@@ -35,6 +35,7 @@ import { dirname, resolve } from 'node:path';
 // frontend/src/tauri-csp.test.ts -> ../../ is the repo root -> src-tauri/tauri.conf.json
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const tauriConfPath = resolve(repoRoot, 'src-tauri', 'tauri.conf.json');
+const frontendIndexPath = resolve(repoRoot, 'frontend', 'index.html');
 
 /**
  * The exact `app.security.csp` value committed for the Legacy_Frontend.
@@ -44,9 +45,9 @@ const tauriConfPath = resolve(repoRoot, 'src-tauri', 'tauri.conf.json');
 const LEGACY_FRONTEND_TAURI_CSP: string | null = null;
 
 /**
- * The verbatim Content-Security-Policy the Legacy_Frontend enforced via the
- * `<meta http-equiv="Content-Security-Policy">` tag in `src/index.html`. Kept
- * here as the authoritative, documented baseline of "restrictions in force"
+ * The verbatim Content-Security-Policy inherited from the Legacy_Frontend and
+ * enforced by the canonical tag in `frontend/index.html`. Kept here as the
+ * authoritative, documented baseline of "restrictions in force"
  * (Req 28.2). If `app.security.csp` is ever populated, it must be *at least as
  * restrictive* as this policy.
  */
@@ -55,7 +56,7 @@ const LEGACY_FRONTEND_META_CSP =
   "script-src 'self' 'unsafe-inline'; " +
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
   "font-src 'self' https://fonts.gstatic.com; " +
-  "img-src 'self' data: https://*.rbxcdn.com https://*.roblox.com; " +
+  "img-src 'self' data: https://*.rbxcdn.com https://*.roblox.com https://cdn.discordapp.com; " +
   "connect-src 'self' ipc: http://ipc.localhost https://*.roblox.com https://core.bloxgen.net; " +
   "object-src 'none'; " +
   "base-uri 'self'; " +
@@ -146,6 +147,11 @@ function findWeakenings(baseline: string, candidate: string): string[] {
 }
 
 describe('Tauri security CSP is not weakened by the React_Frontend migration (Requirement 28.2)', () => {
+  it('keeps the canonical frontend meta policy synchronized with the security baseline', () => {
+    const indexHtml = readFileSync(frontendIndexPath, 'utf-8');
+    expect(indexHtml).toContain(`content="${LEGACY_FRONTEND_META_CSP}"`);
+  });
+
   it('keeps app.security.csp exactly at the committed Legacy_Frontend baseline', () => {
     const conf = readTauriConf();
 

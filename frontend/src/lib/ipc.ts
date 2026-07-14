@@ -3,7 +3,7 @@
 // Typed Tauri_Bridge wrapper.
 //
 // This module does NOT reimplement the IPC layer: it delegates directly to
-// `window.api` (built by `src/preload.js`), which remains the single source of
+// `window.api` (built by `src-tauri/preload.js`), which remains the single source of
 // truth for command names, parameter order, and event-channel names
 // (Requirements 2.1, 2.4). Every member below forwards to the `window.api`
 // member of the same name with the same parameters, in order.

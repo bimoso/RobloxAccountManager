@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -21,6 +21,7 @@ import { dirname, resolve } from 'node:path';
 
 const frontendRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const distDir = resolve(frontendRoot, 'dist');
+const repoRoot = resolve(frontendRoot, '..');
 
 // A full `tsc --noEmit && vite build` can take a while on a cold cache / CI.
 const BUILD_TIMEOUT_MS = 180_000;
@@ -66,6 +67,22 @@ describe('Build_Pipeline over valid code (Requirement 1.4)', () => {
       // preload.js is copied verbatim from the Tauri_Bridge into the output.
       const preloadJs = resolve(distDir, 'preload.js');
       expect(existsSync(preloadJs), 'expected dist/preload.js (Tauri_Bridge copy)').toBe(true);
+      expect(readFileSync(preloadJs, 'utf8').trimStart().startsWith('<')).toBe(false);
+      expect(readFileSync(preloadJs)).toEqual(readFileSync(resolve(repoRoot, 'src-tauri', 'preload.js')));
+
+      // The packaged HTML must use the relative bridge path and permit only the
+      // exact Discord CDN needed by the Credits avatar.
+      const builtIndex = readFileSync(indexHtml, 'utf8');
+      expect(builtIndex).toContain('src="./preload.js"');
+      expect(builtIndex).toContain('https://cdn.discordapp.com');
+
+      // Prove the current user-supplied Bimo.gif made it through Vite instead
+      // of accepting a stale banner left in dist from an older build.
+      const sourceBanner = readFileSync(resolve(frontendRoot, 'assets', 'Bimo.gif'));
+      const emittedBanner = assetFiles
+        .filter((file) => file.toLowerCase().endsWith('.gif'))
+        .some((file) => readFileSync(resolve(assetsDir, file)).equals(sourceBanner));
+      expect(emittedBanner, 'expected current assets/Bimo.gif in dist/assets').toBe(true);
     },
     BUILD_TIMEOUT_MS,
   );

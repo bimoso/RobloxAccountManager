@@ -17,7 +17,7 @@ import type { Account } from '../../types/models';
  * Normalized result of validating a single cookie.
  *
  * Mirrors the shape the backend's cookie-validation command already returns
- * (`{ ok, reason?, username?, userId? }`, see `src/renderer.js`), narrowed from
+ * (`{ ok, reason?, username?, userId? }`, from the retired renderer), narrowed from
  * the untyped `ipc.validateCookie` response by {@link normalizeValidation}.
  */
 export interface CookieValidation {
@@ -150,7 +150,7 @@ function describeError(err: unknown, index: number): string {
  * {@link CookieValidation}.
  *
  * The backend returns `{ ok, reason?, username?, userId? }` (see
- * `src/renderer.js`); this narrows the `unknown` typed response defensively so
+ * the retired renderer); this narrows the `unknown` typed response defensively so
  * a malformed/empty response is treated as an invalid cookie rather than
  * throwing.
  *

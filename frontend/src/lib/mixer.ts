@@ -18,7 +18,7 @@ import { isLaunched } from './filters';
 
 /**
  * Fast Flag key that overrides Roblox's graphics quality level. Mirrors the key
- * used by the Legacy_Frontend (`src/renderer.js` → `FF_GFX`), so the React and
+ * used by the retired Legacy_Frontend (`FF_GFX`), so the React and
  * legacy frontends read and write the exact same flag.
  */
 export const GRAPHICS_QUALITY_FLAG = 'DFIntDebugFRMQualityLevelOverride';
@@ -69,7 +69,7 @@ export function manualQualityDisabled(auto: boolean): boolean {
  * Whether a stored graphics-quality Fast Flag value represents "Auto".
  *
  * Auto is represented by the absence of the flag: `undefined`, `null`, or an
- * empty string all mean "let Roblox decide" (parity with `src/renderer.js`).
+ * empty string all mean "let Roblox decide" (legacy parity).
  *
  * @param raw - The raw flag value read from `fflag_read`.
  * @returns `true` when the value means "Auto", otherwise `false`.

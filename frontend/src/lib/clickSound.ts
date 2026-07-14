@@ -2,7 +2,7 @@
 //
 // Click-sound engine (Requirement 22).
 //
-// Ports the Legacy_Frontend's Web-Audio click-sound synthesis (`src/renderer.js`
+// Ports the retired Legacy_Frontend's Web-Audio click-sound synthesis
 // "Sound profiles") into a small, reusable module. It owns:
 //
 //   - the predefined click-sound profiles ({@link SOUND_PROFILES}), each of

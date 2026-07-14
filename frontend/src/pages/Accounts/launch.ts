@@ -12,7 +12,7 @@
 //   - `launch` → `ipc.launchRoblox(account.id, account.cookie, target)`
 //
 // The target-building helpers mirror the legacy renderer's `_buildLaunchTarget`
-// (`src/renderer.js`): the destination string is derived from the active tab
+// (retired legacy renderer): the destination string is derived from the active tab
 // and its inputs, matching the exact formats the backend already understands.
 
 import type { Account } from '../../types/models';

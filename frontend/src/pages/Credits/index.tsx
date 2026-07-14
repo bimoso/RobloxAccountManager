@@ -2,7 +2,7 @@
 //
 // Credits page (design.md → Requisito 24). A static listing of the people
 // behind RobloxAccountManager, ported from the Legacy_Frontend
-// (`src/index.html` → `#page-credits`).
+// (the retired `#page-credits` view).
 //
 // Each contributor is shown with their role, name and external links
 // (Requisito 24.1). External links do NOT navigate inside the webview: every
@@ -77,6 +77,12 @@ const CONTRIBUTORS: readonly Contributor[] = [
   },
 ];
 
+/** Stable Discord CDN avatars keyed by Discord user id, never display name. */
+const DISCORD_AVATARS_BY_ID: Readonly<Record<string, string>> = {
+  '649501821072834580':
+    'https://cdn.discordapp.com/avatars/649501821072834580/1bcb4830c974a6935779ace169d055ad.png?size=256',
+};
+
 /** Brand glyphs for the supported external-link icons. */
 const LINK_ICON_PATHS: Record<CreditLink['icon'], string> = {
   discord:
@@ -94,10 +100,7 @@ const LINK_ICON_PATHS: Record<CreditLink['icon'], string> = {
  */
 export function CreditsPage(): JSX.Element {
   const [robloxAvatars, setRobloxAvatars] = useState<Record<string, string>>({
-    bimoso: 'https://tr.rbxcdn.com/30DAY-AvatarHeadshot-085CDD34A4FD1FF80594B29A20A3C513-Png/150/150/AvatarHeadshot/Png/isCircular',
-  });
-  const [discordAvatars] = useState<Record<string, string>>({
-    bimoso: 'https://cdn.discordapp.com/avatars/649501821072834580/1bcb4830c974a6935779ace169d055ad.png?size=256',
+    Bimo: 'https://tr.rbxcdn.com/30DAY-AvatarHeadshot-085CDD34A4FD1FF80594B29A20A3C513-Png/150/150/AvatarHeadshot/Png/isCircular',
   });
 
   useEffect(() => {
@@ -155,9 +158,9 @@ export function CreditsPage(): JSX.Element {
                   )}
                 </div>
                 <div className="credit-avatar-wrapper discord" title="Discord Profile">
-                  {discordAvatars[contributor.name] ? (
+                  {contributor.discordId && DISCORD_AVATARS_BY_ID[contributor.discordId] ? (
                     <img
-                      src={discordAvatars[contributor.name]}
+                      src={DISCORD_AVATARS_BY_ID[contributor.discordId]}
                       alt={`${contributor.name} Discord`}
                       className="credit-avatar-img"
                       loading="lazy"

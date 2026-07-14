@@ -4,7 +4,7 @@
 //
 // These mirror exactly the JSON shapes the Tauri_Backend already produces and
 // consumes (see `src-tauri/src/models.rs`, `src-tauri/src/packages.rs`, and the
-// legacy consumer `src/renderer.js`), preserving the original camelCase field
+// retired legacy consumer), preserving the original camelCase field
 // names. Where a value is derived on the client (never persisted by the
 // backend) it is marked optional and documented as such.
 //
@@ -50,7 +50,7 @@ export interface Account {
  *
  * Packages are stored by the backend as arbitrary JSON (`Vec<Value>` in
  * `src-tauri/src/packages.rs`), so the authoritative shape comes from the
- * legacy renderer (`src/renderer.js`): `{ id, name, accountIds, link }`.
+ * retired legacy renderer: `{ id, name, accountIds, link }`.
  * (Reconciliation: design.md sketched `privateServerLink`, but the renderer
  * uses `link` — the renderer is authoritative.)
  */
@@ -108,7 +108,7 @@ export interface WayfernProgress {
   percent: number | null;
 }
 
-/** The 12 selectable themes, matching the palettes defined in `src/styles.css`. */
+/** The 12 selectable themes, matching the ported legacy palettes. */
 export type ThemeName =
   | 'dark' | 'light' | 'midnight' | 'aurora' | 'sunset' | 'crimson'
   | 'ocean' | 'grape' | 'forest' | 'amber' | 'rose' | 'graphite';

@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Content-Security-Policy carried over verbatim from the Legacy_Frontend
-         (src/index.html) so the React_Frontend is no less restrictive
+    <!-- Content-Security-Policy retained from the retired Legacy_Frontend so
+         the React_Frontend is no less restrictive
          (Requirement 28.2). Allows the Google Fonts stylesheets/font files used
          below plus the Roblox/BloxGen endpoints and the Tauri IPC origin. -->
     <meta
@@ -32,10 +32,10 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- Tauri_Bridge: classic script copied verbatim from src/preload.js. Loaded
+    <!-- Tauri_Bridge: classic script copied verbatim from src-tauri/preload.js. Loaded
          before the React module (modules are deferred) so window.api exists
          when the app boots, mirroring the Legacy_Frontend load order. -->
-    <script src="/preload.js"></script>
+    <script src="./preload.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

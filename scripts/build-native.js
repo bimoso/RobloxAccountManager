@@ -1,4 +1,4 @@
-// Precompiles src/RobloxNative.cs -> src/RobloxNative.exe using the .NET
+// Precompiles native-helper/RobloxNative.cs -> native-helper/RobloxNative.exe using the .NET
 // Framework C# compiler (csc.exe), which is present on every Windows machine.
 // Runs automatically before `npm run build` (npm "prebuild" lifecycle) so a
 // prebuilt native helper ships inside the app.
@@ -12,8 +12,9 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const src = path.join(__dirname, '..', 'src', 'RobloxNative.cs');
-const out = path.join(__dirname, '..', 'src', 'RobloxNative.exe');
+const nativeHelperDir = path.join(__dirname, '..', 'native-helper');
+const src = path.join(nativeHelperDir, 'RobloxNative.cs');
+const out = path.join(nativeHelperDir, 'RobloxNative.exe');
 
 function findCsc() {
   const win = process.env.WINDIR || 'C:\\Windows';
@@ -30,7 +31,7 @@ if (process.platform !== 'win32') {
 }
 
 if (!fs.existsSync(src)) {
-  console.warn('[build-native] src/RobloxNative.cs not found; skipping.');
+  console.warn('[build-native] native-helper/RobloxNative.cs not found; skipping.');
   process.exit(0);
 }
 

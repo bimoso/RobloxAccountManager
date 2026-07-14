@@ -9,7 +9,7 @@
 // DOM or React (design.md Properties 3, 4, 5).
 //
 // Theme -> body class convention (mirrors the Legacy_Frontend
-// `src/renderer.js` `applyTheme`, and the class names in `styles/theme.css`):
+// the retired renderer's `applyTheme`, and the class names in `styles/theme.css`):
 //   - dark  -> no body class (the `:root` defaults)
 //   - light -> body.light
 //   - every other theme -> body.theme-<name>

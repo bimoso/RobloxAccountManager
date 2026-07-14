@@ -14,6 +14,13 @@
 //                                      running Roblox; prints HANDLES_DONE.
 //   RobloxNative.exe volume <0-100> -> set OS volume on every Roblox audio
 //                                      session; prints SET:<count>.
+//   RobloxNative.exe pids           -> print each running RobloxPlayerBeta
+//                                      PID on its own line. Uses .NET's own
+//                                      Process.GetProcessesByName instead of
+//                                      shelling out to tasklist.exe/cmd.exe
+//                                      -- the same reliable enumeration the
+//                                      anti-AFK loop already depends on, no
+//                                      CSV parsing or extra process hop.
 //
 // Build (done once, by the app or build.bat) with the .NET Framework compiler:
 //   csc /nologo /optimize+ /platform:x64 /target:exe /out:RobloxNative.exe RobloxNative.cs
@@ -36,8 +43,9 @@ internal static class RobloxNative
                 case "closehandles": return RunCloseHandles();
                 case "volume":       return RunVolume(args);
                 case "antiafk":      return RunAntiAfk(args);
+                case "pids":         return RunPids();
                 default:
-                    Console.Error.WriteLine("Unknown command. Use: mutex | closehandles | volume <0-100> | antiafk <seconds>");
+                    Console.Error.WriteLine("Unknown command. Use: mutex | closehandles | volume <0-100> | antiafk <seconds> | pids");
                     return 2;
             }
         }
@@ -150,6 +158,19 @@ internal static class RobloxNative
         Console.Out.WriteLine("ANTIAFK_ON:" + deadlineSec);
         Console.Out.Flush();
         AntiAfk.RunLoop(deadlineSec, vk);
+        return 0;
+    }
+
+    // One-shot PID dump for the Rust watch loop -- Process.GetProcessesByName
+    // is the same reliable, in-process enumeration AntiAfk already uses, so
+    // the watch loop no longer has to shell out to tasklist.exe/cmd.exe and
+    // regex-parse CSV (which can silently miss/misread under load).
+    private static int RunPids()
+    {
+        foreach (var p in Process.GetProcessesByName("RobloxPlayerBeta"))
+        {
+            try { Console.Out.WriteLine(p.Id); } catch { }
+        }
         return 0;
     }
 }
@@ -382,8 +403,9 @@ internal static class AudioControl
 // was minimised), given a real key tap via keybd_event, then put back. The
 // originally-focused window is restored after each pass. Per-instance timers
 // mean each account is tapped the moment IT reaches the deadline (instances
-// launched at different times have independent countdowns), and an instance
-// you're actively playing in the foreground is never tapped.
+// launched at different times have independent countdowns) -- including
+// whichever one you're currently playing, since being focused doesn't by
+// itself prove Roblox saw real input.
 internal static class AntiAfk
 {
     [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lParam);
@@ -500,6 +522,12 @@ internal static class AntiAfk
             foreach (var pid in gone) lastReset.Remove(pid);
             foreach (var pid in windows.Keys) if (!lastReset.ContainsKey(pid)) lastReset[pid] = now;
 
+            // Foreground state alone doesn't prove Roblox saw real input --
+            // being focused without pressing anything still reads as idle to
+            // Roblox's own kick timer, so exempting the foreground window let
+            // it get missed and kicked anyway. Every window is tapped on its
+            // own deadline regardless of focus; the tap is a harmless single
+            // key and focus is handed back right after (see below).
             var due = new System.Collections.Generic.List<uint>();
             foreach (var kv in windows)
             {

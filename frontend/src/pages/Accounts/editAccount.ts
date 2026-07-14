@@ -12,7 +12,7 @@
 //   - Property 27 "Cálculo de campos modificados al guardar la edición"
 //     exercises {@link computeChangedFields}.
 //
-// The three editable fields match the legacy edit form in `src/renderer.js`
+// The three editable fields match the retired legacy edit form
 // (`openEdit`/`saveEdit`), which maps its inputs onto the Account fields
 // `nickname`, `gameTarget` (the launch destination — a game id or a private
 // server link) and `notes`.
