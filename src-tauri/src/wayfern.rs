@@ -31,6 +31,7 @@ pub const WAYFERN_MANIFEST_URL: &str = "https://donutbrowser.com/wayfern.json";
 pub const WAYFERN_PROGRESS_EVENT: &str = "wayfern://download-progress";
 const WAYFERN_DOWNLOAD_HOST: &str = "download.wayfern.com";
 const DEVTOOLS_PORT_FILE: &str = "DevToolsActivePort";
+const WAYFERN_FINGERPRINT_FILE: &str = "wayfern-fingerprint.json";
 
 #[derive(Debug, Clone, Deserialize)]
 struct WayfernManifest {
@@ -152,9 +153,13 @@ fn emit_progress(
     downloaded_bytes: u64,
     total_bytes: Option<u64>,
 ) {
-    let percent = total_bytes
-        .filter(|total| *total > 0)
-        .map(|total| (downloaded_bytes as f64 / total as f64 * 100.0).clamp(0.0, 100.0));
+    let percent = if stage == "ready" {
+        Some(100.0)
+    } else {
+        total_bytes
+            .filter(|total| *total > 0)
+            .map(|total| (downloaded_bytes as f64 / total as f64 * 100.0).clamp(0.0, 100.0))
+    };
     let _ = app.emit(
         WAYFERN_PROGRESS_EVENT,
         WayfernProgress {
@@ -181,7 +186,8 @@ fn safe_version(version: &str) -> Result<&str, String> {
 
 fn find_wayfern_executable(root: &Path) -> Option<PathBuf> {
     let mut stack = vec![root.to_path_buf()];
-    let mut fallback = None;
+    let mut chromium_launcher = None;
+    let mut named_fallback = None;
     while let Some(dir) = stack.pop() {
         let entries = fs::read_dir(dir).ok()?;
         for entry in entries.flatten() {
@@ -198,12 +204,25 @@ fn find_wayfern_executable(root: &Path) -> Option<PathBuf> {
             if name == "wayfern.exe" {
                 return Some(path);
             }
-            if name.ends_with(".exe") && name.contains("wayfern") && fallback.is_none() {
-                fallback = Some(path);
+            // Wayfern is Chromium-based and the official portable Windows ZIP
+            // currently exposes its main launcher as `chrome.exe`. Helper
+            // binaries such as chrome_proxy.exe and chrome_pwa_launcher.exe are
+            // deliberately excluded by requiring the exact file name.
+            let has_chromium_payload = path.parent().is_some_and(|parent| {
+                parent.join("chrome.dll").is_file()
+                    && parent.join("resources.pak").is_file()
+                    && parent.join("icudtl.dat").is_file()
+            });
+            if name == "chrome.exe" && has_chromium_payload && chromium_launcher.is_none() {
+                chromium_launcher = Some(path);
+                continue;
+            }
+            if name.ends_with(".exe") && name.contains("wayfern") && named_fallback.is_none() {
+                named_fallback = Some(path);
             }
         }
     }
-    fallback
+    chromium_launcher.or(named_fallback)
 }
 
 fn extract_portable_zip(archive: &Path, destination: &Path) -> Result<PathBuf, String> {
@@ -239,7 +258,118 @@ fn extract_portable_zip(archive: &Path, destination: &Path) -> Result<PathBuf, S
     }
 
     find_wayfern_executable(destination)
-        .ok_or_else(|| "The Wayfern archive did not contain wayfern.exe.".to_string())
+        .ok_or_else(|| {
+            "The Wayfern archive did not contain a supported browser launcher (wayfern.exe or chrome.exe)."
+                .to_string()
+        })
+}
+
+/// A previous build wrote completed downloads with a `.part` suffix and left
+/// them behind whenever launcher detection failed. Opening the central
+/// directory is a cheap way to distinguish one of those complete ZIPs from a
+/// genuinely interrupted download without reading the whole ~1 GB file.
+fn is_complete_zip(archive: &Path) -> bool {
+    File::open(archive)
+        .ok()
+        .and_then(|file| zip::ZipArchive::new(file).ok())
+        .is_some_and(|zip| !zip.is_empty())
+}
+
+fn staging_path(root: &Path, version: &str) -> PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    root.join(format!("staging-{version}-{}-{nonce}", std::process::id()))
+}
+
+async fn extract_to_staging(
+    root: &Path,
+    archive: &Path,
+    version: &str,
+) -> Result<(PathBuf, PathBuf), String> {
+    let staging = staging_path(root, version);
+    let archive_for_worker = archive.to_path_buf();
+    let staging_for_worker = staging.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        extract_portable_zip(&archive_for_worker, &staging_for_worker)
+    })
+    .await
+    .map_err(|e| format!("The Wayfern extraction worker failed: {e}"))?;
+
+    match result {
+        Ok(executable) => Ok((staging, executable)),
+        Err(error) => {
+            // Never accumulate another multi-gigabyte half-install after an
+            // extraction or launcher-detection failure.
+            let _ = tokio::fs::remove_dir_all(&staging).await;
+            Err(error)
+        }
+    }
+}
+
+async fn activate_staging(
+    dir: &Path,
+    root: &Path,
+    version: &str,
+    staging: &Path,
+    extracted_executable: &Path,
+) -> Result<PathBuf, String> {
+    // Capture the relative launcher path before moving the staging directory.
+    // The old implementation did this after rename, relying on purely lexical
+    // Path behaviour even though the source path no longer existed.
+    let relative_in_staging = extracted_executable
+        .strip_prefix(staging)
+        .map_err(|_| "The extracted Wayfern executable escaped its staging folder.".to_string())?
+        .to_path_buf();
+
+    let final_dir = root.join("versions").join(version);
+    tokio::fs::create_dir_all(final_dir.parent().expect("versions has a parent"))
+        .await
+        .map_err(|e| format!("Could not create the Wayfern versions folder: {e}"))?;
+    if final_dir.exists() {
+        tokio::fs::remove_dir_all(&final_dir)
+            .await
+            .map_err(|e| format!("Could not replace the incomplete Wayfern version: {e}"))?;
+    }
+    tokio::fs::rename(staging, &final_dir)
+        .await
+        .map_err(|e| format!("Could not activate the Wayfern version: {e}"))?;
+
+    let executable = final_dir.join(relative_in_staging);
+    if !executable.is_file() {
+        return Err("The activated Wayfern browser launcher is missing.".to_string());
+    }
+    let relative_to_root = executable
+        .strip_prefix(root)
+        .map_err(|_| "The Wayfern executable is outside its install folder.".to_string())?;
+    let metadata = InstalledWayfern {
+        version: version.to_string(),
+        executable: relative_to_root.to_string_lossy().into_owned(),
+    };
+    let metadata_json = serde_json::to_vec_pretty(&metadata)
+        .map_err(|e| format!("Could not serialize the Wayfern install metadata: {e}"))?;
+    tokio::fs::write(installed_metadata_path(dir), metadata_json)
+        .await
+        .map_err(|e| format!("Could not save the Wayfern install metadata: {e}"))?;
+
+    Ok(executable)
+}
+
+async fn cleanup_own_staging(root: &Path, version: &str) {
+    let Ok(mut entries) = tokio::fs::read_dir(root).await else {
+        return;
+    };
+    // The in-memory install mutex cannot coordinate two separate application
+    // processes. Only remove staging folders owned by this PID so one running
+    // instance can never delete another instance's active extraction.
+    let prefix = format!("staging-{version}-{}-", std::process::id());
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with(&prefix) {
+            let _ = tokio::fs::remove_dir_all(entry.path()).await;
+        }
+    }
 }
 
 async fn download_and_install(
@@ -256,87 +386,89 @@ async fn download_and_install(
         .map_err(|e| format!("Could not create the Wayfern download folder: {e}"))?;
 
     let archive = downloads.join(format!("wayfern-{version}.zip.part"));
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(30))
-        .timeout(Duration::from_secs(4 * 60 * 60))
-        .build()
-        .map_err(|e| format!("Could not create the Wayfern download client: {e}"))?;
-    let response = client
-        .get(download_url)
-        .send()
+    let existing_size = tokio::fs::metadata(&archive)
         .await
-        .map_err(|e| format!("Could not start the Wayfern download: {e}"))?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "The Wayfern download returned HTTP {}.",
-            response.status().as_u16()
-        ));
-    }
-    let total = response.content_length();
-    let mut stream = response.bytes_stream();
-    let mut file = tokio::fs::File::create(&archive)
-        .await
-        .map_err(|e| format!("Could not create the Wayfern archive: {e}"))?;
-    let mut downloaded = 0_u64;
-    emit_progress(app, "downloading", &version, downloaded, total);
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("The Wayfern download was interrupted: {e}"))?;
-        file.write_all(&chunk)
+        .ok()
+        .filter(|metadata| metadata.is_file() && metadata.len() > 0)
+        .map(|metadata| metadata.len());
+    let reusable_archive = if existing_size.is_some() {
+        let archive_for_worker = archive.clone();
+        tokio::task::spawn_blocking(move || is_complete_zip(&archive_for_worker))
             .await
-            .map_err(|e| format!("Could not write the Wayfern archive: {e}"))?;
-        downloaded = downloaded.saturating_add(chunk.len() as u64);
+            .map_err(|e| format!("The Wayfern archive validation worker failed: {e}"))?
+    } else {
+        false
+    };
+
+    let (downloaded, total) = if reusable_archive {
+        // A complete archive from the broken detector is already on disk. Reuse
+        // it instead of truncating it and making the user download ~1 GB again.
+        let size = existing_size.expect("a reusable archive has metadata");
+        (size, Some(size))
+    } else {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(4 * 60 * 60))
+            .build()
+            .map_err(|e| format!("Could not create the Wayfern download client: {e}"))?;
+        let response = client
+            .get(download_url)
+            .send()
+            .await
+            .map_err(|e| format!("Could not start the Wayfern download: {e}"))?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "The Wayfern download returned HTTP {}.",
+                response.status().as_u16()
+            ));
+        }
+        let total = response.content_length();
+        let mut stream = response.bytes_stream();
+        let mut file = tokio::fs::File::create(&archive)
+            .await
+            .map_err(|e| format!("Could not create the Wayfern archive: {e}"))?;
+        let mut downloaded = 0_u64;
         emit_progress(app, "downloading", &version, downloaded, total);
-    }
-    file.flush()
-        .await
-        .map_err(|e| format!("Could not finish the Wayfern archive: {e}"))?;
-    drop(file);
+
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("The Wayfern download was interrupted: {e}"))?;
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("Could not write the Wayfern archive: {e}"))?;
+            downloaded = downloaded.saturating_add(chunk.len() as u64);
+            emit_progress(app, "downloading", &version, downloaded, total);
+        }
+        file.flush()
+            .await
+            .map_err(|e| format!("Could not finish the Wayfern archive: {e}"))?;
+        drop(file);
+
+        if let Some(expected) = total {
+            if downloaded != expected {
+                return Err(format!(
+                    "The Wayfern download was incomplete: received {downloaded} of {expected} bytes."
+                ));
+            }
+        }
+        (downloaded, total)
+    };
 
     emit_progress(app, "extracting", &version, downloaded, total);
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let staging = root.join(format!("staging-{version}-{}-{nonce}", std::process::id()));
-    let archive_for_worker = archive.clone();
-    let staging_for_worker = staging.clone();
-    let extracted_executable = tokio::task::spawn_blocking(move || {
-        extract_portable_zip(&archive_for_worker, &staging_for_worker)
-    })
-    .await
-    .map_err(|e| format!("The Wayfern extraction worker failed: {e}"))??;
-
-    let final_dir = root.join("versions").join(&version);
-    tokio::fs::create_dir_all(final_dir.parent().expect("versions has a parent"))
-        .await
-        .map_err(|e| format!("Could not create the Wayfern versions folder: {e}"))?;
-    if final_dir.exists() {
-        tokio::fs::remove_dir_all(&final_dir)
-            .await
-            .map_err(|e| format!("Could not replace the incomplete Wayfern version: {e}"))?;
-    }
-    tokio::fs::rename(&staging, &final_dir)
-        .await
-        .map_err(|e| format!("Could not activate the Wayfern version: {e}"))?;
-
-    let relative_in_staging = extracted_executable
-        .strip_prefix(&staging)
-        .map_err(|_| "The extracted Wayfern executable escaped its staging folder.".to_string())?;
-    let executable = final_dir.join(relative_in_staging);
-    let relative_to_root = executable
-        .strip_prefix(&root)
-        .map_err(|_| "The Wayfern executable is outside its install folder.".to_string())?;
-    let metadata = InstalledWayfern {
-        version: version.clone(),
-        executable: relative_to_root.to_string_lossy().into_owned(),
+    let (staging, extracted_executable) = match extract_to_staging(&root, &archive, &version).await
+    {
+        Ok(extracted) => extracted,
+        Err(error) => {
+            // Do not retry the same bad cache forever. A later explicit retry
+            // starts from a fresh download; extraction already removed its own
+            // partial staging directory.
+            let _ = tokio::fs::remove_file(&archive).await;
+            return Err(error);
+        }
     };
-    let metadata_json = serde_json::to_vec_pretty(&metadata)
-        .map_err(|e| format!("Could not serialize the Wayfern install metadata: {e}"))?;
-    tokio::fs::write(installed_metadata_path(dir), metadata_json)
-        .await
-        .map_err(|e| format!("Could not save the Wayfern install metadata: {e}"))?;
+    let executable =
+        activate_staging(dir, &root, &version, &staging, &extracted_executable).await?;
     let _ = tokio::fs::remove_file(&archive).await;
+    cleanup_own_staging(&root, &version).await;
     emit_progress(app, "ready", &version, downloaded, total);
     Ok(executable)
 }
@@ -479,11 +611,16 @@ pub async fn open_account_browser(
         ));
     }
     let _ = tokio::fs::remove_file(user_data_dir.join(DEVTOOLS_PORT_FILE)).await;
+    let fingerprint_path = user_data_dir.join(WAYFERN_FINGERPRINT_FILE);
 
     let mut child = match tokio::process::Command::new(&executable)
         .arg(format!("--user-data-dir={}", user_data_dir.display()))
         .arg("--remote-debugging-port=0")
         .arg("--remote-allow-origins=*")
+        // Wayfern otherwise injected 1.25 on a monitor that Windows reports at
+        // 100%, inflating the browser chrome and every webpage. This override
+        // reaches both the browser process and its renderers.
+        .arg("--force-device-scale-factor=1")
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("about:blank")
@@ -507,15 +644,20 @@ pub async fn open_account_browser(
             return OpenResult::err(error);
         }
     };
-    let injected =
-        match browser_launcher::inject_cookie_and_navigate(cdp_port, &account.cookie).await {
+    let injected = match browser_launcher::inject_wayfern_cookie_and_navigate(
+        cdp_port,
+        &account.cookie,
+        &fingerprint_path,
+    )
+    .await
+    {
             Ok(injected) => injected,
             Err(error) => {
                 let _ = child.kill().await;
                 browser_launcher::untrack_session(&sessions, account_id).await;
                 return OpenResult::err(error);
             }
-        };
+    };
 
     // Dropping tokio::process::Child only releases our process handle; it does
     // not terminate Wayfern. The live CDP session owns lifecycle/focus from here.
@@ -594,6 +736,27 @@ pub async fn browser_wayfern_install(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
+
+    fn test_dir(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "robloxaccountmanager-wayfern-{label}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn touch(path: &Path) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, b"test").unwrap();
+    }
 
     #[test]
     fn manifest_selects_only_windows_x64() {
@@ -614,6 +777,99 @@ mod tests {
         )
         .unwrap();
         assert!(validated_download_url(&manifest).is_err());
+    }
+
+    #[test]
+    fn finds_official_chrome_launcher_without_selecting_helpers() {
+        let root = test_dir("chrome-layout");
+        let browser = root.join("wayfern-149_windows_x64");
+        touch(&browser.join("chrome_proxy.exe"));
+        touch(&browser.join("chrome_pwa_launcher.exe"));
+        touch(&browser.join("notification_helper.exe"));
+        touch(&browser.join("chrome.dll"));
+        touch(&browser.join("resources.pak"));
+        touch(&browser.join("icudtl.dat"));
+        let expected = browser.join("chrome.exe");
+        touch(&expected);
+
+        assert_eq!(find_wayfern_executable(&root), Some(expected));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_a_bare_unrelated_chrome_executable() {
+        let root = test_dir("bare-chrome");
+        touch(&root.join("chrome.exe"));
+        touch(&root.join("chrome_proxy.exe"));
+
+        assert_eq!(find_wayfern_executable(&root), None);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn complete_cached_zip_extracts_the_official_chromium_layout() {
+        let root = test_dir("cached-zip");
+        let archive = root.join("wayfern.zip.part");
+        let file = File::create(&archive).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        for name in [
+            "wayfern_windows_x64/chrome.exe",
+            "wayfern_windows_x64/chrome.dll",
+            "wayfern_windows_x64/resources.pak",
+            "wayfern_windows_x64/icudtl.dat",
+            "wayfern_windows_x64/chrome_proxy.exe",
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"test payload").unwrap();
+        }
+        zip.finish().unwrap();
+
+        assert!(is_complete_zip(&archive));
+        let destination = root.join("extracted");
+        let executable = extract_portable_zip(&archive, &destination).unwrap();
+        assert_eq!(
+            executable,
+            destination.join("wayfern_windows_x64").join("chrome.exe")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn prefers_a_named_wayfern_launcher_over_chrome_fallback() {
+        let root = test_dir("launcher-priority");
+        let chrome = root.join("chrome.exe");
+        let expected = root.join("nested").join("wayfern.exe");
+        touch(&chrome);
+        touch(&expected);
+
+        assert_eq!(find_wayfern_executable(&root), Some(expected));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn installed_metadata_recognizes_the_official_chrome_launcher() {
+        let dir = test_dir("installed-metadata");
+        let root = wayfern_root(&dir);
+        let relative = PathBuf::from("versions")
+            .join("149.0.7827.116")
+            .join("wayfern_windows_x64")
+            .join("chrome.exe");
+        touch(&root.join(&relative));
+        fs::write(
+            installed_metadata_path(&dir),
+            serde_json::to_vec(&InstalledWayfern {
+                version: "149.0.7827.116".to_string(),
+                executable: relative.to_string_lossy().into_owned(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let (metadata, executable) = read_installed(&dir).expect("installation must be detected");
+        assert_eq!(metadata.version, "149.0.7827.116");
+        assert_eq!(executable, root.join(relative));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

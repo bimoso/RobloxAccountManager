@@ -35,6 +35,8 @@ export type LaunchTab = 'home' | 'place' | 'player' | 'private';
 export interface LaunchInputs {
   /** Place tab: a numeric place id or a game url (`/games/<id>/...`). */
   place: string;
+  /** Place tab: optional Roblox public-server instance identifier. */
+  jobId: string;
   /** Private tab: a private-server link (`...?privateServerLinkCode=...`). */
   privateLink: string;
   /** Player tab: the user id of the player to follow. */
@@ -44,9 +46,52 @@ export interface LaunchInputs {
 /** Empty launch inputs, used to seed/reset the modal form. */
 export const EMPTY_LAUNCH_INPUTS: LaunchInputs = {
   place: '',
+  jobId: '',
   privateLink: '',
   followUserId: '',
 };
+
+/** Roblox Job IDs are opaque UUID-like tokens; whitespace is never valid. */
+const JOB_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+/** Return whether a non-empty Job ID is safe to send to the Roblox launcher. */
+export function isValidJobId(value: string): boolean {
+  const jobId = value.trim();
+  return jobId.length > 0 && jobId.length <= 128 && JOB_ID_PATTERN.test(jobId);
+}
+
+/**
+ * Extract the Place ID forms the launch backend can pair with a Job ID.
+ * A bare numeric id and the canonical `/games/<id>` URL shape are accepted.
+ */
+export function placeIdFromLaunchInput(value: string): string | undefined {
+  const place = value.trim();
+  if (/^\d+$/.test(place)) return place;
+  return place.match(/(?:^|\/)games\/(\d+)(?:[/?#]|$)/i)?.[1];
+}
+
+/**
+ * Build the Place destination, optionally targeting one exact public server.
+ * The backend already classifies a `/games/<placeId>?gameId=<jobId>` URL as a
+ * `RequestGameJob`; keeping that contract in one helper prevents UI-only
+ * string concatenation from silently launching a random server instead.
+ */
+export function buildPlaceLaunchTarget(
+  placeInput: string,
+  jobIdInput: string,
+): string | undefined {
+  const place = placeInput.trim();
+  if (!place) return undefined;
+
+  const jobId = jobIdInput.trim();
+  if (!jobId) return place;
+  if (!isValidJobId(jobId)) return undefined;
+
+  const placeId = placeIdFromLaunchInput(place);
+  if (!placeId) return undefined;
+
+  return `https://www.roblox.com/games/${placeId}?gameId=${encodeURIComponent(jobId)}`;
+}
 
 /**
  * Build the launch target string for the active destination tab and its inputs
@@ -54,8 +99,9 @@ export const EMPTY_LAUNCH_INPUTS: LaunchInputs = {
  *
  * Return contract:
  *   - `'home'`    → `''` — the empty target the backend treats as "Roblox home".
- *   - `'place'`   → the trimmed place input (a place id or game url); `''` when
- *                   nothing has been entered yet.
+ *   - `'place'`   → the trimmed place input, or a canonical game URL carrying
+ *                   `gameId` when the optional Job ID is present; `undefined`
+ *                   when the destination is incomplete or invalid.
  *   - `'private'` → the trimmed private-server link; `''` when empty.
  *   - `'player'`  → a `home?followUserId=<id>` url when a user id is present, or
  *                   `undefined` when no player has been picked yet.
@@ -76,7 +122,7 @@ export function buildLaunchTarget(
     case 'home':
       return '';
     case 'place':
-      return inputs.place.trim();
+      return buildPlaceLaunchTarget(inputs.place, inputs.jobId);
     case 'private':
       return inputs.privateLink.trim();
     case 'player': {
@@ -121,6 +167,18 @@ export interface LaunchOutcome<R> {
   error?: unknown;
 }
 
+/** Convert the backend's resolved `{ success: false, error }` into a failure. */
+function resolvedLaunchError(result: unknown): Error | undefined {
+  if (typeof result !== 'object' || result === null || !('success' in result)) return undefined;
+  const status = result as { success?: unknown; error?: unknown };
+  if (status.success !== false) return undefined;
+  const message =
+    typeof status.error === 'string' && status.error.trim()
+      ? status.error.trim()
+      : 'Roblox rechazó el lanzamiento.';
+  return new Error(message);
+}
+
 /**
  * Launch every target account at a single shared destination (Requirement 15.2;
  * Property 28).
@@ -151,6 +209,8 @@ export async function launchAccounts<R>(
     accounts.map(async (account): Promise<LaunchOutcome<R>> => {
       try {
         const result = await launch(account, target);
+        const resolvedError = resolvedLaunchError(result);
+        if (resolvedError) return { account, ok: false, error: resolvedError };
         return { account, ok: true, result };
       } catch (error) {
         return { account, ok: false, error };

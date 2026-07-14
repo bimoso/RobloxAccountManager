@@ -2434,6 +2434,38 @@ mod tests {
     }
 
     #[test]
+    fn games_url_with_any_job_id_alias_is_request_game_job() {
+        for key in ["gameId", "gameInstanceId", "jobId"] {
+            let target = format!(
+                "https://www.roblox.com/games/606849621/Jailbreak?{key}=job-abc-123"
+            );
+            assert_eq!(
+                parse_launch_target(&target).unwrap(),
+                LauncherRequest::RequestGameJob {
+                    place_id: "606849621".to_string(),
+                    game_id: "job-abc-123".to_string(),
+                },
+                "alias {key} must target the exact public server"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn exact_public_server_builds_request_game_job_launcher_url() {
+        let launcher = build_launcher_url(
+            "https://www.roblox.com/games/606849621?gameId=job-abc-123",
+            "",
+            "",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            launcher,
+            "https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGameJob&placeId=606849621&gameId=job-abc-123&isPlayTogetherGame=false"
+        );
+    }
+
+    #[test]
     fn games_url_without_scheme_gets_https_prefixed() {
         assert_eq!(
             parse_launch_target("www.roblox.com/games/606849621").unwrap(),

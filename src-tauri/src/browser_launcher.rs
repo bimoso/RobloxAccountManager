@@ -60,6 +60,7 @@ use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::cdp::browser_protocol::network::{CookieSameSite, SetCookieParams};
 use chromiumoxide::cdp::browser_protocol::page::BringToFrontParams;
 use chromiumoxide::cdp::browser_protocol::storage::GetCookiesParams;
+use chromiumoxide::{Command, Method};
 use chromiumoxide::Page;
 use futures_util::StreamExt;
 use serde::Serialize;
@@ -1769,6 +1770,55 @@ const ROBLOX_HOME_URL: &str = "https://www.roblox.com";
 /// injection flow can never hang indefinitely.
 const INJECT_NAV_TIMEOUT_MS: u64 = 30_000;
 
+/// Refuse absurd/corrupt fingerprint files before allocating an unbounded JSON
+/// payload. Real Wayfern fingerprints are comfortably below this ceiling.
+const WAYFERN_FINGERPRINT_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WayfernRefreshFingerprint {
+    operating_system: &'static str,
+}
+
+impl Method for WayfernRefreshFingerprint {
+    fn identifier(&self) -> chromiumoxide::types::MethodId {
+        "Wayfern.refreshFingerprint".into()
+    }
+}
+
+impl Command for WayfernRefreshFingerprint {
+    type Response = Value;
+}
+
+#[derive(Debug, Default, Serialize)]
+struct WayfernGetFingerprint {}
+
+impl Method for WayfernGetFingerprint {
+    fn identifier(&self) -> chromiumoxide::types::MethodId {
+        "Wayfern.getFingerprint".into()
+    }
+}
+
+impl Command for WayfernGetFingerprint {
+    type Response = Value;
+}
+
+/// Wayfern expects the fingerprint object itself as the command parameters,
+/// not `{ "fingerprint": ... }`.
+#[derive(Debug, Serialize)]
+#[serde(transparent)]
+struct WayfernSetFingerprint(Value);
+
+impl Method for WayfernSetFingerprint {
+    fn identifier(&self) -> chromiumoxide::types::MethodId {
+        "Wayfern.setFingerprint".into()
+    }
+}
+
+impl Command for WayfernSetFingerprint {
+    type Response = Value;
+}
+
 /// A successfully injected, connected Browser_Instance — the Rust form of
 /// `injectCookieAndNavigate`'s `{ ok: true, browser, page }` resolve value.
 ///
@@ -1812,7 +1862,107 @@ fn inject_error(cookie: &str, message: &str) -> String {
 /// Returns the navigated [`Page`] on success, or a raw (un-prefixed, un-redacted)
 /// error string on failure; [`inject_cookie_and_navigate`] applies the prefix and
 /// cookie-redaction.
-async fn inject_on_connection(browser: &Browser, cookie: &str) -> Result<Page, String> {
+fn fingerprint_from_response(response: Value) -> Option<Value> {
+    let fingerprint = response
+        .get("fingerprint")
+        .cloned()
+        .unwrap_or(response);
+    fingerprint
+        .as_object()
+        .is_some_and(|object| !object.is_empty())
+        .then_some(fingerprint)
+}
+
+/// The installed Wayfern build otherwise chooses a random renderer scale (the
+/// affected machine received 1.25). Rendering is forced to 1.0 at process
+/// launch; keep the JavaScript-visible fingerprint coherent with that choice.
+fn normalize_wayfern_display_scale(mut fingerprint: Value) -> Value {
+    if let Some(object) = fingerprint.as_object_mut() {
+        object.insert("devicePixelRatio".to_string(), Value::from(1));
+    }
+    fingerprint
+}
+
+async fn load_wayfern_fingerprint(path: &Path) -> Option<Value> {
+    let metadata = tokio::fs::metadata(path).await.ok()?;
+    if !metadata.is_file()
+        || metadata.len() == 0
+        || metadata.len() > WAYFERN_FINGERPRINT_MAX_BYTES
+    {
+        return None;
+    }
+    let raw = tokio::fs::read(path).await.ok()?;
+    let parsed = serde_json::from_slice(&raw).ok()?;
+    fingerprint_from_response(parsed).map(normalize_wayfern_display_scale)
+}
+
+async fn save_wayfern_fingerprint(path: &Path, fingerprint: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("could not create the fingerprint folder: {e}"))?;
+    }
+    let json = serde_json::to_vec_pretty(fingerprint)
+        .map_err(|e| format!("could not serialize the fingerprint: {e}"))?;
+    tokio::fs::write(path, json)
+        .await
+        .map_err(|e| format!("could not save the account fingerprint: {e}"))
+}
+
+async fn apply_wayfern_fingerprint(page: &Page, fingerprint: Value) -> Result<Value, String> {
+    let requested = normalize_wayfern_display_scale(fingerprint);
+    let response = page
+        .execute(WayfernSetFingerprint(requested.clone()))
+        .await
+        .map_err(|e| format!("Wayfern.setFingerprint failed: {e}"))?;
+    let echoed = fingerprint_from_response(response.result).unwrap_or(requested);
+    let applied = normalize_wayfern_display_scale(echoed.clone());
+
+    // Wayfern can upgrade an old fingerprint while applying it. If that echo
+    // also changed DPR, send the normalized upgraded object once more so the
+    // current tab and the persisted identity agree immediately.
+    if applied != echoed {
+        let response = page
+            .execute(WayfernSetFingerprint(applied.clone()))
+            .await
+            .map_err(|e| format!("Wayfern.setFingerprint scale correction failed: {e}"))?;
+        let confirmed = fingerprint_from_response(response.result).unwrap_or(applied);
+        return Ok(normalize_wayfern_display_scale(confirmed));
+    }
+
+    Ok(applied)
+}
+
+/// Generate a random fingerprint exactly once for this account, then reapply
+/// the saved identity on later launches. `setFingerprint` may upgrade an old
+/// fingerprint to the current browser schema, so its echoed value is persisted.
+async fn prepare_wayfern_fingerprint(page: &Page, path: &Path) -> Result<(), String> {
+    let fingerprint = match load_wayfern_fingerprint(path).await {
+        Some(fingerprint) => fingerprint,
+        None => {
+            page.execute(WayfernRefreshFingerprint {
+                operating_system: "windows",
+            })
+            .await
+            .map_err(|e| format!("Wayfern.refreshFingerprint failed: {e}"))?;
+            let response = page
+                .execute(WayfernGetFingerprint::default())
+                .await
+                .map_err(|e| format!("Wayfern.getFingerprint failed: {e}"))?;
+            fingerprint_from_response(response.result)
+                .ok_or_else(|| "Wayfern returned an empty fingerprint.".to_string())?
+        }
+    };
+
+    let applied = apply_wayfern_fingerprint(page, fingerprint).await?;
+    save_wayfern_fingerprint(path, &applied).await
+}
+
+async fn inject_on_connection(
+    browser: &Browser,
+    cookie: &str,
+    wayfern_fingerprint_path: Option<&Path>,
+) -> Result<Page, String> {
     // Reuse the context/tab Donut Browser already opened rather than spawning a
     // second one — the legacy JS backend's `pages.length > 0 ? pages[0] : context.newPage()`.
     let pages = browser.pages().await.map_err(|e| e.to_string())?;
@@ -1823,6 +1973,12 @@ async fn inject_on_connection(browser: &Browser, cookie: &str) -> Result<Page, S
             .await
             .map_err(|e| e.to_string())?,
     };
+
+    // Fingerprint first: the initial Roblox request and every script it loads
+    // must observe the account's stable identity from the first byte.
+    if let Some(path) = wayfern_fingerprint_path {
+        prepare_wayfern_fingerprint(&page, path).await?;
+    }
 
     // Inject the `.ROBLOSECURITY` cookie onto the Roblox website domain FIRST.
     // Scoped to `.roblox.com` so it applies across roblox.com subdomains, and
@@ -1874,6 +2030,25 @@ pub async fn inject_cookie_and_navigate(
     cdp_port: u32,
     cookie: &str,
 ) -> Result<InjectedSession, String> {
+    inject_cookie_and_navigate_inner(cdp_port, cookie, None).await
+}
+
+/// Standalone-Wayfern variant of [`inject_cookie_and_navigate`]. It generates
+/// and stores one random fingerprint per account profile, then reapplies that
+/// same identity before cookie injection on every later launch.
+pub async fn inject_wayfern_cookie_and_navigate(
+    cdp_port: u32,
+    cookie: &str,
+    fingerprint_path: &Path,
+) -> Result<InjectedSession, String> {
+    inject_cookie_and_navigate_inner(cdp_port, cookie, Some(fingerprint_path)).await
+}
+
+async fn inject_cookie_and_navigate_inner(
+    cdp_port: u32,
+    cookie: &str,
+    wayfern_fingerprint_path: Option<&Path>,
+) -> Result<InjectedSession, String> {
     // The two guard clauses mirror the legacy JS backend's `if (!cdpPort)` / `if (!cookie)`
     // early returns — returned verbatim, WITHOUT the catch-block prefix/redaction.
     if cdp_port == 0 {
@@ -1897,7 +2072,7 @@ pub async fn inject_cookie_and_navigate(
     // (setCookie, goto) ever resolves. Mirrors the login flow's handler task.
     let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
-    match inject_on_connection(&browser, cookie).await {
+    match inject_on_connection(&browser, cookie, wayfern_fingerprint_path).await {
         Ok(page) => Ok(InjectedSession {
             browser,
             page,
@@ -4710,6 +4885,61 @@ mod tests {
     }
 
     // ── login / cookie-injection sequencing (fake CDP client surface) ──────────
+
+    #[test]
+    fn wayfern_custom_cdp_commands_use_the_official_payload_shapes() {
+        let refresh = WayfernRefreshFingerprint {
+            operating_system: "windows",
+        };
+        assert_eq!(refresh.identifier(), "Wayfern.refreshFingerprint");
+        assert_eq!(serde_json::to_value(&refresh).unwrap(), json!({
+            "operatingSystem": "windows"
+        }));
+
+        let get = WayfernGetFingerprint::default();
+        assert_eq!(get.identifier(), "Wayfern.getFingerprint");
+        assert_eq!(serde_json::to_value(&get).unwrap(), json!({}));
+
+        let fingerprint = json!({ "userAgent": "account-specific", "canvasNoiseSeed": 42 });
+        let set = WayfernSetFingerprint(fingerprint.clone());
+        assert_eq!(set.identifier(), "Wayfern.setFingerprint");
+        assert_eq!(serde_json::to_value(&set).unwrap(), fingerprint);
+    }
+
+    #[test]
+    fn wayfern_fingerprint_unwraps_response_and_forces_one_x_dpr() {
+        let fingerprint = fingerprint_from_response(json!({
+            "fingerprint": {
+                "userAgent": "stable-account-agent",
+                "devicePixelRatio": 1.25
+            }
+        }))
+        .expect("wrapped Wayfern response must contain a fingerprint");
+        let normalized = normalize_wayfern_display_scale(fingerprint);
+
+        assert_eq!(normalized["userAgent"], "stable-account-agent");
+        assert_eq!(normalized["devicePixelRatio"], 1);
+        assert!(fingerprint_from_response(json!({ "fingerprint": {} })).is_none());
+    }
+
+    #[tokio::test]
+    async fn wayfern_fingerprint_round_trips_as_a_bare_stable_account_object() {
+        let dir = unique_temp_dir("wayfern_fingerprint");
+        let path = dir.join("wayfern-fingerprint.json");
+        let original = json!({
+            "userAgent": "unique-for-this-account",
+            "canvasNoiseSeed": 987654,
+            "devicePixelRatio": 1
+        });
+
+        save_wayfern_fingerprint(&path, &original).await.unwrap();
+        assert_eq!(load_wayfern_fingerprint(&path).await, Some(original.clone()));
+
+        let raw: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(raw, original);
+        assert!(raw.get("fingerprint").is_none(), "stored object must be bare");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[tokio::test]
     async fn inject_guard_rejects_zero_cdp_port_verbatim() {

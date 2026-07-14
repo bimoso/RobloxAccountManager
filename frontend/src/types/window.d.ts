@@ -55,6 +55,12 @@ export interface GameDetails {
   iconUrl?: string;
 }
 
+/** Renderer-facing result returned by the `roblox_launch` Tauri command. */
+export interface LaunchResult {
+  success: boolean;
+  error?: string;
+}
+
 /**
  * The exact `window.api` surface built by `src-tauri/preload.js`. Every member below
  * corresponds one-to-one, in order, to a member of that object.
@@ -88,7 +94,7 @@ export interface TauriApi {
   killOneRoblox: (id: string) => Promise<void>;
   getRunningCount: () => Promise<number>;
   onAllRobloxClosed: (cb: () => void) => Promise<UnlistenFn>;
-  launchRoblox: (id: string, cookie: string, target: string) => Promise<void>;
+  launchRoblox: (id: string, cookie: string, target: string) => Promise<LaunchResult>;
   openExternal: (url: string) => Promise<void>;
 
   // ── Settings_Store ──
