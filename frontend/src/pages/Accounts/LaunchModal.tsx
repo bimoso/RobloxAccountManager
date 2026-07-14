@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import type { LucideIcon } from 'lucide-react';
 import {
   Home,
+  Clock3,
   KeyRound,
   Link2,
   LoaderCircle,
@@ -10,6 +11,7 @@ import {
   RadioTower,
   Rocket,
   Server,
+  Star,
   UserRoundSearch,
   X,
 } from 'lucide-react';
@@ -18,6 +20,7 @@ import { Modal } from '@/components/Modal';
 import { ipc } from '@/lib/ipc';
 import type { Account } from '@/types/models';
 import type { GameDetails } from '@/types/window';
+import { usePlaceLibraryStore, type PlaceSeed } from '@/stores/placeLibraryStore';
 import {
   EMPTY_LAUNCH_INPUTS,
   buildLaunchTarget,
@@ -37,6 +40,8 @@ export interface LaunchModalProps {
   onLaunched?: (accountId: string) => void;
   launch?: (account: Account, target: string) => Promise<unknown>;
   fetchGameDetails?: (placeId: string, cookie: string) => Promise<GameDetails>;
+  /** Explicit destination handed off by Charts; takes precedence over account history. */
+  seed?: PlaceSeed;
 }
 
 interface DestinationTab {
@@ -97,6 +102,7 @@ export function LaunchModal({
   onLaunched,
   launch,
   fetchGameDetails,
+  seed,
 }: LaunchModalProps): JSX.Element {
   const titleId = useId();
   const tabIdPrefix = useId();
@@ -107,6 +113,10 @@ export function LaunchModal({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [libraryView, setLibraryView] = useState<'favorites' | 'recent'>('favorites');
+  const placeLibrary = usePlaceLibraryStore((state) => state.entries);
+  const toggleFavorite = usePlaceLibraryStore((state) => state.toggleFavorite);
+  const recordPlaceLaunch = usePlaceLibraryStore((state) => state.recordLaunch);
 
   const doLaunch = launch ?? ((account: Account, target: string) =>
     ipc.launchRoblox(account.id, account.cookie, target));
@@ -120,6 +130,12 @@ export function LaunchModal({
     setError(null);
     setPreview(null);
     setPreviewLoading(false);
+
+    if (seed?.placeId) {
+      setTab('place');
+      setInputs({ ...EMPTY_LAUNCH_INPUTS, place: seed.placeId });
+      return;
+    }
 
     if (accounts.length === 1) {
       const saved =
@@ -139,7 +155,7 @@ export function LaunchModal({
 
     setTab('home');
     setInputs(EMPTY_LAUNCH_INPUTS);
-  }, [open, accounts]);
+  }, [open, accounts, seed?.placeId]);
 
   useEffect(() => {
     if (!open || tab !== 'place') {
@@ -245,6 +261,15 @@ export function LaunchModal({
     const succeeded = outcomes.filter((outcome) => outcome.ok);
     succeeded.forEach((outcome) => onLaunched?.(outcome.account.id));
 
+    if (succeeded.length > 0 && tab === 'place' && placeId) {
+      recordPlaceLaunch({
+        placeId,
+        name: preview?.name || (seed?.placeId === placeId ? seed.name : undefined),
+        iconUrl: preview?.iconUrl || (seed?.placeId === placeId ? seed.iconUrl : undefined),
+        creator: preview?.creator || (seed?.placeId === placeId ? seed.creator : undefined),
+      });
+    }
+
     if (succeeded.length === outcomes.length) {
       onClose();
       return;
@@ -259,6 +284,14 @@ export function LaunchModal({
     );
     setLaunching(false);
   };
+
+  const visibleLibrary = placeLibrary
+    .filter((entry) => libraryView === 'favorites' ? entry.favorite : entry.lastLaunchedAt !== null)
+    .sort((a, b) =>
+      libraryView === 'favorites'
+        ? a.name.localeCompare(b.name)
+        : (b.lastLaunchedAt ?? 0) - (a.lastLaunchedAt ?? 0),
+    );
 
   const submit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -431,6 +464,70 @@ export function LaunchModal({
                     {jobId && !jobIdIssue && <span className="launch-modal__exact-chip"><RadioTower size={12} /> Exacto</span>}
                   </div>
                 )}
+
+                <section className="launch-modal__library" aria-label="Biblioteca de Places">
+                  <div className="launch-modal__library-head">
+                    <div>
+                      <span>Place library</span>
+                      <strong>Favoritos e historial</strong>
+                    </div>
+                    <div className="launch-modal__library-switch" role="group" aria-label="Vista de biblioteca">
+                      <button
+                        type="button"
+                        data-active={libraryView === 'favorites' || undefined}
+                        onClick={() => setLibraryView('favorites')}
+                      >
+                        <Star size={12} /> Favoritos
+                      </button>
+                      <button
+                        type="button"
+                        data-active={libraryView === 'recent' || undefined}
+                        onClick={() => setLibraryView('recent')}
+                      >
+                        <Clock3 size={12} /> Recientes
+                      </button>
+                    </div>
+                  </div>
+
+                  {visibleLibrary.length ? (
+                    <div className="launch-modal__library-rail">
+                      {visibleLibrary.map((entry) => (
+                        <div className="launch-modal__place-tile" key={entry.placeId}>
+                          <button
+                            type="button"
+                            className="launch-modal__place-pick"
+                            title={`Usar ${entry.name}`}
+                            onClick={() => {
+                              setError(null);
+                              setInputs((current) => ({ ...current, place: entry.placeId, jobId: '' }));
+                            }}
+                          >
+                            {entry.iconUrl ? <img src={entry.iconUrl} alt="" /> : <span><MapPin size={16} /></span>}
+                            <span>
+                              <strong>{entry.name}</strong>
+                              <small>{entry.placeId}{entry.launchCount ? ` · ${entry.launchCount} launch${entry.launchCount === 1 ? '' : 'es'}` : ''}</small>
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            className="launch-modal__place-star"
+                            aria-label={entry.favorite ? `Quitar ${entry.name} de favoritos` : `Añadir ${entry.name} a favoritos`}
+                            data-active={entry.favorite || undefined}
+                            onClick={() => toggleFavorite(entry)}
+                          >
+                            <Star size={13} fill={entry.favorite ? 'currentColor' : 'none'} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="launch-modal__library-empty">
+                      {libraryView === 'favorites'
+                        ? 'Guarda experiencias desde Charts o marca una reciente.'
+                        : 'Los lanzamientos correctos aparecerán aquí; el Job ID no se reutiliza.'}
+                    </p>
+                  )}
+                </section>
               </div>
             )}
 

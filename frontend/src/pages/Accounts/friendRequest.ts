@@ -48,7 +48,7 @@ export interface FriendRequestResult {
 /**
  * Summary of a completed batch friend-request run (Requirement 16.1).
  *
- * `succeeded` equals the number of accounts whose send resolved successfully,
+ * `succeeded` equals the number of accounts whose send was accepted by Roblox,
  * and `results` holds one entry per account, in input order, reporting its
  * individual outcome.
  */
@@ -104,6 +104,29 @@ function describeError(err: unknown): string {
 }
 
 /**
+ * Interpret the resolved object returned by the Rust friend-request command.
+ *
+ * The Tauri command deliberately resolves transport-successful requests as
+ * `{ ok: false, error }` when Roblox rejects the operation. Treating every
+ * resolved promise as success would therefore report rejected requests as
+ * sent. Older/injected senders that resolve without an `ok` field retain the
+ * previous success contract.
+ */
+function resolvedFailureReason(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || !('ok' in value)) {
+    return null;
+  }
+
+  const response = value as { ok?: unknown; error?: unknown };
+  if (response.ok !== false) return null;
+
+  if (typeof response.error === 'string' && response.error.trim()) {
+    return response.error.trim();
+  }
+  return 'Roblox rechazó la solicitud de amistad.';
+}
+
+/**
  * Send a friend request to a single `targetUserId` FROM each account,
  * SEQUENTIALLY (Requirement 16.1).
  *
@@ -111,11 +134,11 @@ function describeError(err: unknown): string {
  *   1. Emits a progress event, then invokes `send(cookie, targetUserId)` exactly
  *      once and awaits it before touching the next account (no overlap).
  *   2. Records a {@link FriendRequestResult} for that account — `ok: true` on a
- *      resolved send, otherwise `ok: false` with the reason — and CONTINUES with
+ *      accepted send, otherwise `ok: false` with the reason — and CONTINUES with
  *      the rest, so one account's failure never stops another.
  *
- * On completion `succeeded` equals the number of accounts whose send resolved
- * successfully, and `results` reports every account's individual outcome.
+ * On completion `succeeded` equals the number of accounts whose send was
+ * accepted, and `results` reports every account's individual outcome.
  *
  * @param targetUserId - The user id the friend request is sent to.
  * @param accounts - The accounts to send from, in order.
@@ -136,7 +159,17 @@ export async function processBatchFriendRequests(
     const account = accounts[index];
     onProgress?.({ index, total, account });
     try {
-      await send(account.cookie, targetUserId);
+      const response = await send(account.cookie, targetUserId);
+      const resolvedFailure = resolvedFailureReason(response);
+      if (resolvedFailure) {
+        results.push({
+          id: account.id,
+          label: account.label,
+          ok: false,
+          reason: resolvedFailure,
+        });
+        continue;
+      }
       results.push({ id: account.id, label: account.label, ok: true });
       succeeded += 1;
     } catch (err) {
@@ -156,15 +189,33 @@ export async function processBatchFriendRequests(
  * Normalize a raw user-id input into the digits-only form the friend-request
  * endpoint expects.
  *
- * Accepts either a bare numeric id or a full profile URL
- * (`https://www.roblox.com/users/123/profile`) and returns the first run of
- * digits found, or an empty string when none is present. Pure so the modal and
- * any test share the exact same parsing.
+ * Accepts either a positive, digits-only id or an official Roblox profile URL
+ * (`https://www.roblox.com/users/123/profile`). Arbitrary strings containing
+ * digits, non-Roblox hosts and other Roblox URL shapes are rejected instead of
+ * silently targeting the wrong account. Pure so the modal and tests share the
+ * exact same parsing.
  *
  * @param raw - The raw target-user input.
- * @returns The extracted numeric id, or `''` when the input has no digits.
+ * @returns The validated numeric id, or `''` when the input is not supported.
  */
 export function parseTargetUserId(raw: string): string {
-  const match = raw.match(/\d+/);
-  return match ? match[0] : '';
+  const candidate = raw.trim();
+  if (/^[1-9]\d*$/.test(candidate)) return candidate;
+
+  const withProtocol = /^https?:\/\//i.test(candidate)
+    ? candidate
+    : /^(?:www\.)?roblox\.com\//i.test(candidate)
+      ? `https://${candidate}`
+      : '';
+  if (!withProtocol) return '';
+
+  try {
+    const url = new URL(withProtocol);
+    const hostname = url.hostname.toLowerCase();
+    if (hostname !== 'roblox.com' && hostname !== 'www.roblox.com') return '';
+
+    return url.pathname.match(/^\/users\/([1-9]\d*)\/profile\/?$/i)?.[1] ?? '';
+  } catch {
+    return '';
+  }
 }

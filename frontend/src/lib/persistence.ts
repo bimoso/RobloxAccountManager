@@ -38,6 +38,8 @@ export const PERSISTENCE_KEYS = {
   soundProfile: 'sound-profile',
   /** Click-sound volume, 0..1 (Requirement 22.3). */
   soundVolume: 'sound-volume',
+  /** Shared favorites/recent Places used by Charts and the session launcher. */
+  placeLibrary: 'roblox-place-library-v1',
 } as const;
 
 /** A documented UI-preference key. */

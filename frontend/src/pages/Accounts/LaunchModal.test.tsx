@@ -1,8 +1,9 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComponentProps } from 'react';
 import type { Account } from '@/types/models';
+import { usePlaceLibraryStore } from '@/stores/placeLibraryStore';
 import { LaunchModal } from './LaunchModal';
 
 const account: Account = {
@@ -36,6 +37,14 @@ function renderModal(overrides: Partial<ComponentProps<typeof LaunchModal>> = {}
   return { onClose, onLaunched, launch, fetchGameDetails };
 }
 
+beforeEach(() => {
+  usePlaceLibraryStore.setState({ entries: [] });
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('LaunchModal exact Place flow', () => {
   it('shows Job ID only inside Place and keeps it optional', async () => {
     const user = userEvent.setup();
@@ -65,6 +74,13 @@ describe('LaunchModal exact Place flow', () => {
     });
     expect(onLaunched).toHaveBeenCalledWith(account.id);
     expect(onClose).toHaveBeenCalledOnce();
+    expect(usePlaceLibraryStore.getState().entries).toEqual([
+      expect.objectContaining({
+        placeId: '920587237',
+        launchCount: 1,
+        lastLaunchedAt: expect.any(Number),
+      }),
+    ]);
   });
 
   it('keeps the modal open and shows the backend error for success:false', async () => {
@@ -74,6 +90,8 @@ describe('LaunchModal exact Place flow', () => {
       error: 'La instancia solicitada ya no está disponible.',
     });
     const { onClose, onLaunched } = renderModal({ launch });
+    await user.click(screen.getByRole('tab', { name: /Place/i }));
+    await user.type(await screen.findByLabelText(/Place ID o enlace/i), '920587237');
     await user.click(screen.getByRole('button', { name: /Lanzar ahora/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -81,5 +99,33 @@ describe('LaunchModal exact Place flow', () => {
     );
     expect(onLaunched).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+    expect(usePlaceLibraryStore.getState().entries).toEqual([]);
+  });
+
+  it('selects a recent Place without recycling the previous Job ID', async () => {
+    usePlaceLibraryStore.setState({
+      entries: [
+        {
+          placeId: '456789',
+          name: 'History Place',
+          favorite: false,
+          lastLaunchedAt: 123,
+          launchCount: 2,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderModal();
+    await user.click(screen.getByRole('tab', { name: /Place/i }));
+
+    const placeInput = await screen.findByLabelText(/Place ID o enlace/i);
+    const jobInput = await screen.findByLabelText(/Job ID/i);
+    await user.type(placeInput, '111111');
+    await user.type(jobInput, 'job-from-another-server');
+    await user.click(screen.getByRole('button', { name: /Recientes/i }));
+    await user.click(screen.getByTitle('Usar History Place'));
+
+    expect(placeInput).toHaveValue('456789');
+    expect(jobInput).toHaveValue('');
   });
 });

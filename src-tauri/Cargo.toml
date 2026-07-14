@@ -106,6 +106,19 @@ chromiumoxide = "0.9"
 # available to `browser_launcher.rs` directly.
 futures-util = "0.3"
 
+# Managed Roblox deployments are streamed to disk and verified against the
+# MD5 digest published in Roblox's rbxPkgManifest before extraction.  The
+# cancellation token lets the renderer stop a long multi-package download
+# without aborting the Tauri runtime task.
+md5 = "0.7"
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[target.'cfg(windows)'.dependencies]
+# Per-user Roblox/Bloxstrap/Fishstrap discovery and explicit roblox:// /
+# roblox-player: handler switching.  Keeping this target-scoped preserves
+# non-Windows `cargo check` support.
+winreg = "0.55"
+
 [dev-dependencies]
 # Property-based testing framework used by the design's Correctness Properties
 # (each `proptest!` function runs >=100 iterations). Test-only, so it never ships

@@ -1,9 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ChartsPage from './index';
 import { fetchChartGames } from './chartsApi';
 import type { Game } from './types';
+import { ipc } from '@/lib/ipc';
+import { useLaunchIntentStore } from '@/stores/launchIntentStore';
+import { usePlaceLibraryStore } from '@/stores/placeLibraryStore';
+import { useToastStore } from '@/stores/toastStore';
 
 // The Charts page owns the impure load through `fetchChartGames`; mock that
 // boundary so we can drive a failure-then-success sequence without touching the
@@ -56,7 +60,15 @@ const DISCOVERY_GAMES: Game[] = [
   },
 ];
 
+beforeEach(() => {
+  usePlaceLibraryStore.setState({ entries: [] });
+  useLaunchIntentStore.setState({ intent: null });
+  useToastStore.getState().hideToast();
+});
+
 afterEach(() => {
+  useToastStore.getState().hideToast();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
 });
 
@@ -178,5 +190,39 @@ describe('ChartsPage discovery controls', () => {
     expect(rated).toHaveAttribute('aria-selected', 'true');
     expect(rated).toHaveAttribute('tabindex', '0');
     expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', rated.id);
+  });
+
+  it('turns a chart card into save, web-open, and account-launch actions', async () => {
+    mockedFetch.mockResolvedValueOnce(DISCOVERY_GAMES);
+    const openExternal = vi.spyOn(ipc, 'openExternal').mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(<ChartsPage />);
+
+    const card = await screen.findByRole('article', { name: /rank 1: signal peak/i });
+    await user.click(within(card).getByRole('button', { name: /save to favorites/i }));
+
+    expect(usePlaceLibraryStore.getState().entries).toEqual([
+      expect.objectContaining({
+        placeId: '11',
+        name: 'Signal Peak',
+        favorite: true,
+      }),
+    ]);
+    expect(
+      within(card).getByRole('button', { name: /remove from favorites/i }),
+    ).toBeInTheDocument();
+
+    await user.click(within(card).getByRole('button', { name: /^open$/i }));
+    expect(openExternal).toHaveBeenCalledWith('https://www.roblox.com/games/11');
+
+    await user.click(within(card).getByRole('button', { name: /^launch$/i }));
+    expect(useLaunchIntentStore.getState().intent).toEqual({
+      accountIds: [],
+      seed: {
+        placeId: '11',
+        name: 'Signal Peak',
+        iconUrl: undefined,
+      },
+    });
   });
 });

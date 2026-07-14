@@ -24,9 +24,11 @@ import {
   BarChart3,
   CircleDollarSign,
   Filter,
+  ExternalLink,
   Gamepad2,
   Radio,
   RefreshCw,
+  Rocket,
   Search,
   Star,
   TrendingUp,
@@ -38,6 +40,10 @@ import {
 import { fetchChartGames } from './chartsApi';
 import { searchGames } from './searchGames';
 import { CHART_TABS, type ChartSortId, type Game } from './types';
+import { ipc } from '@/lib/ipc';
+import { useLaunchIntentStore } from '@/stores/launchIntentStore';
+import { usePlaceLibraryStore } from '@/stores/placeLibraryStore';
+import { useToastStore } from '@/stores/toastStore';
 import './Charts.css';
 
 type LoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
@@ -105,6 +111,14 @@ export default function ChartsPage(): JSX.Element {
   >({});
   const [status, setStatus] = useState<LoadStatus>('idle');
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const placeLibrary = usePlaceLibraryStore((state) => state.entries);
+  const toggleFavorite = usePlaceLibraryStore((state) => state.toggleFavorite);
+  const openLaunch = useLaunchIntentStore((state) => state.open);
+  const showSuccess = useToastStore((state) => state.showSuccess);
+  const favoriteIds = useMemo(
+    () => new Set(placeLibrary.filter((entry) => entry.favorite).map((entry) => entry.placeId)),
+    [placeLibrary],
+  );
 
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
@@ -208,6 +222,29 @@ export default function ChartsPage(): JSX.Element {
   const clearFilters = (): void => {
     setQuery('');
     setReachFilter('all');
+  };
+
+  const placeSeed = (game: Game) => ({
+    placeId: game.placeId == null ? '' : String(game.placeId),
+    name: game.name,
+    iconUrl: game.thumbUrl || undefined,
+  });
+
+  const handleFavorite = (game: Game): void => {
+    if (!game.placeId) return;
+    const wasFavorite = favoriteIds.has(String(game.placeId));
+    toggleFavorite(placeSeed(game));
+    showSuccess(wasFavorite ? 'Experience removed from favorites.' : 'Experience saved to launcher favorites.');
+  };
+
+  const handleOpenGame = (game: Game): void => {
+    if (!game.placeId) return;
+    void ipc.openExternal(`https://www.roblox.com/games/${game.placeId}`);
+  };
+
+  const handleLaunchGame = (game: Game): void => {
+    if (!game.placeId) return;
+    openLaunch({ accountIds: [], seed: placeSeed(game) });
   };
 
   return (
@@ -374,7 +411,7 @@ export default function ChartsPage(): JSX.Element {
         role="tabpanel"
         aria-labelledby={`charts-tab-${activeTab}`}
       >
-        <AnimatePresence mode="wait" initial={false}>
+        <AnimatePresence mode="sync" initial={false}>
           {isLoading ? (
             <ChartsSkeleton key={`loading-${activeTab}`} />
           ) : isError ? (
@@ -440,6 +477,10 @@ export default function ChartsPage(): JSX.Element {
                       variant={rank === 1 ? 'leader' : 'contender'}
                       index={index}
                       reducedMotion={reducedMotion}
+                      favorite={Boolean(game.placeId && favoriteIds.has(String(game.placeId)))}
+                      onFavorite={() => handleFavorite(game)}
+                      onOpen={() => handleOpenGame(game)}
+                      onLaunch={() => handleLaunchGame(game)}
                     />
                   ))}
                 </div>
@@ -457,6 +498,10 @@ export default function ChartsPage(): JSX.Element {
                         variant="row"
                         index={index}
                         reducedMotion={reducedMotion}
+                        favorite={Boolean(game.placeId && favoriteIds.has(String(game.placeId)))}
+                        onFavorite={() => handleFavorite(game)}
+                        onOpen={() => handleOpenGame(game)}
+                        onLaunch={() => handleLaunchGame(game)}
                       />
                     ))}
                   </AnimatePresence>
@@ -477,6 +522,10 @@ interface ChartGameCardProps {
   variant: 'leader' | 'contender' | 'row';
   index: number;
   reducedMotion: boolean;
+  favorite: boolean;
+  onFavorite: () => void;
+  onOpen: () => void;
+  onLaunch: () => void;
 }
 
 function ChartGameCard({
@@ -486,6 +535,10 @@ function ChartGameCard({
   variant,
   index,
   reducedMotion,
+  favorite,
+  onFavorite,
+  onOpen,
+  onLaunch,
 }: ChartGameCardProps): JSX.Element {
   const [thumbFailed, setThumbFailed] = useState(false);
   const showThumb = Boolean(game.thumbUrl) && !thumbFailed;
@@ -550,6 +603,36 @@ function ChartGameCard({
         </div>
         <div className="chart-card__meter" aria-hidden="true">
           <span />
+        </div>
+        <div className="chart-card__actions" aria-label={`Actions for ${game.name || 'game'}`}>
+          <button
+            type="button"
+            data-active={favorite || undefined}
+            disabled={!game.placeId}
+            aria-label={favorite ? 'Remove from favorites' : 'Save to favorites'}
+            title={favorite ? 'Remove from favorites' : 'Save to launcher'}
+            onClick={onFavorite}
+          >
+            <Star size={13} fill={favorite ? 'currentColor' : 'none'} />
+            <span>{favorite ? 'Saved' : 'Save'}</span>
+          </button>
+          <button
+            type="button"
+            disabled={!game.placeId}
+            title="Open Roblox experience page"
+            onClick={onOpen}
+          >
+            <ExternalLink size={13} /><span>Open</span>
+          </button>
+          <button
+            type="button"
+            className="chart-card__launch"
+            disabled={!game.placeId}
+            title="Choose accounts and launch"
+            onClick={onLaunch}
+          >
+            <Rocket size={13} /><span>Launch</span>
+          </button>
         </div>
       </div>
     </motion.article>

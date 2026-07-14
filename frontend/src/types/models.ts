@@ -89,6 +89,10 @@ export interface Settings {
   encSetupDone: boolean | null;
   /** Browser backend used by the account "Open in browser" action. */
   browserProvider?: 'donut' | 'wayfern';
+  /** How account sessions reach the selected Roblox client. */
+  robloxLaunchMode?: 'direct' | 'protocol';
+  /** Installation id selected in the Clients control deck. */
+  robloxLaunchPresetId?: string | null;
   /** Catch-all preserving any unrecognized/legacy field on round-trip. */
   [key: string]: unknown;
 }
@@ -106,6 +110,95 @@ export interface WayfernProgress {
   downloadedBytes: number;
   totalBytes: number | null;
   percent: number | null;
+}
+
+export type RobloxLauncherKind =
+  | 'official'
+  | 'bloxstrap'
+  | 'fishstrap'
+  | 'froststrap'
+  | 'voidstrap'
+  | 'nyxstrap'
+  | 'other_bootstrapper'
+  | 'custom'
+  | 'microsoft_store';
+
+export type RobloxDetectionSource =
+  | 'uninstall_registry'
+  | 'protocol_registry'
+  | 'known_path'
+  | 'managed_deployment'
+  | 'user_preset'
+  | 'appx_registry';
+
+export interface RobloxInstallation {
+  id: string;
+  kind: RobloxLauncherKind;
+  displayName: string;
+  executable: string | null;
+  installLocation: string | null;
+  displayVersion: string | null;
+  versionGuid: string | null;
+  channel: string | null;
+  detectedBy: RobloxDetectionSource;
+  protocolCapable: boolean;
+  activeSchemes: Array<'roblox' | 'roblox-player'>;
+  handlerCommand: string | null;
+}
+
+export interface ProtocolHandlerState {
+  scheme: 'roblox' | 'roblox-player';
+  command: string | null;
+  executable: string | null;
+  arguments: string[];
+  installationId: string | null;
+}
+
+export interface RobloxProtocolState {
+  roblox: ProtocolHandlerState;
+  robloxPlayer: ProtocolHandlerState;
+  snapshotAvailable: boolean;
+}
+
+export interface RobloxRelease {
+  channel: string;
+  versionGuid: string;
+  clientVersion: string;
+  bootstrapperVersion: string | null;
+  checkedAt: number;
+}
+
+export interface RobloxDeployment {
+  id: string;
+  channel: string;
+  versionGuid: string;
+  clientVersion: string;
+  installedAt: number;
+  installLocation: string;
+  executable: string;
+  sizeBytes: number;
+  source: 'setup-aws.rbxcdn.com';
+}
+
+export type RobloxDeploymentStage =
+  | 'resolving_manifest'
+  | 'downloading'
+  | 'extracting'
+  | 'activating'
+  | 'ready'
+  | 'cancelled'
+  | 'error';
+
+export interface RobloxDeploymentProgress {
+  operationId: string;
+  stage: RobloxDeploymentStage;
+  channel: string;
+  versionGuid: string | null;
+  packageName: string | null;
+  downloadedBytes: number;
+  totalBytes: number | null;
+  percent: number | null;
+  message: string | null;
 }
 
 /** The 12 selectable themes, matching the ported legacy palettes. */

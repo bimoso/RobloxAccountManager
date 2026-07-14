@@ -5,13 +5,13 @@ import type { Account } from '@/types/models';
 import { Accounts } from './index';
 import { AddAccountModal } from './AddAccountModal';
 import { EditAccountModal } from './EditAccountModal';
-import { LaunchModal } from './LaunchModal';
 import { QuickLoginModal } from './QuickLoginModal';
 import { FriendRequestModal } from './FriendRequestModal';
 import { ChangeDisplayNameModal } from './ChangeDisplayNameModal';
 import { ChangePasswordModal } from './ChangePasswordModal';
 import { BulkNotesModal } from './BulkNotesModal';
 import type { EditFormValues } from './editAccount';
+import { useLaunchIntentStore } from '@/stores/launchIntentStore';
 
 /**
  * Wires the presentational {@link Accounts} page to the app: it resolves avatar
@@ -83,24 +83,12 @@ export function AccountsContainer(): JSX.Element {
     };
   }, [accounts]);
 
-  /** Bump the local launched indicator so the card reflects the launch at once. */
-  const markLaunched = useCallback((accountId: string): void => {
-    useAccountStore.setState((state) => ({
-      accounts: state.accounts.map((account) =>
-        account.id === accountId
-          ? { ...account, launchedInstanceCount: (account.launchedInstanceCount ?? 0) + 1 }
-          : account,
-      ),
-    }));
-  }, []);
-
   // ── Modal state ──
   const [addOpen, setAddOpen] = useState(false);
   const [editAccount, setEditAccount] = useState<Account | null>(null);
   const [quickLoginAccount, setQuickLoginAccount] = useState<Account | null>(null);
   const [displayNameAccount, setDisplayNameAccount] = useState<Account | null>(null);
   const [passwordAccount, setPasswordAccount] = useState<Account | null>(null);
-  const [launchAccounts, setLaunchAccounts] = useState<Account[]>([]);
   const [friendAccounts, setFriendAccounts] = useState<Account[]>([]);
   const [notesAccounts, setNotesAccounts] = useState<Account[]>([]);
 
@@ -131,13 +119,13 @@ export function AccountsContainer(): JSX.Element {
       <Accounts
         avatarUrls={avatarUrls}
         onAddAccount={() => setAddOpen(true)}
-        onLaunch={(account) => setLaunchAccounts([account])}
+        onLaunch={(account) => useLaunchIntentStore.getState().open({ accountIds: [account.id] })}
         onEdit={(account) => setEditAccount(account)}
         onQuickLogin={(account) => setQuickLoginAccount(account)}
         onFriendRequest={(account) => setFriendAccounts([account])}
         onChangeDisplayName={(account) => setDisplayNameAccount(account)}
         onChangePassword={(account) => setPasswordAccount(account)}
-        onLaunchSelected={(selected) => setLaunchAccounts(selected)}
+        onLaunchSelected={(selected) => useLaunchIntentStore.getState().open({ accountIds: selected.map((account) => account.id) })}
         onKillSelected={handleKillSelected}
         onFriendRequestSelected={(selected) => setFriendAccounts(selected)}
         onNotesSelected={(selected) => setNotesAccounts(selected)}
@@ -152,13 +140,6 @@ export function AccountsContainer(): JSX.Element {
         account={editAccount}
         onClose={() => setEditAccount(null)}
         onSave={handleSaveEdit}
-      />
-
-      <LaunchModal
-        open={launchAccounts.length > 0}
-        accounts={launchAccounts}
-        onClose={() => setLaunchAccounts([])}
-        onLaunched={markLaunched}
       />
 
       <QuickLoginModal

@@ -303,8 +303,177 @@
 
 .launch-modal__place-intro,
 .launch-modal__preview,
-.launch-modal__field-error {
+.launch-modal__field-error,
+.launch-modal__library {
   grid-column: 1 / -1;
+}
+
+.launch-modal__library {
+  min-width: 0;
+  margin-top: 1px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--bd) 74%, transparent);
+}
+
+.launch-modal__library-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.launch-modal__library-head > div:first-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.launch-modal__library-head > div:first-child > span {
+  color: var(--acB, var(--ac));
+  font-family: var(--mono, 'JetBrains Mono', monospace);
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.launch-modal__library-head strong {
+  color: var(--t2);
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.launch-modal__library-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--bd);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--s1) 58%, transparent);
+}
+
+.launch-modal__library-switch button {
+  display: inline-flex;
+  height: 27px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--t3);
+  font: inherit;
+  font-size: 8.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.launch-modal__library-switch button[data-active] {
+  border-color: color-mix(in srgb, var(--ac) 28%, var(--bd));
+  background: color-mix(in srgb, var(--ac) 9%, var(--s3));
+  color: color-mix(in srgb, var(--ac) 72%, white);
+}
+
+.launch-modal__library-rail {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding: 1px 1px 5px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--s4) transparent;
+}
+
+.launch-modal__place-tile {
+  display: grid;
+  min-width: 210px;
+  max-width: 245px;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--s1) 54%, transparent);
+  transition: border-color 150ms ease, transform 170ms var(--spring);
+}
+
+.launch-modal__place-tile:hover {
+  border-color: color-mix(in srgb, var(--ac) 32%, var(--bd2));
+  transform: translateY(-1px);
+}
+
+.launch-modal__place-pick {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--t2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.launch-modal__place-pick > img,
+.launch-modal__place-pick > span:first-child {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  background: var(--s3);
+  color: var(--acB, var(--ac));
+  object-fit: cover;
+}
+
+.launch-modal__place-pick > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.launch-modal__place-pick strong,
+.launch-modal__place-pick small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-modal__place-pick strong { color: var(--t1); font-size: 9.5px; }
+.launch-modal__place-pick small { color: var(--t3); font-family: var(--mono, 'JetBrains Mono', monospace); font-size: 7px; }
+
+.launch-modal__place-star {
+  display: grid;
+  width: 28px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid var(--bd);
+  background: transparent;
+  color: var(--t3);
+  cursor: pointer;
+}
+
+.launch-modal__place-star:hover,
+.launch-modal__place-star[data-active] {
+  background: color-mix(in srgb, var(--ac) 7%, transparent);
+  color: color-mix(in srgb, var(--ac) 74%, white);
+}
+
+.launch-modal__library-empty {
+  margin: 0;
+  padding: 12px;
+  border: 1px dashed color-mix(in srgb, var(--bd) 82%, transparent);
+  border-radius: 9px;
+  color: var(--t3);
+  font-size: 8.5px;
+  text-align: center;
 }
 
 .launch-modal__panel-intro {
@@ -625,7 +794,8 @@ body.light .launch-modal__tabs {
 
   .launch-modal__place-intro,
   .launch-modal__preview,
-  .launch-modal__field-error {
+  .launch-modal__field-error,
+  .launch-modal__library {
     grid-column: auto;
   }
 
@@ -656,7 +826,8 @@ body.light .launch-modal__tabs {
 
   .launch-modal__tab,
   .launch-modal__close,
-  .launch-modal__input-shell {
+  .launch-modal__input-shell,
+  .launch-modal__place-tile {
     transition-duration: 0.01ms;
   }
 }

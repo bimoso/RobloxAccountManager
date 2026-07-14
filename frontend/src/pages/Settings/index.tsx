@@ -49,6 +49,7 @@ import {
   Trash2,
   Volume2,
   Zap,
+  Boxes,
   type LucideIcon,
 } from 'lucide-react';
 import { Button } from '@/components/Button';
@@ -62,14 +63,16 @@ import { donutTokenStatus, donutTokenStatusLabel, type DonutTokenStatus } from '
 import { ThemesTab } from './ThemesTab';
 import { SoundsTab } from './SoundsTab';
 import { MixerTab } from './MixerTab';
+import { ClientsTab } from './ClientsTab';
 import type { WayfernProgress, WayfernStatus } from '@/types/models';
 import './Settings.css';
 
 /** Settings owns local configuration, including the former standalone Mixer. */
-export type SettingsTab = 'general' | 'mixer' | 'themes' | 'sounds';
+export type SettingsTab = 'general' | 'clients' | 'mixer' | 'themes' | 'sounds';
 
 const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string; icon: LucideIcon }> = [
   { id: 'general', label: 'General', icon: SlidersHorizontal },
+  { id: 'clients', label: 'Clients', icon: Boxes },
   { id: 'mixer', label: 'Mixer', icon: AudioWaveform },
   { id: 'themes', label: 'Themes', icon: Palette },
   { id: 'sounds', label: 'Sounds', icon: Volume2 },
@@ -173,6 +176,7 @@ export function Settings(): JSX.Element {
             : { duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
         >
           {activeTab === 'general' && <GeneralTab />}
+          {activeTab === 'clients' && <ClientsTab />}
           {activeTab === 'mixer' && <MixerTab />}
           {activeTab === 'themes' && <ThemesTab />}
           {activeTab === 'sounds' && <SoundsTab />}

@@ -20,6 +20,23 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+/// How launches initiated by this application reach the selected Roblox
+/// client. `Direct` preserves the existing multi-instance path; `Protocol`
+/// delegates the completed `roblox-player:` URI to Windows' active handler.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RobloxLaunchMode {
+    #[default]
+    Direct,
+    Protocol,
+}
+
+impl RobloxLaunchMode {
+    fn is_direct(value: &Self) -> bool {
+        matches!(value, Self::Direct)
+    }
+}
+
 /// A single saved Roblox account, as persisted in the Account_Store
 /// (`accounts.json`).
 ///
@@ -108,6 +125,19 @@ pub struct Settings {
     pub master_volume: Option<f64>,
     #[serde(rename = "encSetupDone")]
     pub enc_setup_done: Option<bool>,
+    /// Stable installation id selected in the Clients settings surface.
+    #[serde(
+        rename = "robloxLaunchPresetId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub roblox_launch_preset_id: Option<String>,
+    /// Whether account launches spawn the preset directly or use the active
+    /// Windows `roblox-player:` protocol handler.
+    #[serde(
+        rename = "robloxLaunchMode",
+        skip_serializing_if = "RobloxLaunchMode::is_direct"
+    )]
+    pub roblox_launch_mode: RobloxLaunchMode,
     /// Catch-all preserving any unrecognized/legacy field on round-trip.
     #[serde(flatten)]
     pub extra: Map<String, Value>,

@@ -16,6 +16,11 @@ import type {
   GenHistoryEntry,
   WayfernProgress,
   WayfernStatus,
+  RobloxInstallation,
+  RobloxProtocolState,
+  RobloxRelease,
+  RobloxDeployment,
+  RobloxDeploymentProgress,
 } from './models';
 
 /** Handle returned by an event subscription; call it to unsubscribe (Tauri's `UnlistenFn`). */
@@ -96,6 +101,23 @@ export interface TauriApi {
   onAllRobloxClosed: (cb: () => void) => Promise<UnlistenFn>;
   launchRoblox: (id: string, cookie: string, target: string) => Promise<LaunchResult>;
   openExternal: (url: string) => Promise<void>;
+  scanRobloxInstallations: () => Promise<RobloxInstallation[]>;
+  addRobloxCustomPreset: (path: string, displayName?: string | null) => Promise<RobloxInstallation>;
+  removeRobloxCustomPreset: (installationId: string) => Promise<boolean>;
+  getRobloxProtocolState: () => Promise<RobloxProtocolState>;
+  activateRobloxProtocol: (installationId: string) => Promise<RobloxProtocolState>;
+  restoreRobloxProtocol: () => Promise<RobloxProtocolState>;
+  getLatestRobloxRelease: (channel?: string | null) => Promise<RobloxRelease>;
+  listRobloxDeployments: () => Promise<RobloxDeployment[]>;
+  installRobloxDeployment: (
+    operationId: string,
+    channel?: string | null,
+    versionGuid?: string | null,
+  ) => Promise<RobloxDeployment>;
+  cancelRobloxDeployment: (operationId: string) => Promise<boolean>;
+  onRobloxDeploymentProgress: (
+    cb: (payload: RobloxDeploymentProgress) => void,
+  ) => Promise<UnlistenFn>;
 
   // ── Settings_Store ──
   loadSettings: () => Promise<Settings>;

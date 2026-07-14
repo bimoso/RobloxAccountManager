@@ -95,6 +95,31 @@
     launchRoblox: (id, cookie, target) =>
       invoke('roblox_launch', { accountId: id, cookie, target }),
     openExternal: (url) => invoke('open_external', { url }),
+    scanRobloxInstallations: () => invoke('roblox_installations_scan'),
+    addRobloxCustomPreset: (path, displayName) =>
+      invoke('roblox_custom_preset_add', {
+        path,
+        displayName: displayName == null ? null : displayName,
+      }),
+    removeRobloxCustomPreset: (installationId) =>
+      invoke('roblox_custom_preset_remove', { installationId }),
+    getRobloxProtocolState: () => invoke('roblox_protocol_state'),
+    activateRobloxProtocol: (installationId) =>
+      invoke('roblox_protocol_activate', { installationId }),
+    restoreRobloxProtocol: () => invoke('roblox_protocol_restore'),
+    getLatestRobloxRelease: (channel) =>
+      invoke('roblox_release_latest', { channel: channel == null ? null : channel }),
+    listRobloxDeployments: () => invoke('roblox_deployments_list'),
+    installRobloxDeployment: (operationId, channel, versionGuid) =>
+      invoke('roblox_deployment_install', {
+        operationId,
+        channel: channel == null ? null : channel,
+        versionGuid: versionGuid == null ? null : versionGuid,
+      }),
+    cancelRobloxDeployment: (operationId) =>
+      invoke('roblox_deployment_cancel', { operationId }),
+    onRobloxDeploymentProgress: (cb) =>
+      on('roblox://deployment-progress', (e) => cb(e.payload)),
 
     // ── Settings_Store ──
     loadSettings: () => invoke('settings_load'),

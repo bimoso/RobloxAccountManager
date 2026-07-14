@@ -1932,12 +1932,20 @@ fn build_roblox_uri(ticket: &str, launcher_url: &str) -> String {
 /// URI handler that would fold the launch into an existing instance.
 #[cfg(windows)]
 fn spawn_roblox_player(exe: &std::path::Path, uri: &str) -> Option<u32> {
+    spawn_detached_command(exe, &[uri.to_string()])
+}
+
+/// Spawn either RobloxPlayerBeta itself or a selected bootstrapper without
+/// inheriting this application's stdio. The caller decides whether the returned
+/// PID belongs to the Roblox player (direct client) or merely to a bootstrapper.
+#[cfg(windows)]
+fn spawn_detached_command(exe: &std::path::Path, arguments: &[String]) -> Option<u32> {
     use std::os::windows::process::CommandExt;
     /// `DETACHED_PROCESS`: the new client runs independently of this backend
     /// (legacy JS runtime's `detached: true` + `child.unref()`).
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     std::process::Command::new(exe)
-        .arg(uri)
+        .args(arguments)
         .creation_flags(DETACHED_PROCESS)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -1949,6 +1957,11 @@ fn spawn_roblox_player(exe: &std::path::Path, uri: &str) -> Option<u32> {
 
 #[cfg(not(windows))]
 fn spawn_roblox_player(_exe: &std::path::Path, _uri: &str) -> Option<u32> {
+    None
+}
+
+#[cfg(not(windows))]
+fn spawn_detached_command(_exe: &std::path::Path, _arguments: &[String]) -> Option<u32> {
     None
 }
 
@@ -2090,22 +2103,39 @@ async fn do_launch(
     // (4) Build the roblox-player: URI.
     let roblox_uri = build_roblox_uri(&creds.ticket, &launcher_url);
 
-    // (5) Spawn RobloxPlayerBeta.exe directly (bypassing the singleton URI
-    //     handler), or fall back to the OS protocol handler if the exe is absent.
-    let exe = crate::settings::latest_roblox_version_dir()
-        .map(|dir| dir.join("RobloxPlayerBeta.exe"))
-        .filter(|exe| exe.exists());
-
-    if let Some(exe) = exe {
-        if let Some(pid) = spawn_roblox_player(&exe, &roblox_uri) {
-            state
-                .account_pids
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .insert(account_id.to_string(), pid);
+    // (5) Respect the selected client preset. Direct official/custom clients
+    //     are tracked by their spawned PID; bootstrapper PIDs are deliberately
+    //     not recorded because Fishstrap/Bloxstrap subsequently create a
+    //     different RobloxPlayerBeta process. Protocol mode delegates to the
+    //     active Windows handler.
+    let launch_plan = crate::accounts::store_dir(app)
+        .ok()
+        .map(|dir| crate::roblox_installations::resolve_launch_plan(&dir, &roblox_uri))
+        .unwrap_or(crate::roblox_installations::RobloxLaunchPlan::Protocol);
+    match launch_plan {
+        crate::roblox_installations::RobloxLaunchPlan::Protocol => {
+            open_external_uri(&roblox_uri);
         }
-    } else {
-        open_external_uri(&roblox_uri);
+        crate::roblox_installations::RobloxLaunchPlan::Command {
+            executable,
+            arguments,
+            tracks_player,
+        } => {
+            let spawned = if arguments.len() == 1 && tracks_player {
+                spawn_roblox_player(&executable, &arguments[0])
+            } else {
+                spawn_detached_command(&executable, &arguments)
+            };
+            if tracks_player {
+                if let Some(pid) = spawned {
+                    state
+                        .account_pids
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(account_id.to_string(), pid);
+                }
+            }
+        }
     }
 
     // (6) Success bookkeeping (mirrors the tail of `_doLaunch`).

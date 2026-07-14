@@ -23,7 +23,7 @@
 
 import { reportIpcError } from '../stores/toastStore';
 import type { ChromeDownloadProgress, TauriApi } from '../types/window';
-import type { Account, GenHistoryEntry, Package, Settings, WayfernProgress } from '../types/models';
+import type { Account, GenHistoryEntry, Package, Settings, WayfernProgress, RobloxDeploymentProgress } from '../types/models';
 
 /**
  * Generic delegating call to a `window.api` member.
@@ -105,6 +105,27 @@ export const ipc = {
   launchRoblox: (id: string, cookie: string, target: string) =>
     call('launchRoblox', [id, cookie, target], true),
   openExternal: (url: string) => call('openExternal', [url], true),
+  scanRobloxInstallations: () => call('scanRobloxInstallations', [], false),
+  addRobloxCustomPreset: (path: string, displayName?: string | null) =>
+    call('addRobloxCustomPreset', [path, displayName], true),
+  removeRobloxCustomPreset: (installationId: string) =>
+    call('removeRobloxCustomPreset', [installationId], true),
+  getRobloxProtocolState: () => call('getRobloxProtocolState', [], false),
+  activateRobloxProtocol: (installationId: string) =>
+    call('activateRobloxProtocol', [installationId], true),
+  restoreRobloxProtocol: () => call('restoreRobloxProtocol', [], true),
+  getLatestRobloxRelease: (channel?: string | null) =>
+    call('getLatestRobloxRelease', [channel], false),
+  listRobloxDeployments: () => call('listRobloxDeployments', [], false),
+  installRobloxDeployment: (
+    operationId: string,
+    channel?: string | null,
+    versionGuid?: string | null,
+  ) => call('installRobloxDeployment', [operationId, channel, versionGuid], true),
+  cancelRobloxDeployment: (operationId: string) =>
+    call('cancelRobloxDeployment', [operationId], true),
+  onRobloxDeploymentProgress: (cb: (payload: RobloxDeploymentProgress) => void) =>
+    call('onRobloxDeploymentProgress', [cb], false),
 
   // ── Settings_Store ──
   loadSettings: () => call('loadSettings', [], true),

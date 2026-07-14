@@ -767,6 +767,66 @@
   box-shadow: 0 0 8px color-mix(in srgb, var(--ac) 36%, transparent);
 }
 
+.chart-card__actions {
+  display: flex;
+  min-width: 0;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding-top: 1px;
+}
+
+.chart-card__actions button {
+  display: inline-flex;
+  height: 26px;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--bd) 88%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--s1) 58%, transparent);
+  color: var(--t3);
+  font: inherit;
+  font-size: 8px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease, transform 160ms var(--spring);
+}
+
+.chart-card__actions button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--ac) 38%, var(--bd));
+  background: color-mix(in srgb, var(--ac) 8%, var(--s3));
+  color: var(--t1);
+  transform: translateY(-1px);
+}
+
+.chart-card__actions button[data-active] {
+  color: color-mix(in srgb, var(--ac) 74%, white);
+}
+
+.chart-card__actions .chart-card__launch {
+  border-color: color-mix(in srgb, var(--ac) 34%, var(--bd));
+  background: color-mix(in srgb, var(--ac) 11%, var(--s3));
+  color: color-mix(in srgb, var(--ac) 74%, white);
+}
+
+.chart-card__actions button:disabled {
+  cursor: not-allowed;
+  opacity: .35;
+}
+
+.chart-card--row .chart-card__actions button span {
+  display: none;
+}
+
+.chart-card__actions button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring, var(--ac2));
+}
+
 /* ── Loading / empty / failure states ───────────────────────────────── */
 .charts-skeleton {
   min-height: 100%;
@@ -1037,6 +1097,7 @@ body.light .chart-card {
 
   .chart-card,
   .chart-card__visual img,
+  .chart-card__actions button,
   .charts-search,
   .charts-tab-btn,
   .charts-reach button,

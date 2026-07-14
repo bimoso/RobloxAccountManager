@@ -37,6 +37,7 @@ import { useEffect } from 'react';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
 import { PageRouter } from './components/PageRouter';
+import { LaunchModalHost } from './components/LaunchModalHost';
 import { EncryptionGate } from './components/EncryptionGate';
 import { Toast } from './components/Toast';
 import { useEncryptionGateStore } from './stores/encryptionGateStore';
@@ -143,6 +144,8 @@ export default function App(): JSX.Element {
           {accessGranted ? <PageRouter /> : null}
         </main>
       </div>
+
+      {accessGranted ? <LaunchModalHost /> : null}
 
       {/* The Encryption_Gate modal overlays and blocks the entire app while it
           is open; it renders nothing once access is granted (Req 7.2–7.4). */}

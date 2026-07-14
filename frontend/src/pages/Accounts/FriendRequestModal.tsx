@@ -1,4 +1,15 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import {
+  AtSign,
+  CheckCircle2,
+  LoaderCircle,
+  Send,
+  UserRoundPlus,
+  UsersRound,
+  X,
+  XCircle,
+} from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { ipc } from '@/lib/ipc';
@@ -11,102 +22,18 @@ import {
   type FriendRequestSender,
   type FriendRequestSummary,
 } from './friendRequest';
+import './FriendRequestModal.css';
 
-/**
- * Props for {@link FriendRequestModal}.
- *
- * The modal sends a friend request to a single target user id FROM one or more
- * selected accounts (Requirement 16.1). The sequential batch loop is delegated
- * to the pure {@link processBatchFriendRequests}; each send is wired to
- * `ipc.sendFriendRequest(cookie, targetUserId)`. Any per-account failure is
- * reported inline (Requirements 16.1, 16.5) without stopping the rest.
- */
+/** Props for the themed batch friend-request flow. */
 export interface FriendRequestModalProps {
-  /** Whether the modal is open. */
   open: boolean;
-  /**
-   * The accounts to send friend requests from. May be a single account or a
-   * batch selection; when empty the modal renders closed regardless of
-   * {@link open}.
-   */
   accounts: Account[];
-  /** Called when the user dismisses the modal. */
   onClose: () => void;
+  /** Test/composition seam; production delegates to the typed IPC bridge. */
+  sendRequest?: (cookie: string, targetUserId: string) => Promise<unknown> | unknown;
 }
 
-const bodyStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
-  minWidth: '340px',
-  maxWidth: '440px',
-};
-
-const titleStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '17px',
-  color: 'var(--t1)',
-};
-
-const labelStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '4px',
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
-
-const inputStyle: CSSProperties = {
-  padding: '8px 10px',
-  borderRadius: '8px',
-  border: '1px solid var(--border)',
-  background: 'var(--bg2)',
-  color: 'var(--t1)',
-  fontSize: '14px',
-};
-
-const hintStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
-
-const footerStyle: CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: '8px',
-  marginTop: '4px',
-};
-
-const progressTrackStyle: CSSProperties = {
-  height: '8px',
-  borderRadius: '999px',
-  background: 'var(--bg2)',
-  overflow: 'hidden',
-};
-
-const progressFillStyle = (percent: number): CSSProperties => ({
-  height: '100%',
-  width: `${Math.max(0, Math.min(100, percent))}%`,
-  background: 'var(--accent, #5b8def)',
-  transition: 'width 120ms linear',
-});
-
-const resultListStyle: CSSProperties = {
-  margin: 0,
-  paddingLeft: '18px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '2px',
-  fontSize: '13px',
-  maxHeight: '180px',
-  overflowY: 'auto',
-};
-
-const okResultStyle: CSSProperties = { color: 'var(--t2)' };
-const failResultStyle: CSSProperties = { color: 'var(--danger, #e5484d)' };
-
-/** Build the injected sender list from the selected accounts. */
+/** Build the dependency-free sender list from the selected accounts. */
 function toSenders(accounts: Account[]): FriendRequestSender[] {
   return accounts.map((account) => ({
     id: account.id,
@@ -115,28 +42,29 @@ function toSenders(accounts: Account[]): FriendRequestSender[] {
   }));
 }
 
+function senderInitial(account: Account): string {
+  return Array.from(displayName(account).trim())[0]?.toLocaleUpperCase() ?? '?';
+}
+
 /**
- * Batch friend-request modal (Requirement 16.1).
- *
- * The user enters a single target user id (a bare id or a profile URL, parsed
- * by {@link parseTargetUserId}); on submit the modal sends a friend request to
- * that user FROM each selected account by invoking
- * `ipc.sendFriendRequest(cookie, targetUserId)` once per account through the
- * pure {@link processBatchFriendRequests} loop. The individual outcome of every
- * send is reported inline (Requirements 16.1, 16.5). The form resets each time
- * the modal opens.
+ * Send a friend request from one or more selected accounts to one validated
+ * Roblox profile. The visual language mirrors the control-deck launcher while
+ * keeping the operation legible as a source-to-target dispatch rather than a
+ * generic form dropped inside the base modal.
  */
 export function FriendRequestModal({
   open,
   accounts,
   onClose,
+  sendRequest,
 }: FriendRequestModalProps): JSX.Element {
   const titleId = useId();
+  const targetId = useId();
+  const targetErrorId = useId();
+  const reducedMotion = useReducedMotion() ?? false;
   const [targetInput, setTargetInput] = useState('');
   const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<FriendRequestProgressEvent | null>(
-    null,
-  );
+  const [progress, setProgress] = useState<FriendRequestProgressEvent | null>(null);
   const [summary, setSummary] = useState<FriendRequestSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -149,23 +77,43 @@ export function FriendRequestModal({
     setError(null);
   }, [open]);
 
-  const submit = async (): Promise<void> => {
+  const count = accounts.length;
+  const parsedTarget = parseTargetUserId(targetInput);
+  const currentPosition = progress ? progress.index + 1 : 0;
+  const progressPercent = progress?.total
+    ? (currentPosition / progress.total) * 100
+    : 0;
+  const send = sendRequest ?? ((cookie: string, id: string) => ipc.sendFriendRequest(cookie, id));
+
+  const requestClose = (): void => {
+    if (!running) onClose();
+  };
+
+  const handleTargetChange = (value: string): void => {
+    setTargetInput(value);
+    setError(null);
+    setSummary(null);
+  };
+
+  const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault();
     const targetUserId = parseTargetUserId(targetInput);
     if (!targetUserId) {
-      setError('Introduce un ID de usuario o enlace de perfil válido.');
+      setError('Escribe un User ID o pega un perfil oficial de Roblox.');
       return;
     }
+
     const senders = toSenders(accounts);
     if (senders.length === 0) return;
 
     setError(null);
     setSummary(null);
+    setProgress(null);
     setRunning(true);
-    setProgress({ index: 0, total: senders.length, account: senders[0] });
 
     const result = await processBatchFriendRequests(targetUserId, senders, {
-      send: (cookie, id) => ipc.sendFriendRequest(cookie, id),
-      onProgress: (event) => setProgress(event),
+      send,
+      onProgress: setProgress,
     });
 
     setProgress(null);
@@ -173,82 +121,240 @@ export function FriendRequestModal({
     setRunning(false);
   };
 
-  const count = accounts.length;
+  const summaryTone = summary
+    ? summary.succeeded === summary.total
+      ? 'success'
+      : summary.succeeded === 0
+        ? 'error'
+        : 'mixed'
+    : undefined;
 
   return (
-    <Modal open={open && count > 0} onClose={onClose} titleId={titleId}>
-      <div style={bodyStyle}>
-        <h2 id={titleId} style={titleStyle}>
-          Enviar solicitud de amistad
-        </h2>
-
-        <p style={hintStyle}>
-          {count === 1
-            ? `Se enviará desde ${displayName(accounts[0])}.`
-            : `Se enviará desde ${count} cuentas.`}
-        </p>
-
-        <label style={labelStyle}>
-          Usuario destino (ID o enlace de perfil)
-          <input
-            style={inputStyle}
-            type="text"
-            value={targetInput}
-            placeholder="p. ej. 123456789"
-            onChange={(event) => setTargetInput(event.target.value)}
-            disabled={running}
-          />
-        </label>
-
-        {running && progress && (
-          <>
-            <div style={progressTrackStyle} aria-hidden="true">
-              <div
-                style={progressFillStyle(
-                  progress.total > 0
-                    ? (progress.index / progress.total) * 100
-                    : 0,
-                )}
-              />
-            </div>
-            <p style={hintStyle}>
-              {`Enviando desde ${progress.account.label} (${progress.index + 1} de ${progress.total})…`}
-            </p>
-          </>
-        )}
-
-        {summary && (
-          <div style={labelStyle}>
-            <p style={hintStyle}>
-              {`Se enviaron ${summary.succeeded} de ${summary.total} solicitudes.`}
-            </p>
-            <ul style={resultListStyle}>
-              {summary.results.map((res) => (
-                <li key={res.id} style={res.ok ? okResultStyle : failResultStyle}>
-                  {res.ok
-                    ? `${res.label}: enviada.`
-                    : `${res.label}: ${res.reason ?? 'error'}`}
-                </li>
-              ))}
-            </ul>
+    <Modal open={open && count > 0} onClose={requestClose} titleId={titleId}>
+      <form className="friend-request-modal" onSubmit={(event) => void submit(event)}>
+        <header className="friend-request-modal__header">
+          <div className="friend-request-modal__beacon" aria-hidden="true">
+            <span />
+            <UserRoundPlus size={21} strokeWidth={2} />
           </div>
-        )}
-
-        {error && <p style={failResultStyle}>{error}</p>}
-
-        <div style={footerStyle}>
-          <Button variant="secondary" onClick={onClose} disabled={running}>
-            {summary ? 'Cerrar' : 'Cancelar'}
-          </Button>
-          <Button
-            variant="primary"
-            onClick={() => void submit()}
-            disabled={running || targetInput.trim().length === 0}
+          <div className="friend-request-modal__heading">
+            <span className="friend-request-modal__eyebrow">Social dispatch / Roblox</span>
+            <h2 id={titleId}>Enviar solicitud</h2>
+            <p>
+              {count === 1
+                ? `Desde ${displayName(accounts[0])}`
+                : `Desde ${count} cuentas seleccionadas`}
+            </p>
+          </div>
+          <button
+            className="friend-request-modal__close"
+            type="button"
+            aria-label="Cerrar"
+            disabled={running}
+            onClick={requestClose}
           >
-            {running ? 'Enviando…' : 'Enviar solicitud'}
-          </Button>
+            <X size={17} />
+          </button>
+        </header>
+
+        <div className="friend-request-modal__body">
+          <section className="friend-request-route" aria-label="Ruta de la solicitud">
+            <div className="friend-request-route__node friend-request-route__node--source">
+              <div className="friend-request-route__avatars" aria-hidden="true">
+                {accounts.slice(0, 3).map((account) => (
+                  <span key={account.id} title={displayName(account)}>
+                    {senderInitial(account)}
+                  </span>
+                ))}
+                {count > 3 ? <span>+{count - 3}</span> : null}
+              </div>
+              <span>
+                <small>{count === 1 ? 'Cuenta origen' : 'Cuentas origen'}</small>
+                <strong>{count === 1 ? displayName(accounts[0]) : `${count} remitentes`}</strong>
+              </span>
+            </div>
+
+            <div className="friend-request-route__connector" data-running={running || undefined} aria-hidden="true">
+              <span className="friend-request-route__line" />
+              <AnimatePresence>
+                {running ? (
+                  <motion.span
+                    className="friend-request-route__pulse"
+                    initial={{ opacity: 0, x: '-120%' }}
+                    animate={
+                      reducedMotion
+                        ? { opacity: 0.7, x: '90%' }
+                        : { opacity: [0, 1, 0], x: ['-120%', '330%'] }
+                    }
+                    exit={{ opacity: 0 }}
+                    transition={
+                      reducedMotion
+                        ? { duration: 0 }
+                        : { duration: 1.35, ease: 'easeInOut', repeat: Infinity }
+                    }
+                  />
+                ) : null}
+              </AnimatePresence>
+              <span className="friend-request-route__send"><Send size={13} /></span>
+            </div>
+
+            <div className="friend-request-route__node friend-request-route__node--target">
+              <span className="friend-request-route__target-icon" aria-hidden="true">
+                <AtSign size={17} />
+              </span>
+              <span>
+                <small>Perfil destino</small>
+                <strong>{parsedTarget ? `UID ${parsedTarget}` : 'Pendiente'}</strong>
+              </span>
+            </div>
+          </section>
+
+          <section className="friend-request-modal__command">
+            <div className="friend-request-modal__command-heading">
+              <span className="friend-request-modal__command-icon" aria-hidden="true">
+                <UsersRound size={17} />
+              </span>
+              <span>
+                <strong>Selecciona el destinatario</strong>
+                <small>La misma persona recibirá una solicitud por cada cuenta origen.</small>
+              </span>
+            </div>
+
+            <label className="friend-request-modal__field" htmlFor={targetId}>
+              <span>User ID o enlace de perfil</span>
+              <span
+                className="friend-request-modal__input-shell"
+                data-invalid={Boolean(error) || undefined}
+              >
+                <AtSign size={16} aria-hidden="true" />
+                <input
+                  id={targetId}
+                  type="text"
+                  inputMode="url"
+                  value={targetInput}
+                  placeholder="123456789 o roblox.com/users/.../profile"
+                  autoComplete="off"
+                  autoFocus
+                  disabled={running}
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={error ? targetErrorId : undefined}
+                  onChange={(event) => handleTargetChange(event.target.value)}
+                />
+                {parsedTarget ? <CheckCircle2 size={15} className="friend-request-modal__valid" aria-hidden="true" /> : null}
+              </span>
+            </label>
+
+            <AnimatePresence initial={false} mode="popLayout">
+              {error ? (
+                <motion.p
+                  key="input-error"
+                  id={targetErrorId}
+                  className="friend-request-modal__error"
+                  role="alert"
+                  initial={reducedMotion ? false : { opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: reducedMotion ? 0 : -3 }}
+                >
+                  <XCircle size={14} aria-hidden="true" /> {error}
+                </motion.p>
+              ) : null}
+
+              {running && progress ? (
+                <motion.div
+                  key="progress"
+                  className="friend-request-progress"
+                  role="status"
+                  aria-live="polite"
+                  initial={reducedMotion ? false : { opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <div className="friend-request-progress__copy">
+                    <span>
+                      <LoaderCircle className="friend-request-modal__spinner" size={15} />
+                      Enviando desde <strong>{progress.account.label}</strong>
+                    </span>
+                    <small>{currentPosition}/{progress.total}</small>
+                  </div>
+                  <div
+                    className="friend-request-progress__track"
+                    role="progressbar"
+                    aria-label="Progreso del envío"
+                    aria-valuemin={1}
+                    aria-valuemax={progress.total}
+                    aria-valuenow={currentPosition}
+                  >
+                    <motion.span
+                      initial={false}
+                      animate={{ width: `${progressPercent}%` }}
+                      transition={reducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 360, damping: 34 }}
+                    />
+                  </div>
+                </motion.div>
+              ) : null}
+
+              {summary ? (
+                <motion.div
+                  key="summary"
+                  className="friend-request-summary"
+                  data-tone={summaryTone}
+                  aria-live="polite"
+                  initial={reducedMotion ? false : { opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <div className="friend-request-summary__heading">
+                    <span className="friend-request-summary__icon" aria-hidden="true">
+                      {summaryTone === 'success' ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
+                    </span>
+                    <span>
+                      <strong>
+                        {summaryTone === 'success'
+                          ? 'Solicitudes enviadas'
+                          : summaryTone === 'mixed'
+                            ? 'Lote completado con alertas'
+                            : 'Roblox rechazó el envío'}
+                      </strong>
+                      <small>{summary.succeeded} de {summary.total} aceptadas</small>
+                    </span>
+                  </div>
+                  <ul className="friend-request-summary__list">
+                    {summary.results.map((result) => (
+                      <li key={result.id} data-ok={result.ok || undefined}>
+                        {result.ok
+                          ? <CheckCircle2 size={14} aria-label="Aceptada" />
+                          : <XCircle size={14} aria-label="Rechazada" />}
+                        <strong>{result.label}</strong>
+                        <span>{result.ok ? 'Enviada' : result.reason ?? 'No se pudo enviar'}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+          </section>
         </div>
-      </div>
+
+        <footer className="friend-request-modal__footer">
+          <div className="friend-request-modal__status" data-running={running || undefined}>
+            <span aria-hidden="true" />
+            <small>{running ? 'Envío en curso' : summary ? 'Lote completado' : 'Listo para enviar'}</small>
+          </div>
+          <div className="friend-request-modal__actions">
+            <Button variant="secondary" type="button" onClick={requestClose} disabled={running}>
+              {summary ? 'Cerrar' : 'Cancelar'}
+            </Button>
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={running || targetInput.trim().length === 0}
+            >
+              {running ? <LoaderCircle className="friend-request-modal__spinner" size={16} /> : <Send size={15} />}
+              {running ? 'Enviando…' : summary ? 'Enviar de nuevo' : 'Enviar solicitud'}
+            </Button>
+          </div>
+        </footer>
+      </form>
     </Modal>
   );
 }

@@ -111,6 +111,10 @@ pub mod browser_launcher;
 /// installation, per-account profiles and CDP launch/cookie injection.
 pub mod wayfern;
 
+/// Windows Roblox client discovery, protocol-handler presets, release lookup,
+/// and verified managed deployment installation.
+pub mod roblox_installations;
+
 /// Settings_Store + encryption Tauri command layer (Task 7.7). Hosts the
 /// `settings_*` / `enc_*` / `genhistory_*` / `fflag_*` / `fps_*` `#[tauri::command]`
 /// wrappers that orchestrate `settings.rs`, `encryption.rs`, `accounts.rs`, and
@@ -199,6 +203,16 @@ pub struct AppState {
     /// are requested at the same time.
     pub wayfern_install_lock: Arc<AsyncMutex<()>>,
 
+    /// Serializes activation of a managed Roblox deployment. Package downloads
+    /// are concurrent within one operation, but two installations must never
+    /// race while renaming staging directories into the versions store.
+    pub roblox_deployment_install_lock: Arc<AsyncMutex<()>>,
+
+    /// Renderer-supplied operation id -> cancellation token for in-flight or
+    /// queued managed Roblox deployment installations.
+    pub roblox_deployment_cancellations:
+        Arc<AsyncMutex<HashMap<String, tokio_util::sync::CancellationToken>>>,
+
     /// `_mutexProc`: the persistent Native_Helper child process holding the
     /// Roblox singleton mutex for the lifetime of a multi-instance hold.
     pub mutex_proc: Arc<AsyncMutex<Option<tokio::process::Child>>>,
@@ -240,6 +254,8 @@ impl Default for AppState {
             watch_loop_running: Arc::new(AsyncMutex::new(false)),
             browser_sessions: Arc::new(AsyncMutex::new(HashMap::new())),
             wayfern_install_lock: Arc::new(AsyncMutex::new(())),
+            roblox_deployment_install_lock: Arc::new(AsyncMutex::new(())),
+            roblox_deployment_cancellations: Arc::new(AsyncMutex::new(HashMap::new())),
             mutex_proc: Arc::new(AsyncMutex::new(None)),
             anti_afk_proc: Arc::new(AsyncMutex::new(None)),
             launch_lock: Arc::new(AsyncMutex::new(())),
@@ -364,6 +380,16 @@ pub fn run() {
             browser_launcher::browser_copy_cookie,
             wayfern::browser_wayfern_status,
             wayfern::browser_wayfern_install,
+            roblox_installations::roblox_installations_scan,
+            roblox_installations::roblox_custom_preset_add,
+            roblox_installations::roblox_custom_preset_remove,
+            roblox_installations::roblox_protocol_state,
+            roblox_installations::roblox_protocol_activate,
+            roblox_installations::roblox_protocol_restore,
+            roblox_installations::roblox_release_latest,
+            roblox_installations::roblox_deployments_list,
+            roblox_installations::roblox_deployment_install,
+            roblox_installations::roblox_deployment_cancel,
             browser_launcher::roblox_open_login,
             browser_launcher::login_cancel,
             packages::packages_load,
