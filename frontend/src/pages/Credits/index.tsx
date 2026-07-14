@@ -99,6 +99,9 @@ const LINK_ICON_PATHS: Record<CreditLink['icon'], string> = {
  * and sets robust static fallback for Discord to avoid CORS.
  */
 export function CreditsPage(): JSX.Element {
+  const [failedDiscordAvatars, setFailedDiscordAvatars] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [robloxAvatars, setRobloxAvatars] = useState<Record<string, string>>({
     Bimo: 'https://tr.rbxcdn.com/30DAY-AvatarHeadshot-085CDD34A4FD1FF80594B29A20A3C513-Png/150/150/AvatarHeadshot/Png/isCircular',
   });
@@ -158,12 +161,19 @@ export function CreditsPage(): JSX.Element {
                   )}
                 </div>
                 <div className="credit-avatar-wrapper discord" title="Discord Profile">
-                  {contributor.discordId && DISCORD_AVATARS_BY_ID[contributor.discordId] ? (
+                  {contributor.discordId
+                    && DISCORD_AVATARS_BY_ID[contributor.discordId]
+                    && !failedDiscordAvatars.has(contributor.discordId) ? (
                     <img
                       src={DISCORD_AVATARS_BY_ID[contributor.discordId]}
                       alt={`${contributor.name} Discord`}
                       className="credit-avatar-img"
                       loading="lazy"
+                      onError={() => {
+                        const id = contributor.discordId;
+                        if (!id) return;
+                        setFailedDiscordAvatars((previous) => new Set(previous).add(id));
+                      }}
                     />
                   ) : (
                     <div className="credit-avatar-fallback discord">D</div>

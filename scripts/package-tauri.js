@@ -8,7 +8,8 @@
 //
 // Pipeline order (this file, Task 19.1):
 //   1. React frontend build      -> runs `npm run build` inside frontend/ so
-//      Cargo always embeds the current UI, preload bridge and visual assets.
+//      Cargo always embeds the current UI and visual assets. The canonical
+//      preload bridge is injected separately at document-start by Rust.
 //   2. Native_Helper build step  -> runs scripts/build-native.js so
 //      native-helper/RobloxNative.exe is (re)compiled BEFORE the Rust build. This mirrors
 //      the npm `prebuild` lifecycle and satisfies Requirement
@@ -32,10 +33,11 @@ const buildNativeScript = path.join(__dirname, 'build-native.js');
 const frontendDir = path.join(projectRoot, 'frontend');
 const frontendDistDir = path.join(frontendDir, 'dist');
 const frontendIndex = path.join(frontendDistDir, 'index.html');
-const frontendPreload = path.join(frontendDistDir, 'preload.js');
 const frontendBannerSource = path.join(frontendDir, 'assets', 'Bimo.gif');
 const frontendAssetsDir = path.join(frontendDistDir, 'assets');
 const srcTauriDir = path.join(projectRoot, 'src-tauri');
+const tauriPreload = path.join(srcTauriDir, 'preload.js');
+const tauriLib = path.join(srcTauriDir, 'src', 'lib.rs');
 const nativeHelperDir = path.join(projectRoot, 'native-helper');
 const distDir = path.join(projectRoot, 'dist');
 
@@ -74,29 +76,31 @@ function copyRequired(from, to, label) {
   console.log('[package-tauri]   ' + label + ': ' + from + ' -> ' + to);
 }
 
-// Fail before Cargo when the web bundle is incomplete or stale. In particular,
-// loading a missing preload.js through Vite/Tauri's HTML fallback returns
-// index.html and crashes with `Unexpected token '<'`; comparing the emitted GIF
-// byte-for-byte also proves the package contains the current Bimo.gif rather
-// than yesterday's cached banner.
+// Fail before Cargo when the web bundle is incomplete or stale. The bridge is
+// embedded as a Tauri initialization script, never fetched from HTML; this
+// removes the HTML-fallback path that caused `Unexpected token '<'`.
 function assertFrontendArtifactsCurrent() {
   if (!fs.existsSync(frontendIndex)) {
     fail('frontend build did not produce ' + frontendIndex + '.');
   }
-  if (!fs.existsSync(frontendPreload)) {
-    fail('frontend build did not produce preload.js; refusing to package an HTML fallback as JavaScript.');
+  if (!fs.existsSync(tauriPreload)) {
+    fail('Tauri initialization bridge not found at ' + tauriPreload + '.');
   }
-  const preloadText = fs.readFileSync(frontendPreload, 'utf8').trimStart();
+  const preloadText = fs.readFileSync(tauriPreload, 'utf8').trimStart();
   if (preloadText.startsWith('<')) {
-    fail('frontend preload.js contains HTML (`Unexpected token <`); refusing to package it.');
+    fail('Tauri initialization bridge contains HTML (`Unexpected token <`); refusing to package it.');
+  }
+  const tauriLibText = fs.readFileSync(tauriLib, 'utf8');
+  if (!tauriLibText.includes('.initialization_script(include_str!("../preload.js"))')) {
+    fail('Tauri main window no longer injects the canonical preload bridge.');
   }
 
   const indexText = fs.readFileSync(frontendIndex, 'utf8');
   if (!indexText.includes('https://cdn.discordapp.com')) {
     fail('frontend CSP does not allow the Discord avatar CDN.');
   }
-  if (!indexText.includes('src="./preload.js"')) {
-    fail('frontend index.html does not reference the packaged preload bridge relatively.');
+  if (indexText.includes('preload.js')) {
+    fail('frontend index.html still loads preload.js; the bridge must only be injected by Tauri.');
   }
 
   if (!fs.existsSync(frontendBannerSource)) {
@@ -112,7 +116,7 @@ function assertFrontendArtifactsCurrent() {
     fail('frontend build did not emit the current Bimo.gif banner byte-for-byte; refusing to package stale artwork.');
   }
 
-  console.log('[package-tauri] frontend artifact gate OK: preload is JavaScript, Discord CSP is allowed, and current Bimo.gif is emitted.');
+  console.log('[package-tauri] frontend artifact gate OK: bridge is injection-only, Discord CSP is allowed, and current Bimo.gif is emitted.');
 }
 
 // Req 9.3 / 12.6 (Native_Helper present + consistent with bundled source):
@@ -364,7 +368,8 @@ module.exports = {
     frontendDir,
     frontendDistDir,
     frontendIndex,
-    frontendPreload,
+    tauriPreload,
+    tauriLib,
     frontendBannerSource,
     frontendAssetsDir,
   },

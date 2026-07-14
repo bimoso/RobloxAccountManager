@@ -326,8 +326,8 @@ export function ClientsTab(): JSX.Element {
           </Button>
           <small>
             Paste a version folder or its exact .exe. Detects Roblox versions, Bloxstrap, Fishstrap,
-            Froststrap, Voidstrap, Nyxstrap and the active Windows handler. Only the route is stored;
-            files are never moved or deleted.
+            Froststrap, Voidstrap, Nyxstrap, Plexity and other *strap forks through the Windows
+            uninstall registry or active handler. Only the route is stored; files are never moved or deleted.
           </small>
         </form>
         <div className="clients-installation-list">

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CreditsPage } from './index';
 import { ipc } from '@/lib/ipc';
@@ -25,5 +25,13 @@ describe('Credits Discord avatar', () => {
     );
     expect(screen.queryByText('D')).not.toBeInTheDocument();
     expect(ipc.getAvatarThumbnails).toHaveBeenCalledWith(['9889370526']);
+  });
+
+  it('falls back cleanly when the Discord CDN image cannot load', () => {
+    render(<CreditsPage />);
+    fireEvent.error(screen.getByAltText('Bimo Discord'));
+
+    expect(screen.queryByAltText('Bimo Discord')).not.toBeInTheDocument();
+    expect(screen.getByText('D')).toBeInTheDocument();
   });
 });

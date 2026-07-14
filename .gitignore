@@ -14,8 +14,8 @@ npm-debug.log*
 Thumbs.db
 .DS_Store
 
-Cargo.lock
-package-lock.json
+# Lockfiles are part of the reproducible desktop build. Keep the root npm,
+# frontend npm and Tauri Cargo resolutions under version control.
 
 # Editor/IDE
 .vscode/
@@ -27,4 +27,3 @@ package-lock.json
 .playwright-mcp/
 
 scratch/
-test/

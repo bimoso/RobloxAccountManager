@@ -332,7 +332,22 @@ fn executable_from_command(command: &str) -> Option<PathBuf> {
         .into_iter()
         .next()
         .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
+        .map(|value| expand_preset_path(&value).unwrap_or_else(|_| PathBuf::from(value)))
+}
+
+fn executable_from_registry_value(value: &str) -> Option<PathBuf> {
+    // DisplayIcon commonly stores `"C:\\...\\Launcher.exe",0`, while the
+    // uninstall/modify values append command-line switches. Taking everything
+    // through the first .exe handles both forms without executing the value.
+    let trimmed = value.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    let exe_end = lower.find(".exe")? + 4;
+    let raw = trimmed[..exe_end].trim().trim_matches('"').trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let path = expand_preset_path(raw).unwrap_or_else(|_| PathBuf::from(raw));
+    path.is_file().then_some(path)
 }
 
 fn version_guid_from_executable(executable: &Path) -> Option<String> {
@@ -971,8 +986,9 @@ fn uninstall_installation(
             r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{key_name}"
         ))
         .ok()?;
-    let install_location = non_blank(registry_string(&key, "InstallLocation"))?;
-    let executable = PathBuf::from(&install_location).join(executable_name);
+    let stored_install_location = non_blank(registry_string(&key, "InstallLocation"))?;
+    let install_location = expand_preset_path(&stored_install_location).ok()?;
+    let executable = install_location.join(executable_name);
     if !executable.is_file() {
         return None;
     }
@@ -985,7 +1001,7 @@ fn uninstall_installation(
         display_name: non_blank(registry_string(&key, "DisplayName"))
             .unwrap_or_else(|| display_name.to_string()),
         executable: Some(executable.to_string_lossy().into_owned()),
-        install_location: Some(install_location),
+        install_location: Some(install_location.to_string_lossy().into_owned()),
         display_version: non_blank(registry_string(&key, "DisplayVersion")),
         version_guid,
         channel: None,
@@ -994,6 +1010,99 @@ fn uninstall_installation(
         active_schemes: Vec::new(),
         handler_command: None,
     })
+}
+
+#[cfg(target_os = "windows")]
+fn generic_uninstall_installations() -> Vec<RobloxInstallation> {
+    use winreg::enums::{
+        HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY,
+    };
+    use winreg::RegKey;
+
+    const UNINSTALL_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall";
+    let roots = [
+        (RegKey::predef(HKEY_CURRENT_USER), KEY_READ, "hkcu"),
+        (
+            RegKey::predef(HKEY_LOCAL_MACHINE),
+            KEY_READ | KEY_WOW64_64KEY,
+            "hklm64",
+        ),
+        (
+            RegKey::predef(HKEY_LOCAL_MACHINE),
+            KEY_READ | KEY_WOW64_32KEY,
+            "hklm32",
+        ),
+    ];
+    let mut found = Vec::new();
+
+    for (root, flags, scope) in roots {
+        let Ok(uninstall) = root.open_subkey_with_flags(UNINSTALL_PATH, flags) else {
+            continue;
+        };
+        for key_name in uninstall.enum_keys().filter_map(Result::ok) {
+            let Ok(key) = uninstall.open_subkey_with_flags(&key_name, KEY_READ) else {
+                continue;
+            };
+            let display_name =
+                non_blank(registry_string(&key, "DisplayName")).unwrap_or_else(|| key_name.clone());
+            let display_version = non_blank(registry_string(&key, "DisplayVersion"));
+            let mut candidates = Vec::new();
+
+            if let Some(location) = non_blank(registry_string(&key, "InstallLocation"))
+                .and_then(|value| expand_preset_path(&value).ok())
+                .filter(|path| path.is_dir())
+            {
+                candidates.extend(executable_candidates_in(&location));
+            }
+            for value_name in ["DisplayIcon", "ModifyPath", "UninstallString"] {
+                if let Some(executable) = non_blank(registry_string(&key, value_name))
+                    .and_then(|value| executable_from_registry_value(&value))
+                {
+                    candidates.push(executable);
+                }
+            }
+
+            let mut seen = HashMap::<String, ()>::new();
+            let selected = candidates.into_iter().find_map(|executable| {
+                let path_key = normalized_path(&executable);
+                if seen.insert(path_key, ()).is_some() {
+                    return None;
+                }
+                let (kind, detected_name) = classify_executable(&executable)?;
+                is_bootstrapper_kind(kind).then_some((executable, kind, detected_name))
+            });
+            let Some((executable, kind, detected_name)) = selected else {
+                continue;
+            };
+            let path_key = normalized_path(&executable);
+            found.push(RobloxInstallation {
+                id: stable_path_id(&format!("uninstall-{scope}"), &path_key),
+                kind,
+                display_name: if display_name.trim().is_empty() {
+                    detected_name
+                } else {
+                    display_name
+                },
+                executable: Some(executable.to_string_lossy().into_owned()),
+                install_location: executable
+                    .parent()
+                    .map(|parent| parent.to_string_lossy().into_owned()),
+                display_version,
+                version_guid: None,
+                channel: None,
+                detected_by: DetectionSource::UninstallRegistry,
+                protocol_capable: true,
+                active_schemes: Vec::new(),
+                handler_command: None,
+            });
+        }
+    }
+    found
+}
+
+#[cfg(not(target_os = "windows"))]
+fn generic_uninstall_installations() -> Vec<RobloxInstallation> {
+    Vec::new()
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1206,6 +1315,13 @@ pub fn scan_installations_in(dir: &Path) -> Vec<RobloxInstallation> {
     .into_iter()
     .flatten()
     {
+        push_deduped(&mut installations, &mut by_executable, candidate);
+    }
+
+    // Enumerating every uninstall entry catches custom-location and future
+    // *strap/Plexity forks without coupling discovery to a forever-growing
+    // hardcoded list. Known clients above keep their stable friendly ids.
+    for candidate in generic_uninstall_installations() {
         push_deduped(&mut installations, &mut by_executable, candidate);
     }
 
@@ -2468,6 +2584,19 @@ mod tests {
         assert!(classify_executable(Path::new(r"C:\Voidstrap\VoidstrapUpdater.exe")).is_none());
         assert!(classify_executable(Path::new(r"C:\Fishstrap\FishstrapInstaller.exe")).is_none());
         assert!(classify_executable(Path::new(r"C:\Froststrap\Froststrap.exe")).is_some());
+    }
+
+    #[test]
+    fn classifies_generic_strap_and_plexity_forks() {
+        assert!(matches!(
+            classify_executable(Path::new(r"C:\Launchers\Lunastrap.exe")),
+            Some((RobloxLauncherKind::OtherBootstrapper, _))
+        ));
+        assert!(matches!(
+            classify_executable(Path::new(r"C:\Plexity\Plexity.exe")),
+            Some((RobloxLauncherKind::OtherBootstrapper, _))
+        ));
+        assert!(classify_executable(Path::new(r"C:\Launchers\LunastrapUpdater.exe")).is_none());
     }
 
     #[test]

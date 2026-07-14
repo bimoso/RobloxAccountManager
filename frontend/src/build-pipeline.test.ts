@@ -12,7 +12,7 @@ import { dirname, resolve } from 'node:path';
  *   1. The pipeline finishes with a success exit code (0).
  *   2. The configured `frontendDist` (frontend/dist) contains the generated
  *      static artifacts: `index.html`, the hashed `assets/` bundle, and the
- *      verbatim `preload.js` copied from the Tauri_Bridge (Req 1.3 wiring).
+ *      document-start bridge injection from the canonical Tauri preload (Req 1.3 wiring).
  *
  * Running a full build takes several seconds, so the test timeout is generous.
  * On Windows the npm executable is `npm.cmd`; we invoke through the shell so the
@@ -64,16 +64,18 @@ describe('Build_Pipeline over valid code (Requirement 1.4)', () => {
         `expected a JS bundle in dist/assets, found: ${assetFiles.join(', ')}`,
       ).toBe(true);
 
-      // preload.js is copied verbatim from the Tauri_Bridge into the output.
-      const preloadJs = resolve(distDir, 'preload.js');
-      expect(existsSync(preloadJs), 'expected dist/preload.js (Tauri_Bridge copy)').toBe(true);
-      expect(readFileSync(preloadJs, 'utf8').trimStart().startsWith('<')).toBe(false);
-      expect(readFileSync(preloadJs)).toEqual(readFileSync(resolve(repoRoot, 'src-tauri', 'preload.js')));
+      // The bridge is embedded by Rust as a document-start initialization
+      // script. It must never be requested through HTML, where a missing asset
+      // could fall back to index.html and trigger `Unexpected token '<'`.
+      const preloadSource = readFileSync(resolve(repoRoot, 'src-tauri', 'preload.js'), 'utf8');
+      expect(preloadSource.trimStart().startsWith('<')).toBe(false);
+      const tauriLib = readFileSync(resolve(repoRoot, 'src-tauri', 'src', 'lib.rs'), 'utf8');
+      expect(tauriLib).toContain('.initialization_script(include_str!("../preload.js"))');
 
-      // The packaged HTML must use the relative bridge path and permit only the
-      // exact Discord CDN needed by the Credits avatar.
+      // The packaged HTML permits only the exact Discord CDN needed by the
+      // Credits avatar and does not load a second copy of the bridge.
       const builtIndex = readFileSync(indexHtml, 'utf8');
-      expect(builtIndex).toContain('src="./preload.js"');
+      expect(builtIndex).not.toContain('preload.js');
       expect(builtIndex).toContain('https://cdn.discordapp.com');
 
       // Prove the current user-supplied Bimo.gif made it through Vite instead

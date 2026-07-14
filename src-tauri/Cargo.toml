@@ -16,7 +16,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2" }
 # Official Tauri clipboard plugin, replacing legacy JS runtime's main-process `clipboard`
 # module for the Account_Browser_Launcher's Copy Cookie action (design "Overview"
 # rationale). Its Rust `ClipboardExt::clipboard().write_text()/read_text()` pair

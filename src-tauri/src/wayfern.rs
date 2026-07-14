@@ -13,7 +13,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use futures_util::StreamExt;
+use futures_util::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
@@ -32,6 +32,7 @@ pub const WAYFERN_PROGRESS_EVENT: &str = "wayfern://download-progress";
 const WAYFERN_DOWNLOAD_HOST: &str = "download.wayfern.com";
 const DEVTOOLS_PORT_FILE: &str = "DevToolsActivePort";
 const WAYFERN_FINGERPRINT_FILE: &str = "wayfern-fingerprint.json";
+const WAYFERN_OPEN_CONCURRENCY: usize = 4;
 
 #[derive(Debug, Clone, Deserialize)]
 struct WayfernManifest {
@@ -651,12 +652,12 @@ pub async fn open_account_browser(
     )
     .await
     {
-            Ok(injected) => injected,
-            Err(error) => {
-                let _ = child.kill().await;
-                browser_launcher::untrack_session(&sessions, account_id).await;
-                return OpenResult::err(error);
-            }
+        Ok(injected) => injected,
+        Err(error) => {
+            let _ = child.kill().await;
+            browser_launcher::untrack_session(&sessions, account_id).await;
+            return OpenResult::err(error);
+        }
     };
 
     // Dropping tokio::process::Child only releases our process handle; it does
@@ -681,23 +682,37 @@ pub async fn open_account_browsers(
     account_ids: Vec<String>,
 ) -> OpenBatchResult {
     let total = account_ids.len();
-    let mut results = Vec::with_capacity(total);
-    for account_id in account_ids {
-        let result = open_account_browser(
-            app,
-            dir,
-            Arc::clone(&sessions),
-            Arc::clone(&install_lock),
-            &account_id,
-        )
-        .await;
-        results.push(OpenBatchItemResult {
-            account_id,
-            ok: result.ok,
-            error: result.error,
-            focused: result.focused,
-        });
-    }
+    // Waiting for CDP and cookie injection serially made a 10-account batch feel
+    // like traffic on Periferico: every browser waited behind the previous one.
+    // Start a bounded group together so windows appear promptly without dumping
+    // all profiles on disk/CPU at once. Results are restored to request order.
+    let mut indexed_results = stream::iter(account_ids.into_iter().enumerate().map(
+        |(index, account_id)| {
+            let sessions = Arc::clone(&sessions);
+            let install_lock = Arc::clone(&install_lock);
+            async move {
+                let result =
+                    open_account_browser(app, dir, sessions, install_lock, &account_id).await;
+                (
+                    index,
+                    OpenBatchItemResult {
+                        account_id,
+                        ok: result.ok,
+                        error: result.error,
+                        focused: result.focused,
+                    },
+                )
+            }
+        },
+    ))
+    .buffer_unordered(WAYFERN_OPEN_CONCURRENCY)
+    .collect::<Vec<_>>()
+    .await;
+    indexed_results.sort_by_key(|(index, _)| *index);
+    let results = indexed_results
+        .into_iter()
+        .map(|(_, result)| result)
+        .collect::<Vec<_>>();
     let opened = results.iter().filter(|result| result.ok).count();
     OpenBatchResult {
         ok: opened == total,

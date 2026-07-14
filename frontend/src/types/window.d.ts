@@ -1,7 +1,7 @@
 // types/window.d.ts
 //
 // Ambient TypeScript types for `window.api`, the Tauri_Bridge exposed by
-// `src-tauri/preload.js` (loaded as a classic script alongside the React bundle).
+// `src-tauri/preload.js` (injected by Tauri at document-start).
 //
 // This declaration mirrors EVERY member of `window.api` defined in
 // `src-tauri/preload.js` — same names, same parameter order, no additions, removals,
