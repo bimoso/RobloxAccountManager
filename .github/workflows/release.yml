@@ -1,0 +1,255 @@
+name: Build and publish release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "SemVer tag (for example v1.0.0). Leave empty to use the version in the manifests."
+        required: false
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Windows x64 portable release
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    outputs:
+      tag: ${{ steps.release_meta.outputs.tag }}
+      version: ${{ steps.release_meta.outputs.version }}
+      prerelease: ${{ steps.release_meta.outputs.prerelease }}
+
+    defaults:
+      run:
+        shell: pwsh
+
+    env:
+      RUST_TARGET: x86_64-pc-windows-msvc
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add $env:RUST_TARGET
+          rustc --version
+          cargo --version
+
+      - name: Cache Cargo dependencies and build output
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-${{ env.RUST_TARGET }}-cargo-release-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ env.RUST_TARGET }}-cargo-release-
+
+      - name: Resolve and validate release version
+        id: release_meta
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $tauri = Get-Content -Raw 'src-tauri/tauri.conf.json' | ConvertFrom-Json
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            $tag = $env:GITHUB_REF_NAME
+          } elseif ([string]::IsNullOrWhiteSpace($env:INPUT_TAG)) {
+            $tag = "v$($tauri.version)"
+          } else {
+            $tag = $env:INPUT_TAG.Trim()
+          }
+
+          $semverTag = '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$'
+          if ($tag -cnotmatch $semverTag) {
+            throw "Release tag '$tag' is invalid. Expected vMAJOR.MINOR.PATCH, optionally with a prerelease suffix."
+          }
+
+          $version = $tag.Substring(1)
+          $rootPackage = Get-Content -Raw 'package.json' | ConvertFrom-Json
+          $rootLock = Get-Content -Raw 'package-lock.json' | ConvertFrom-Json -AsHashtable
+          $frontendPackage = Get-Content -Raw 'frontend/package.json' | ConvertFrom-Json
+          $frontendLock = Get-Content -Raw 'frontend/package-lock.json' | ConvertFrom-Json -AsHashtable
+
+          $cargoJson = cargo metadata --locked --no-deps --format-version 1 --manifest-path 'src-tauri/Cargo.toml'
+          if ($LASTEXITCODE -ne 0) {
+            throw 'cargo metadata failed; Cargo.toml and Cargo.lock may be out of sync.'
+          }
+          $cargoMetadata = $cargoJson | ConvertFrom-Json
+          $cargoPackage = $cargoMetadata.packages |
+            Where-Object { $_.name -eq 'robloxaccountmanager' } |
+            Select-Object -First 1
+          if ($null -eq $cargoPackage) {
+            throw 'Could not resolve the robloxaccountmanager package version from Cargo metadata.'
+          }
+
+          $versions = [ordered]@{
+            'package.json' = $rootPackage.version
+            'package-lock.json' = $rootLock['version']
+            'frontend/package.json' = $frontendPackage.version
+            'frontend/package-lock.json' = $frontendLock['version']
+            'src-tauri/Cargo.toml' = $cargoPackage.version
+            'src-tauri/tauri.conf.json' = $tauri.version
+          }
+          $mismatches = $versions.GetEnumerator() | Where-Object { $_.Value -ne $version }
+          if ($mismatches) {
+            $details = ($versions.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '
+            throw "Tag $tag does not match every manifest. Expected $version everywhere; found: $details"
+          }
+
+          "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          "RELEASE_PRERELEASE=$($version.Contains('-').ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "prerelease=$($version.Contains('-').ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          Write-Host "Validated release $tag across all manifests."
+
+      - name: Install locked npm dependencies
+        run: |
+          npm ci
+          npm --prefix frontend ci
+
+      - name: Run JavaScript and frontend tests
+        run: |
+          npm test
+          npm --prefix frontend test
+
+      - name: Require a fresh Native Helper build
+        run: |
+          $cscCandidates = @(
+            "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
+            "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+          )
+          $csc = $cscCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+          if ($null -eq $csc) {
+            throw 'The .NET Framework C# compiler (csc.exe) is unavailable; refusing to reuse the tracked helper binary.'
+          }
+          Remove-Item -LiteralPath 'native-helper/RobloxNative.exe' -Force
+          Write-Host "Removed the tracked helper; the package build must regenerate it with $csc."
+
+      - name: Build portable Windows package
+        run: npm run build
+
+      - name: Assemble release assets
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $requiredFiles = @(
+            'dist/RobloxAccountManager.exe',
+            'dist/RobloxNative.exe',
+            'dist/RobloxNative.cs'
+          )
+          foreach ($file in $requiredFiles) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              throw "Required package file is missing: $file"
+            }
+            if ((Get-Item -LiteralPath $file).Length -eq 0) {
+              throw "Required package file is empty: $file"
+            }
+          }
+
+          $bundleName = "RobloxAccountManager-$env:RELEASE_TAG-windows-x64"
+          $releaseDir = 'release'
+          $bundleDir = Join-Path $releaseDir $bundleName
+          New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
+
+          Copy-Item -LiteralPath $requiredFiles -Destination $bundleDir
+          Copy-Item -LiteralPath 'LICENSE' -Destination $bundleDir
+
+          $archive = Join-Path $releaseDir "$bundleName.zip"
+          Compress-Archive -Path (Join-Path $bundleDir '*') -DestinationPath $archive -CompressionLevel Optimal -Force
+
+          $hashLines = @()
+          $archiveHash = Get-FileHash -Algorithm SHA256 -LiteralPath $archive
+          $hashLines += "$($archiveHash.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($archive))"
+          Get-ChildItem -LiteralPath $bundleDir -File | Sort-Object Name | ForEach-Object {
+            $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
+            $hashLines += "$($hash.Hash.ToLowerInvariant())  $bundleName/$($_.Name)"
+          }
+          $hashLines | Set-Content -Encoding utf8 (Join-Path $releaseDir 'SHA256SUMS.txt')
+
+          Write-Host "Release archive: $archive"
+          Get-ChildItem -LiteralPath $releaseDir -File | Format-Table Name, Length
+
+      - name: Preserve packaged files as a workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ steps.release_meta.outputs.tag }}
+          path: |
+            release/*.zip
+            release/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-${{ needs.build.outputs.tag }}
+          path: release
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          RELEASE_PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          archive="release/RobloxAccountManager-${RELEASE_TAG}-windows-x64.zip"
+          checksums="release/SHA256SUMS.txt"
+          notes="Portable Windows x64 build. Extract the complete ZIP and keep RobloxAccountManager.exe, RobloxNative.exe, and RobloxNative.cs together."
+
+          arguments=(
+            release create "$RELEASE_TAG"
+            "$archive" "$checksums"
+            --repo "$GITHUB_REPOSITORY"
+            --target "$GITHUB_SHA"
+            --title "RobloxAccountManager $RELEASE_TAG"
+            --generate-notes
+            --notes "$notes"
+          )
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            arguments+=(--verify-tag)
+          fi
+          if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+            arguments+=(--prerelease)
+          fi
+
+          gh "${arguments[@]}"
