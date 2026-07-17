@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   loadSettings: vi.fn(),
   saveSettings: vi.fn(),
   arrangeWindows: vi.fn(),
-  getRunningCount: vi.fn(),
+  getWindowCount: vi.fn(),
 }));
 
 vi.mock('@/lib/ipc', () => ({
@@ -22,8 +22,7 @@ vi.mock('@/lib/ipc', () => ({
     loadSettings: mocks.loadSettings,
     saveSettings: mocks.saveSettings,
     arrangeWindows: mocks.arrangeWindows,
-    getRunningCount: mocks.getRunningCount,
-    onRobloxCount: vi.fn().mockResolvedValue(() => undefined),
+    getWindowCount: mocks.getWindowCount,
   },
 }));
 
@@ -43,8 +42,8 @@ function storedSettings(overrides: Record<string, unknown> = {}) {
 function arrange(overrides: Record<string, unknown> = {}) {
   mocks.loadSettings.mockResolvedValue(storedSettings(overrides));
   mocks.saveSettings.mockResolvedValue(true);
-  mocks.arrangeWindows.mockResolvedValue(2);
-  mocks.getRunningCount.mockResolvedValue(2);
+  mocks.arrangeWindows.mockResolvedValue({ found: 2, placed: 2 });
+  mocks.getWindowCount.mockResolvedValue(2);
 }
 
 afterEach(() => vi.clearAllMocks());

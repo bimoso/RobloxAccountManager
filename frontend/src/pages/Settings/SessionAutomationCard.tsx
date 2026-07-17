@@ -18,8 +18,9 @@
 // Every control persists through `ipc.saveSettings` with the same
 // optimistic-update-then-revert pattern the General tab's Anti-AFK toggle
 // uses; `lib/ipc` already surfaces failures as an error toast. The live
-// "active windows" figure follows the `roblox://count` event, seeded with
-// `getRunningCount` — the same source the TitleBar uses.
+// "active windows" figure polls `roblox_window_count` (class-based Win32
+// window detection) while the card is mounted, so it reflects every Roblox
+// client on screen — including ones opened outside this app.
 
 import { useCallback, useEffect, useState } from 'react';
 import { AppWindow, LayoutGrid } from 'lucide-react';
@@ -34,6 +35,9 @@ const DEFAULT_TARGET_W = 350;
 const DEFAULT_TARGET_H = 350;
 /** Default windows-per-row, matching the backend default. */
 const DEFAULT_PER_ROW = 1;
+
+/** Cadence of the live window-count poll while the card is mounted. */
+const WINDOW_COUNT_POLL_MS = 4_000;
 
 /**
  * Parse a "WxH" target-size string (e.g. `350x350`, `640 × 360`) into a
@@ -98,23 +102,22 @@ export function SessionAutomationCard(): JSX.Element {
     };
   }, []);
 
-  // Live active-window figure: seed with the polled count, then follow the
-  // `roblox://count` pushes (same source as the TitleBar indicator).
+  // Live active-window figure: poll the class-based window count while the
+  // card is mounted. Polling (rather than the `roblox://count` event) also
+  // covers clients opened outside this app or before it started — the event
+  // only fires while app-launched accounts are being watched.
   useEffect(() => {
     let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    void ipc.getRunningCount().then((count) => {
-      if (!cancelled) setRunningCount(count);
-    }).catch(() => undefined);
-    void ipc.onRobloxCount((count) => {
-      if (!cancelled) setRunningCount(count);
-    }).then((stop) => {
-      if (cancelled) stop();
-      else unlisten = stop;
-    }).catch(() => undefined);
+    const refresh = () => {
+      void ipc.getWindowCount().then((count) => {
+        if (!cancelled) setRunningCount(count);
+      }).catch(() => undefined);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, WINDOW_COUNT_POLL_MS);
     return () => {
       cancelled = true;
-      unlisten?.();
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -191,12 +194,20 @@ export function SessionAutomationCard(): JSX.Element {
     if (arranging) return;
     setArranging(true);
     try {
-      const placed = await ipc.arrangeWindows();
-      if (placed === 0) showError(t('settings.session.arrangedNone'));
-      else {
+      const outcome = await ipc.arrangeWindows();
+      setRunningCount(outcome.found);
+      if (outcome.found === 0) {
+        showError(t('settings.session.arrangedNone'));
+      } else if (outcome.placed < outcome.found) {
+        // Windows refused some moves — usually an elevated Roblox client.
+        showError(t('settings.session.arrangedPartial', {
+          placed: outcome.placed,
+          found: outcome.found,
+        }));
+      } else {
         showSuccess(t(
-          placed === 1 ? 'settings.session.arrangedOne' : 'settings.session.arrangedMany',
-          { count: placed },
+          outcome.placed === 1 ? 'settings.session.arrangedOne' : 'settings.session.arrangedMany',
+          { count: outcome.placed },
         ));
       }
     } catch {
@@ -356,7 +367,7 @@ export function SessionAutomationCard(): JSX.Element {
           <Button
             variant="primary"
             onClick={() => void onArrangeNow()}
-            disabled={arranging || runningCount === 0}
+            disabled={arranging}
             aria-label={t('settings.session.arrangeNowAria')}
           >
             <LayoutGrid size={14} aria-hidden="true" />

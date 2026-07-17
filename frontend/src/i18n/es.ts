@@ -193,6 +193,8 @@ export const es: Record<MessageKey, string> = {
   'settings.session.arrangedNone': 'No hay ventanas de Roblox para organizar.',
   'settings.session.arrangedOne': 'Se organizó {count} ventana de Roblox.',
   'settings.session.arrangedMany': 'Se organizaron {count} ventanas de Roblox.',
+  'settings.session.arrangedPartial':
+    'Se organizaron {placed} de {found} ventanas de Roblox. Si Roblox se ejecuta como administrador, ejecuta esta app como administrador también.',
 
   // ── Settings: general → danger zone ──
   'settings.danger.eyebrow': 'Acción destructiva',

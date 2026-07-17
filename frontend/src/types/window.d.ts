@@ -67,6 +67,15 @@ export interface LaunchResult {
 }
 
 /**
+ * Result of the `roblox_arrange_windows` Tauri command: how many Roblox client
+ * windows were detected and how many were actually moved into the grid.
+ */
+export interface ArrangeOutcome {
+  found: number;
+  placed: number;
+}
+
+/**
  * The exact `window.api` surface built by `src-tauri/preload.js`. Every member below
  * corresponds one-to-one, in order, to a member of that object.
  */
@@ -98,7 +107,8 @@ export interface TauriApi {
   killAllRoblox: () => Promise<void>;
   killOneRoblox: (id: string) => Promise<void>;
   getRunningCount: () => Promise<number>;
-  arrangeWindows: () => Promise<number>;
+  getWindowCount: () => Promise<number>;
+  arrangeWindows: () => Promise<ArrangeOutcome>;
   onAllRobloxClosed: (cb: () => void) => Promise<UnlistenFn>;
   launchRoblox: (id: string, cookie: string, target: string) => Promise<LaunchResult>;
   openExternal: (url: string) => Promise<void>;

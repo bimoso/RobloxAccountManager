@@ -199,6 +199,8 @@ export const en = {
   'settings.session.arrangedNone': 'No Roblox windows to arrange.',
   'settings.session.arrangedOne': 'Arranged {count} Roblox window.',
   'settings.session.arrangedMany': 'Arranged {count} Roblox windows.',
+  'settings.session.arrangedPartial':
+    'Arranged {placed} of {found} Roblox windows. If Roblox runs as administrator, run this app as administrator too.',
 
   // ── Settings: general → danger zone ──
   'settings.danger.eyebrow': 'Destructive action',

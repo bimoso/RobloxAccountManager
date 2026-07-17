@@ -416,6 +416,7 @@ pub fn run() {
             roblox_process::roblox_kill_one,
             roblox_process::roblox_running_count,
             window_layout::roblox_arrange_windows,
+            window_layout::roblox_window_count,
             native_helper::roblox_set_volume,
             native_helper::multiinstance_status,
             native_helper::antiafk_status,

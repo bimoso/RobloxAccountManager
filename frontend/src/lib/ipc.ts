@@ -100,6 +100,8 @@ export const ipc = {
   killOneRoblox: (id: string) => call('killOneRoblox', [id], true),
   // Background polling: the running-instance count is refreshed on a timer.
   getRunningCount: () => call('getRunningCount', [], false),
+  // Background polling: the session panel refreshes the window count on a timer.
+  getWindowCount: () => call('getWindowCount', [], false),
   arrangeWindows: () => call('arrangeWindows', [], true),
   // Event subscription: registered during setup, not a user action.
   onAllRobloxClosed: (cb: () => void) => call('onAllRobloxClosed', [cb], false),

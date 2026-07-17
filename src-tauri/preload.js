@@ -91,6 +91,7 @@
     killAllRoblox: () => invoke('roblox_kill_all'),
     killOneRoblox: (id) => invoke('roblox_kill_one', { accountId: id }),
     getRunningCount: () => invoke('roblox_running_count'),
+    getWindowCount: () => invoke('roblox_window_count'),
     arrangeWindows: () => invoke('roblox_arrange_windows'),
     onAllRobloxClosed: (cb) => on('roblox://all-closed', () => cb()),
     launchRoblox: (id, cookie, target) =>

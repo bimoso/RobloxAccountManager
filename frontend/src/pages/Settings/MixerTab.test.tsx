@@ -33,9 +33,8 @@ vi.mock('@/lib/ipc', () => ({
     launchRoblox: mocks.launchRoblox,
     onWayfernProgress: vi.fn().mockResolvedValue(() => undefined),
     // Consumed by the SessionAutomationCard mounted in the General tab.
-    getRunningCount: vi.fn().mockResolvedValue(0),
-    onRobloxCount: vi.fn().mockResolvedValue(() => undefined),
-    arrangeWindows: vi.fn().mockResolvedValue(0),
+    getWindowCount: vi.fn().mockResolvedValue(0),
+    arrangeWindows: vi.fn().mockResolvedValue({ found: 0, placed: 0 }),
   },
 }));
 

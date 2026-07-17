@@ -167,11 +167,18 @@ mod win {
     use std::collections::HashSet;
     use windows::Win32::Foundation::{HWND, LPARAM, RECT, TRUE};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetSystemMetrics, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic,
-        IsWindowVisible, SetWindowPos, ShowWindow, SystemParametersInfoW, SM_CXSCREEN,
+        EnumWindows, GetClassNameW, GetSystemMetrics, GetWindowThreadProcessId, IsIconic,
+        IsWindowVisible, IsZoomed, SetWindowPos, ShowWindow, SystemParametersInfoW, SM_CXSCREEN,
         SM_CYSCREEN, SPI_GETWORKAREA, SWP_NOACTIVATE, SWP_NOZORDER, SW_RESTORE,
         SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
     };
+
+    /// The window class of the Roblox game client's top-level window. This is
+    /// how the classic RAM finds Roblox windows: it identifies the client
+    /// regardless of which executable spawned it (official launcher,
+    /// Bloxstrap/Fishstrap forks, renamed players), so detection does not
+    /// depend on the `tasklist` image-name sweep succeeding.
+    const ROBLOX_WINDOW_CLASS: &str = "WINDOWSCLIENT";
 
     /// State threaded through the `EnumWindows` callback via `LPARAM`.
     struct EnumState {
@@ -184,22 +191,30 @@ mod win {
         if !IsWindowVisible(hwnd).as_bool() {
             return TRUE;
         }
-        // The Roblox game window is titled; untitled surfaces from the same
-        // process (IME/helper windows) are skipped.
-        if GetWindowTextLengthW(hwnd) == 0 {
-            return TRUE;
-        }
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid != 0 && state.pids.contains(&pid) {
+        if pid == 0 {
+            return TRUE;
+        }
+        // A window is a Roblox client when its class is the player's
+        // WINDOWSCLIENT class (primary signal, exe-name independent) or its
+        // process was identified as RobloxPlayerBeta.exe by the tasklist sweep.
+        let mut class_buf = [0u16; 64];
+        let class_len = GetClassNameW(hwnd, &mut class_buf) as usize;
+        let is_client_class = class_len == ROBLOX_WINDOW_CLASS.len()
+            && class_buf[..class_len]
+                .iter()
+                .zip(ROBLOX_WINDOW_CLASS.encode_utf16())
+                .all(|(&a, b)| a == b);
+        if is_client_class || state.pids.contains(&pid) {
             state.found.push((hwnd.0 as isize, pid));
         }
         TRUE
     }
 
-    /// Every visible, titled top-level window belonging to one of `pids`, as
-    /// `(raw hwnd, pid)` pairs.
-    pub fn windows_for_pids(pids: &HashSet<u32>) -> Vec<(isize, u32)> {
+    /// Every visible top-level Roblox client window (matched by window class,
+    /// or by membership in `pids`), as `(raw hwnd, pid)` pairs.
+    pub fn roblox_windows(pids: &HashSet<u32>) -> Vec<(isize, u32)> {
         let mut state = EnumState { pids: pids.clone(), found: Vec::new() };
         unsafe {
             // EnumWindows only errors when the callback stops iteration; ours
@@ -238,12 +253,14 @@ mod win {
         }
     }
 
-    /// Restore a minimized window and move/resize it into `rect`, without
-    /// stealing focus or changing z-order. Returns whether the placement stuck.
+    /// Restore a minimized/maximized window and move/resize it into `rect`,
+    /// without stealing focus or changing z-order. Returns whether the
+    /// placement stuck. (A maximized window must be restored first: moving it
+    /// while maximized leaves it glued to its monitor's frame.)
     pub fn place_window(hwnd_raw: isize, rect: Rect) -> bool {
         let hwnd = HWND(hwnd_raw as *mut core::ffi::c_void);
         unsafe {
-            if IsIconic(hwnd).as_bool() {
+            if IsIconic(hwnd).as_bool() || IsZoomed(hwnd).as_bool() {
                 let _ = ShowWindow(hwnd, SW_RESTORE);
             }
             SetWindowPos(
@@ -264,16 +281,19 @@ mod win {
 
 /// Snapshot the current Roblox game windows as `(raw hwnd, pid)` pairs in a
 /// deterministic order (by PID, then handle) so each window keeps its grid slot
-/// between passes instead of shuffling. `Err` when the process enumeration
-/// itself failed (skip, retry later).
+/// between passes instead of shuffling.
+///
+/// Detection is primarily by window class (`WINDOWSCLIENT`), so a failed
+/// `tasklist` sweep only loses the secondary PID-based match — it never makes
+/// detection come up empty while clients are visibly running.
 #[cfg(windows)]
-async fn snapshot_windows() -> Result<Vec<(isize, u32)>, String> {
+async fn snapshot_windows() -> Vec<(isize, u32)> {
     let pids = crate::roblox_process::enumerate_roblox_pids()
         .await
-        .ok_or_else(|| "Could not enumerate Roblox processes".to_string())?;
-    let mut wins = win::windows_for_pids(&pids);
+        .unwrap_or_default();
+    let mut wins = win::roblox_windows(&pids);
     wins.sort_by_key(|&(hwnd, pid)| (pid, hwnd));
-    Ok(wins)
+    wins
 }
 
 /// Apply the grid to an already-taken snapshot and remember the resulting
@@ -299,18 +319,27 @@ fn apply_layout(app: &AppHandle, cfg: &LayoutConfig, wins: &[(isize, u32)]) -> u
     placed
 }
 
+/// What an explicit arrangement did: how many Roblox windows were detected and
+/// how many were actually placed (a shortfall usually means the client runs at
+/// a higher privilege level than this app, so Windows refuses the move).
+#[derive(Debug, Clone, Copy, serde::Serialize, PartialEq, Eq)]
+pub struct ArrangeOutcome {
+    pub found: usize,
+    pub placed: usize,
+}
+
 /// Arrange every Roblox game window into the configured grid right now,
-/// regardless of the enabled flag (the manual "Arrange now" path). Returns the
-/// number of windows placed.
+/// regardless of the enabled flag (the manual "Arrange now" path).
 #[cfg(windows)]
-pub async fn arrange_windows(app: &AppHandle) -> Result<usize, String> {
+pub async fn arrange_windows(app: &AppHandle) -> Result<ArrangeOutcome, String> {
     let cfg = load_layout_config(app);
-    let wins = snapshot_windows().await?;
-    Ok(apply_layout(app, &cfg, &wins))
+    let wins = snapshot_windows().await;
+    let placed = apply_layout(app, &cfg, &wins);
+    Ok(ArrangeOutcome { found: wins.len(), placed })
 }
 
 #[cfg(not(windows))]
-pub async fn arrange_windows(_app: &AppHandle) -> Result<usize, String> {
+pub async fn arrange_windows(_app: &AppHandle) -> Result<ArrangeOutcome, String> {
     Err(crate::platform::WINDOWS_ONLY.to_string())
 }
 
@@ -319,7 +348,7 @@ pub async fn arrange_windows(_app: &AppHandle) -> Result<usize, String> {
 /// arrangement was applied.
 #[cfg(windows)]
 async fn arrange_if_changed(app: &AppHandle, cfg: &LayoutConfig) -> Result<bool, String> {
-    let wins = snapshot_windows().await?;
+    let wins = snapshot_windows().await;
     let hwnds: Vec<isize> = wins.iter().map(|&(h, _)| h).collect();
     let state = app.state::<AppState>();
     let unchanged = {
@@ -401,20 +430,41 @@ async fn layout_tick(_app: &AppHandle, _cfg: &LayoutConfig) -> Result<bool, Stri
 }
 
 /// `roblox_arrange_windows` — the "Arrange now" action: place every Roblox game
-/// window into the configured grid immediately. Returns the number of windows
-/// placed.
+/// window into the configured grid immediately. Returns how many windows were
+/// detected and how many were placed.
 #[tauri::command]
-pub async fn roblox_arrange_windows(app: AppHandle) -> Result<usize, String> {
+pub async fn roblox_arrange_windows(app: AppHandle) -> Result<ArrangeOutcome, String> {
     crate::platform::ensure_windows()?;
-    let placed = arrange_windows(&app).await?;
+    let outcome = arrange_windows(&app).await?;
     crate::logging::send_log(
         &app,
-        "ok",
+        if outcome.placed == outcome.found { "ok" } else { "warn" },
         "layout",
-        &format!("Arranged {placed} Roblox window(s)"),
-        serde_json::json!({ "count": placed }),
+        &format!(
+            "Arranged {} of {} Roblox window(s)",
+            outcome.placed, outcome.found
+        ),
+        serde_json::json!({ "found": outcome.found, "placed": outcome.placed }),
     );
-    Ok(placed)
+    Ok(outcome)
+}
+
+/// `roblox_window_count` — the number of Roblox client windows currently on
+/// screen (class-based detection, PID sweep as a fallback). Never errors: `0`
+/// on any failure and off Windows, so the settings panel can poll it freely.
+#[tauri::command]
+pub async fn roblox_window_count() -> Result<usize, String> {
+    if !crate::platform::is_windows() {
+        return Ok(0);
+    }
+    #[cfg(windows)]
+    {
+        Ok(snapshot_windows().await.len())
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(0)
+    }
 }
 
 #[cfg(test)]
