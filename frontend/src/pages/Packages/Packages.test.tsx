@@ -45,12 +45,12 @@ describe('PackagesPage group workspace', () => {
     const user = userEvent.setup();
     render(<PackagesPage onCreatePackage={onCreatePackage} />);
 
-    expect(await screen.findByText('No tienes ningún grupo guardado todavía.')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Crear grupo' }));
+    expect(await screen.findByText("You don't have any saved group yet.")).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Create group' }));
 
     expect(onCreatePackage).toHaveBeenCalledOnce();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Crear grupo' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Create group' })).toBeInTheDocument();
   });
 
   it('renders a modern group card and opens the existing edit flow', async () => {
@@ -60,10 +60,10 @@ describe('PackagesPage group workspace', () => {
     render(<PackagesPage onEditPackage={onEditPackage} />);
 
     expect(await screen.findByRole('heading', { name: PACKAGE.name })).toBeInTheDocument();
-    expect(screen.getByText('1 cuenta')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /^Editar$/ }));
+    expect(screen.getByText('1 account')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^Edit$/ }));
 
     expect(onEditPackage).toHaveBeenCalledWith(PACKAGE);
-    expect(screen.getByRole('heading', { name: 'Editar grupo' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Edit group' })).toBeInTheDocument();
   });
 });

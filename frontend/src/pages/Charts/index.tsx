@@ -44,6 +44,8 @@ import { ipc } from '@/lib/ipc';
 import { useLaunchIntentStore } from '@/stores/launchIntentStore';
 import { usePlaceLibraryStore } from '@/stores/placeLibraryStore';
 import { useToastStore } from '@/stores/toastStore';
+import { useTranslation } from '@/i18n/useTranslation';
+import type { Translator } from '@/i18n';
 import './Charts.css';
 
 type LoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
@@ -52,7 +54,6 @@ type ReachFilter = 'all' | 'established' | 'massive';
 interface TabPresentation {
   icon: LucideIcon;
   code: string;
-  description: string;
 }
 
 interface RankedGame {
@@ -64,29 +65,31 @@ const TAB_PRESENTATION: Record<ChartSortId, TabPresentation> = {
   'top-playing-now': {
     icon: Activity,
     code: 'LIVE',
-    description: 'Ordered by concurrent player activity',
   },
   'top-rated': {
     icon: Star,
     code: 'SCORE',
-    description: 'Community-rated discovery signal',
   },
   'top-earning': {
     icon: CircleDollarSign,
     code: 'VALUE',
-    description: 'Commercial momentum across Roblox',
   },
 };
 
 const REACH_FILTERS: ReadonlyArray<{
   id: ReachFilter;
-  label: string;
   minimum: number;
 }> = [
-  { id: 'all', label: 'All reach', minimum: 0 },
-  { id: 'established', label: '10K+', minimum: 10_000 },
-  { id: 'massive', label: '100K+', minimum: 100_000 },
+  { id: 'all', minimum: 0 },
+  { id: 'established', minimum: 10_000 },
+  { id: 'massive', minimum: 100_000 },
 ];
+
+/** Visible label for a reach filter ('All reach' is the only translated one). */
+function reachFilterLabel(id: ReachFilter, t: Translator): string {
+  if (id === 'all') return t('charts.reachAll');
+  return id === 'established' ? '10K+' : '100K+';
+}
 
 const compactNumber = new Intl.NumberFormat('en', {
   notation: 'compact',
@@ -102,6 +105,7 @@ function formatPlayers(value: number | null): string {
 /** Ranked Roblox discovery surface backed by the existing Charts API. */
 export default function ChartsPage(): JSX.Element {
   const reducedMotion = useReducedMotion() ?? false;
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<ChartSortId>(CHART_TABS[0].id);
   const [query, setQuery] = useState('');
   const [reachFilter, setReachFilter] = useState<ReachFilter>('all');
@@ -184,15 +188,14 @@ export default function ChartsPage(): JSX.Element {
   const isError = activeGames === undefined && status === 'error';
   const liveState = isLoading ? 'syncing' : isError ? 'error' : 'live';
   const liveLabel = isLoading
-    ? 'Syncing chart'
+    ? t('charts.syncing')
     : isError
-      ? 'Signal offline'
-      : 'Live discovery';
+      ? t('charts.offline')
+      : t('charts.live');
   const filtersActive = trimmedQuery.length > 0 || reachFilter !== 'all';
   const showPodium = !filtersActive && visibleGames.length > 0;
   const podiumGames = showPodium ? visibleGames.slice(0, 3) : [];
   const streamGames = showPodium ? visibleGames.slice(3) : visibleGames;
-  const activePresentation = TAB_PRESENTATION[activeTab];
 
   const handleTabChange = (tab: ChartSortId): void => {
     if (tab === activeTab) return;
@@ -234,7 +237,7 @@ export default function ChartsPage(): JSX.Element {
     if (!game.placeId) return;
     const wasFavorite = favoriteIds.has(String(game.placeId));
     toggleFavorite(placeSeed(game));
-    showSuccess(wasFavorite ? 'Experience removed from favorites.' : 'Experience saved to launcher favorites.');
+    showSuccess(wasFavorite ? t('charts.favRemoved') : t('charts.favSaved'));
   };
 
   const handleOpenGame = (game: Game): void => {
@@ -256,9 +259,9 @@ export default function ChartsPage(): JSX.Element {
         transition={{ duration: reducedMotion ? 0 : 0.28, ease: 'easeOut' }}
       >
         <div className="charts-heading">
-          <span className="charts-eyebrow">Discovery / Roblox network</span>
-          <h1 id="charts-title">Charts</h1>
-          <p>Track the experiences pulling attention across the platform.</p>
+          <span className="charts-eyebrow">{t('charts.eyebrow')}</span>
+          <h1 id="charts-title">{t('charts.title')}</h1>
+          <p>{t('charts.subtitle')}</p>
         </div>
         <div
           className="charts-live"
@@ -270,29 +273,29 @@ export default function ChartsPage(): JSX.Element {
         </div>
       </motion.header>
 
-      <div className="charts-vitals" aria-label="Active chart summary">
+      <div className="charts-vitals" aria-label={t('charts.summaryAria')}>
         <div className="charts-vital">
           <span className="charts-vital__icon"><BarChart3 size={16} /></span>
           <span className="charts-vital__copy">
-            <small>Indexed</small>
+            <small>{t('charts.indexed')}</small>
             <strong>{isLoading ? '—' : sourceGames.length}</strong>
           </span>
-          <span className="charts-vital__unit">experiences</span>
+          <span className="charts-vital__unit">{t('charts.experiences')}</span>
         </div>
         <div className="charts-vital">
           <span className="charts-vital__icon"><Users size={16} /></span>
           <span className="charts-vital__copy">
-            <small>Concurrent reach</small>
+            <small>{t('charts.concurrentReach')}</small>
             <strong>{isLoading ? '—' : formatPlayers(totalConcurrent)}</strong>
           </span>
-          <span className="charts-vital__unit">players</span>
+          <span className="charts-vital__unit">{t('charts.players')}</span>
         </div>
         <div className="charts-vital charts-vital--leader">
           <span className="charts-vital__icon"><Trophy size={16} /></span>
           <span className="charts-vital__copy">
-            <small>Current leader</small>
+            <small>{t('charts.currentLeader')}</small>
             <strong title={sourceGames[0]?.name || undefined}>
-              {isLoading ? 'Reading signal' : sourceGames[0]?.name || 'No signal'}
+              {isLoading ? t('charts.readingSignal') : sourceGames[0]?.name || t('charts.noSignal')}
             </strong>
           </span>
           <TrendingUp size={15} className="charts-vital__trend" />
@@ -302,7 +305,7 @@ export default function ChartsPage(): JSX.Element {
       <div className="charts-command">
         <div className="charts-command__ranking">
           <LayoutGroup id="charts-ranking-tabs">
-            <div className="charts-tab-bar" role="tablist" aria-label="Game charts">
+            <div className="charts-tab-bar" role="tablist" aria-label={t('charts.tablistAria')}>
               {CHART_TABS.map((tab, index) => {
                 const presentation = TAB_PRESENTATION[tab.id];
                 const TabIcon = presentation.icon;
@@ -335,7 +338,7 @@ export default function ChartsPage(): JSX.Element {
                       />
                     ) : null}
                     <TabIcon size={15} aria-hidden="true" />
-                    <span>{tab.label}</span>
+                    <span>{t(`charts.tab.${tab.id}`)}</span>
                     <small>{presentation.code}</small>
                   </motion.button>
                 );
@@ -344,7 +347,7 @@ export default function ChartsPage(): JSX.Element {
           </LayoutGroup>
           <div className="charts-mode-note">
             <Radio size={13} aria-hidden="true" />
-            <span>{activePresentation.description}</span>
+            <span>{t(`charts.tabDesc.${activeTab}`)}</span>
           </div>
         </div>
 
@@ -358,8 +361,8 @@ export default function ChartsPage(): JSX.Element {
             <Search size={17} aria-hidden="true" />
             <input
               type="search"
-              aria-label="Search games"
-              placeholder="Search the live ranking"
+              aria-label={t('charts.searchAria')}
+              placeholder={t('charts.searchPlaceholder')}
               value={query}
               onFocus={() => setSearchFocused(true)}
               onBlur={() => setSearchFocused(false)}
@@ -370,7 +373,7 @@ export default function ChartsPage(): JSX.Element {
                 <motion.button
                   className="charts-search__clear"
                   type="button"
-                  aria-label="Clear search"
+                  aria-label={t('charts.clearSearch')}
                   onClick={() => setQuery('')}
                   initial={{ opacity: 0, scale: reducedMotion ? 1 : 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
@@ -385,9 +388,9 @@ export default function ChartsPage(): JSX.Element {
             </span>
           </motion.div>
 
-          <div className="charts-reach" aria-label="Filter by player reach">
+          <div className="charts-reach" aria-label={t('charts.reachAria')}>
             <span className="charts-reach__label">
-              <Filter size={14} aria-hidden="true" /> Reach
+              <Filter size={14} aria-hidden="true" /> {t('charts.reach')}
             </span>
             {REACH_FILTERS.map((filter) => (
               <motion.button
@@ -398,7 +401,7 @@ export default function ChartsPage(): JSX.Element {
                 onClick={() => setReachFilter(filter.id)}
                 whileTap={reducedMotion ? undefined : { scale: 0.97 }}
               >
-                {filter.label}
+                {reachFilterLabel(filter.id, t)}
               </motion.button>
             ))}
           </div>
@@ -419,10 +422,10 @@ export default function ChartsPage(): JSX.Element {
               key={`error-${activeTab}`}
               tone="error"
               icon={RefreshCw}
-              eyebrow="Signal interrupted"
-              title="The Roblox chart could not be reached."
-              copy="Check the connection and retry this ranking feed."
-              action="Retry"
+              eyebrow={t('charts.errorEyebrow')}
+              title={t('charts.errorTitle')}
+              copy={t('charts.errorCopy')}
+              action={t('charts.retry')}
               onAction={() => void loadTab(activeTab)}
               reducedMotion={reducedMotion}
             />
@@ -431,18 +434,18 @@ export default function ChartsPage(): JSX.Element {
               key={`empty-${activeTab}-${filtersActive ? 'filtered' : 'feed'}`}
               tone="quiet"
               icon={filtersActive ? Search : Gamepad2}
-              eyebrow={filtersActive ? 'No matching signal' : 'Chart standing by'}
+              eyebrow={filtersActive ? t('charts.noMatchEyebrow') : t('charts.standbyEyebrow')}
               title={
                 filtersActive
-                  ? 'No experiences match this view.'
-                  : 'No chart signal is available yet.'
+                  ? t('charts.noMatchTitle')
+                  : t('charts.standbyTitle')
               }
               copy={
                 filtersActive
-                  ? 'Try a broader name or lower the player-reach threshold.'
-                  : 'Refresh the feed to ask Roblox for a new discovery snapshot.'
+                  ? t('charts.noMatchCopy')
+                  : t('charts.standbyCopy')
               }
-              action={filtersActive ? 'Clear search and filters' : 'Refresh chart'}
+              action={filtersActive ? t('charts.clearFilters') : t('charts.refresh')}
               onAction={filtersActive ? clearFilters : () => void loadTab(activeTab)}
               reducedMotion={reducedMotion}
             />
@@ -457,13 +460,13 @@ export default function ChartsPage(): JSX.Element {
             >
               <div className="charts-stream-head">
                 <div>
-                  <span>Ranking stream</span>
+                  <span>{t('charts.rankingStream')}</span>
                   <strong>
-                    {filtersActive ? 'Filtered discovery' : 'Live leaderboard'}
+                    {filtersActive ? t('charts.filteredDiscovery') : t('charts.liveLeaderboard')}
                   </strong>
                 </div>
                 <span className="charts-stream-head__rule" aria-hidden="true" />
-                <small>{visibleGames.length} visible</small>
+                <small>{t('charts.visibleCount', { count: visibleGames.length })}</small>
               </div>
 
               {podiumGames.length > 0 ? (
@@ -540,6 +543,7 @@ function ChartGameCard({
   onOpen,
   onLaunch,
 }: ChartGameCardProps): JSX.Element {
+  const { t } = useTranslation();
   const [thumbFailed, setThumbFailed] = useState(false);
   const showThumb = Boolean(game.thumbUrl) && !thumbFailed;
   const strength =
@@ -553,7 +557,7 @@ function ChartGameCard({
   return (
     <motion.article
       className={`chart-card chart-card--${variant}`}
-      aria-label={`Rank ${rank}: ${game.name || 'Unknown game'}`}
+      aria-label={t('charts.rankAria', { rank, name: game.name || t('charts.unknownGame') })}
       data-rank={rank}
       data-place-id={game.placeId ?? undefined}
       style={style}
@@ -586,52 +590,52 @@ function ChartGameCard({
         </span>
         {variant === 'leader' ? (
           <span className="chart-card__leader-tag">
-            <Trophy size={12} aria-hidden="true" /> Network leader
+            <Trophy size={12} aria-hidden="true" /> {t('charts.networkLeader')}
           </span>
         ) : null}
       </div>
 
       <div className="chart-card__body">
         <div className="chart-card__heading">
-          <span>{variant === 'row' ? `Chart position ${rank}` : 'Discovery signal'}</span>
-          <h2 title={game.name || 'Unknown game'}>{game.name || 'Unknown game'}</h2>
+          <span>{variant === 'row' ? t('charts.chartPosition', { rank }) : t('charts.discoverySignal')}</span>
+          <h2 title={game.name || t('charts.unknownGame')}>{game.name || t('charts.unknownGame')}</h2>
         </div>
         <div className="chart-card__reach">
           <Users size={14} aria-hidden="true" />
           <strong>{formatPlayers(game.playerCount)}</strong>
-          <span>active</span>
+          <span>{t('charts.active')}</span>
         </div>
         <div className="chart-card__meter" aria-hidden="true">
           <span />
         </div>
-        <div className="chart-card__actions" aria-label={`Actions for ${game.name || 'game'}`}>
+        <div className="chart-card__actions" aria-label={t('charts.actionsAria', { name: game.name || t('charts.gameFallback') })}>
           <button
             type="button"
             data-active={favorite || undefined}
             disabled={!game.placeId}
-            aria-label={favorite ? 'Remove from favorites' : 'Save to favorites'}
-            title={favorite ? 'Remove from favorites' : 'Save to launcher'}
+            aria-label={favorite ? t('charts.removeFavorite') : t('charts.saveFavorite')}
+            title={favorite ? t('charts.removeFavorite') : t('charts.saveToLauncher')}
             onClick={onFavorite}
           >
             <Star size={13} fill={favorite ? 'currentColor' : 'none'} />
-            <span>{favorite ? 'Saved' : 'Save'}</span>
+            <span>{favorite ? t('charts.saved') : t('charts.save')}</span>
           </button>
           <button
             type="button"
             disabled={!game.placeId}
-            title="Open Roblox experience page"
+            title={t('charts.openPage')}
             onClick={onOpen}
           >
-            <ExternalLink size={13} /><span>Open</span>
+            <ExternalLink size={13} /><span>{t('charts.open')}</span>
           </button>
           <button
             type="button"
             className="chart-card__launch"
             disabled={!game.placeId}
-            title="Choose accounts and launch"
+            title={t('charts.chooseLaunch')}
             onClick={onLaunch}
           >
-            <Rocket size={13} /><span>Launch</span>
+            <Rocket size={13} /><span>{t('charts.launch')}</span>
           </button>
         </div>
       </div>
@@ -640,16 +644,17 @@ function ChartGameCard({
 }
 
 function ChartsSkeleton(): JSX.Element {
+  const { t } = useTranslation();
   return (
     <motion.div
       className="charts-skeleton"
       role="status"
-      aria-label="Loading games"
+      aria-label={t('charts.loadingAria')}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
     >
-      <span className="sr-only">Loading games…</span>
+      <span className="sr-only">{t('charts.loading')}</span>
       <div className="charts-skeleton__head" aria-hidden="true">
         <span /><span />
       </div>

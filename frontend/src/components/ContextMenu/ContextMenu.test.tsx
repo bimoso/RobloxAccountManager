@@ -244,7 +244,7 @@ describe('ContextMenu', () => {
       />,
     );
 
-    expect(screen.getByRole('menu', { name: 'Acciones para NebulaRunner' })).toBeInTheDocument();
+    expect(screen.getByRole('menu', { name: 'Actions for NebulaRunner' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Copiar ID de usuario' })).toHaveTextContent('UID');
     expect(screen.getByRole('menuitem', { name: 'Copiar nombre de usuario' })).toHaveTextContent('USER');
   });

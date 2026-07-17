@@ -48,3 +48,22 @@ button {
   background: color-mix(in srgb, var(--ac) 42%, transparent);
   color: var(--t1);
 }
+
+/* ── Global state transitions (theme + language switches) ─────────────────
+ * Theme and language changes run inside a document view transition
+ * (lib/viewTransition.ts). The default engine animation is a cross-fade; we
+ * only tune its duration/easing to the motion-token scale (--dur-slow /
+ * --ease-smooth-out equivalents). Under reduced motion the transition is
+ * never started, so no override is needed here. */
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: var(--dur-slow, 400ms);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  ::view-transition-old(root) {
+    /* Closing state gets out of the way faster than the new one arrives. */
+    animation-duration: var(--dur-medium, 350ms);
+  }
+}

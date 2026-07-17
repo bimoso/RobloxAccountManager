@@ -34,19 +34,12 @@ import {
 import { findMatches } from '@/lib/logSearch';
 import { useHotkey } from '@/hooks/useHotkey';
 import { Dropdown, type DropdownOption } from '@/components/Dropdown';
-import { EMPTY_LOG_MESSAGE, formatLogLine } from './presentation';
+import { useTranslation } from '@/i18n/useTranslation';
+import { formatLogLine } from './presentation';
 import './Logs.css';
 
 type LogTone = 'info' | 'success' | 'warning' | 'error';
 type LogFilter = 'all' | LogTone;
-
-const LOG_FILTER_OPTIONS: ReadonlyArray<DropdownOption<LogFilter>> = [
-  { value: 'all', label: 'All events' },
-  { value: 'success', label: 'Successful' },
-  { value: 'info', label: 'Information' },
-  { value: 'warning', label: 'Warnings' },
-  { value: 'error', label: 'Errors' },
-];
 
 
 function logTone(entry: LogEntry): LogTone {
@@ -71,6 +64,16 @@ function logTone(entry: LogEntry): LogTone {
 export function LogsPage(): JSX.Element {
   const entries = useLogStore((state) => state.entries);
   const reducedMotion = useReducedMotion() ?? false;
+  const { t } = useTranslation();
+
+  // `t` is rebound per language, so the options re-derive on language change.
+  const logFilterOptions = useMemo<ReadonlyArray<DropdownOption<LogFilter>>>(() => [
+    { value: 'all', label: t('logs.filter.all') },
+    { value: 'success', label: t('logs.filter.success') },
+    { value: 'info', label: t('logs.filter.info') },
+    { value: 'warning', label: t('logs.filter.warning') },
+    { value: 'error', label: t('logs.filter.error') },
+  ], [t]);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -246,31 +249,31 @@ export function LogsPage(): JSX.Element {
     <section className="logs-page" aria-labelledby="logs-title">
       <header className="logs-header">
         <div className="logs-heading">
-          <span className="logs-eyebrow">Operations / local session</span>
-          <h1 className="logs-title" id="logs-title">Logs</h1>
+          <span className="logs-eyebrow">{t('logs.eyebrow')}</span>
+          <h1 className="logs-title" id="logs-title">{t('logs.title')}</h1>
           <p className="logs-sub">
-            Inspect launches, browser events and runtime failures as they happen.
+            {t('logs.subtitle')}
           </p>
         </div>
-        <div className="logs-live" aria-label="Session capture is active">
+        <div className="logs-live" aria-label={t('logs.liveAria')}>
           <span className="logs-live__pulse" aria-hidden="true" />
-          Live capture
+          {t('logs.liveCapture')}
         </div>
       </header>
 
-      <div className="logs-vitals" aria-label="Log summary">
+      <div className="logs-vitals" aria-label={t('logs.summaryAria')}>
         <div className="logs-vital">
           <Activity size={16} aria-hidden="true" />
-          <span>Session events</span>
+          <span>{t('logs.sessionEvents')}</span>
           <strong>{entries.length}</strong>
         </div>
         <div className="logs-vital" data-tone={attentionCount > 0 ? 'error' : 'quiet'}>
           <AlertTriangle size={16} aria-hidden="true" />
-          <span>Needs attention</span>
+          <span>{t('logs.needsAttention')}</span>
           <strong>{attentionCount}</strong>
         </div>
         <div className="logs-vital logs-vital--buffer">
-          <span>In-memory buffer</span>
+          <span>{t('logs.buffer')}</span>
           <strong>{Math.round((entries.length / MAX_LOG_ENTRIES) * 100)}%</strong>
         </div>
       </div>
@@ -279,20 +282,20 @@ export function LogsPage(): JSX.Element {
         <div className="logs-console__bar">
           <div className="logs-console__identity">
             <TerminalSquare size={16} aria-hidden="true" />
-            <span>Session console</span>
+            <span>{t('logs.console')}</span>
             <span className="logs-console__channel">LOCAL</span>
           </div>
-          <span className="logs-console__shortcut">Ctrl F to search</span>
+          <span className="logs-console__shortcut">{t('logs.shortcut')}</span>
         </div>
 
         <div className="logs-toolbar">
           <div className="logs-filter">
             <Filter size={15} aria-hidden="true" />
             <Dropdown
-              options={LOG_FILTER_OPTIONS}
+              options={logFilterOptions}
               value={filter}
               onChange={setFilter}
-              aria-label="Filter log level"
+              aria-label={t('logs.filterAria')}
             />
           </div>
 
@@ -303,7 +306,7 @@ export function LogsPage(): JSX.Element {
             onClick={() => setFollowTail((current) => !current)}
           >
             <Radio size={15} aria-hidden="true" />
-            {followTail ? 'Following' : 'Paused'}
+            {followTail ? t('logs.following') : t('logs.paused')}
           </button>
 
           <div className="logs-toolbar__spacer" />
@@ -329,8 +332,8 @@ export function LogsPage(): JSX.Element {
                   ref={inputRef}
                   className="log-find-input"
                   type="text"
-                  placeholder="Find in session"
-                  aria-label="Find in log"
+                  placeholder={t('logs.findPlaceholder')}
+                  aria-label={t('logs.findAria')}
                   value={query}
                   onChange={(event) => {
                     setQuery(event.target.value);
@@ -342,13 +345,13 @@ export function LogsPage(): JSX.Element {
                   {totalMatches === 0
                     ? query.length === 0
                       ? ''
-                      : '0 results'
+                      : t('logs.noResults')
                     : `${activeMatch + 1}/${totalMatches}`}
                 </span>
                 <button
                   type="button"
                   className="log-find-btn"
-                  aria-label="Previous match"
+                  aria-label={t('logs.prevMatch')}
                   disabled={totalMatches === 0}
                   onClick={() => gotoMatch(-1)}
                 >
@@ -357,7 +360,7 @@ export function LogsPage(): JSX.Element {
                 <button
                   type="button"
                   className="log-find-btn"
-                  aria-label="Next match"
+                  aria-label={t('logs.nextMatch')}
                   disabled={totalMatches === 0}
                   onClick={() => gotoMatch(1)}
                 >
@@ -366,7 +369,7 @@ export function LogsPage(): JSX.Element {
                 <button
                   type="button"
                   className="log-find-btn"
-                  aria-label="Close search"
+                  aria-label={t('logs.closeSearch')}
                   onClick={() => setSearchOpen(false)}
                 >
                   <X size={14} />
@@ -385,7 +388,7 @@ export function LogsPage(): JSX.Element {
                 transition={{ duration: reducedMotion ? 0 : 0.15 }}
               >
                 <Search size={15} aria-hidden="true" />
-                Search
+                {t('logs.search')}
               </motion.button>
             )}
           </AnimatePresence>
@@ -393,8 +396,8 @@ export function LogsPage(): JSX.Element {
           <button
             type="button"
             className="logs-tool-btn logs-tool-btn--icon"
-            aria-label="Copy visible logs"
-            title="Copy visible logs"
+            aria-label={t('logs.copyVisible')}
+            title={t('logs.copyVisible')}
             disabled={rows.length === 0}
             onClick={() => void copyVisible()}
           >
@@ -415,10 +418,9 @@ export function LogsPage(): JSX.Element {
                 <TerminalSquare size={28} />
                 <span />
               </div>
-              <p className="logs-empty__title">{EMPTY_LOG_MESSAGE}</p>
+              <p className="logs-empty__title">{t('logs.emptyTitle')}</p>
               <p className="logs-empty__copy">
-                Launch an account or open a browser session. Runtime signals will
-                land here automatically.
+                {t('logs.emptyCopy')}
               </p>
               <div className="logs-empty__route" aria-hidden="true">
                 <span>ACCOUNT</span><i /><span>RUNTIME</span><i /><span>LOG</span>
@@ -427,14 +429,14 @@ export function LogsPage(): JSX.Element {
           ) : hasFilteredOutEntries ? (
             <div className="logs-empty logs-empty--compact" role="status">
               <Filter size={25} aria-hidden="true" />
-              <p className="logs-empty__title">No events match this view.</p>
-              <p className="logs-empty__copy">Choose another severity to inspect the session.</p>
+              <p className="logs-empty__title">{t('logs.noMatchTitle')}</p>
+              <p className="logs-empty__copy">{t('logs.noMatchCopy')}</p>
               <button type="button" className="logs-reset" onClick={() => setFilter('all')}>
-                <RotateCcw size={14} /> Reset filter
+                <RotateCcw size={14} /> {t('logs.resetFilter')}
               </button>
             </div>
           ) : (
-            <div className="logs-list" role="log" aria-label="Session log">
+            <div className="logs-list" role="log" aria-label={t('logs.logAria')}>
               <AnimatePresence initial={false}>
                 {rows.map((row) => renderLine(row))}
               </AnimatePresence>
@@ -443,10 +445,10 @@ export function LogsPage(): JSX.Element {
         </div>
 
         <footer className="logs-statusbar">
-          <span>{rows.length} visible</span>
-          <span>{entries.length}/{MAX_LOG_ENTRIES} buffered</span>
+          <span>{t('logs.visible', { count: rows.length })}</span>
+          <span>{t('logs.buffered', { count: entries.length, max: MAX_LOG_ENTRIES })}</span>
           <span className={followTail ? 'is-live' : undefined}>
-            {followTail ? 'Tail linked' : 'Tail paused'}
+            {followTail ? t('logs.tailLinked') : t('logs.tailPaused')}
           </span>
         </footer>
       </div>

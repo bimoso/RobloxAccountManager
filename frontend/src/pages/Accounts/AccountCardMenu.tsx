@@ -3,6 +3,7 @@ import { AnimatePresence } from 'framer-motion';
 import { ContextMenu, type ContextMenuAnchor } from '@/components/ContextMenu';
 import { ipc } from '@/lib/ipc';
 import { displayName, isLaunched } from '@/lib/filters';
+import { useTranslation } from '@/i18n/useTranslation';
 import type { Account } from '@/types/models';
 import { AccountCard } from './AccountCard';
 import { buildContextMenuItems, type ContextMenuHandlers } from './contextMenu';
@@ -93,6 +94,7 @@ export function AccountCardMenu({
 }: AccountCardMenuProps): JSX.Element {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState<AccountMenuAnchor | null>(null);
+  const { t } = useTranslation();
 
   const closeMenu = useCallback(() => setAnchor(null), []);
 
@@ -140,8 +142,8 @@ export function AccountCardMenu({
   );
 
   const items = useMemo(
-    () => buildContextMenuItems(isLaunched(account), handlers),
-    [account, handlers],
+    () => buildContextMenuItems(isLaunched(account), handlers, t),
+    [account, handlers, t],
   );
 
   return (
@@ -166,7 +168,7 @@ export function AccountCardMenu({
             onClose={closeMenu}
             title={displayName(account)}
             subtitle={account.username ? `@${account.username}` : `UID ${account.userId}`}
-            eyebrow="Comandos de cuenta"
+            eyebrow={t('accounts.menu.eyebrow')}
           />
         )}
       </AnimatePresence>

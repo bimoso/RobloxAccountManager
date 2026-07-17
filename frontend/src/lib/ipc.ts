@@ -100,6 +100,7 @@ export const ipc = {
   killOneRoblox: (id: string) => call('killOneRoblox', [id], true),
   // Background polling: the running-instance count is refreshed on a timer.
   getRunningCount: () => call('getRunningCount', [], false),
+  arrangeWindows: () => call('arrangeWindows', [], true),
   // Event subscription: registered during setup, not a user action.
   onAllRobloxClosed: (cb: () => void) => call('onAllRobloxClosed', [cb], false),
   launchRoblox: (id: string, cookie: string, target: string) =>

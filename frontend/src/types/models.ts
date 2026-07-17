@@ -93,6 +93,20 @@ export interface Settings {
   robloxLaunchMode?: 'direct' | 'protocol';
   /** Installation id selected in the Clients control deck. */
   robloxLaunchPresetId?: string | null;
+  /** Relaunch an account after its instance exits unexpectedly. */
+  autoRelaunch?: boolean;
+  /** Close an account's existing instance before launching it again. */
+  replaceRunningInstance?: boolean;
+  /** Arrange Roblox game windows into a grid as instances open/close. */
+  windowLayoutEnabled?: boolean;
+  /** Size the grid from the desktop work area instead of the target size. */
+  windowAutoLayout?: boolean;
+  /** Fixed grid-cell width in pixels for the manual window layout. */
+  windowTargetWidth?: number;
+  /** Fixed grid-cell height in pixels for the manual window layout. */
+  windowTargetHeight?: number;
+  /** Windows placed per grid row in the manual window layout. */
+  windowPerRow?: number;
   /** Catch-all preserving any unrecognized/legacy field on round-trip. */
   [key: string]: unknown;
 }

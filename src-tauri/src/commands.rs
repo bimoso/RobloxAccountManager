@@ -155,6 +155,28 @@ pub fn settings_save(app: AppHandle, data: Map<String, Value>) -> Result<bool, S
         encryption::invalidate_key_cache();
     }
 
+    // Window-layout side effect: a change to any layout-affecting key re-runs
+    // the arrangement right away (the pass itself exits immediately while the
+    // feature is disabled). Clearing `layout_last` forces the next pass to
+    // re-arrange even when the window set itself did not change.
+    const LAYOUT_KEYS: [&str; 5] = [
+        "windowLayoutEnabled",
+        "windowAutoLayout",
+        "windowTargetWidth",
+        "windowTargetHeight",
+        "windowPerRow",
+    ];
+    if LAYOUT_KEYS.iter().any(|k| data.contains_key(*k)) {
+        use tauri::Manager;
+        if let Some(state) = app.try_state::<crate::AppState>() {
+            *state
+                .layout_last
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()) = None;
+        }
+        crate::window_layout::schedule_layout_pass(&app, 0);
+    }
+
     // NOTE (Task 9 / native_helper.rs): the legacy handler also starts/stops the
     // Native_Helper mutex holder on `multiInstance` and the anti-AFK loop on
     // `antiAfk` / `antiAfkInterval` here. Those side effects are wired in when

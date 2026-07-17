@@ -34,6 +34,7 @@ import {
 } from '@/lib/mixer';
 import { useAccountStore } from '@/stores/accountStore';
 import { useToastStore } from '@/stores/toastStore';
+import { useTranslation } from '@/i18n/useTranslation';
 import type { Account } from '@/types/models';
 
 const VOLUME_PREVIEW_DEBOUNCE_MS = 90;
@@ -52,6 +53,7 @@ export function MixerTab(): JSX.Element {
   const showSuccess = useToastStore((state) => state.showSuccess);
   const showError = useToastStore((state) => state.showError);
   const accounts = useAccountStore((state) => state.accounts);
+  const { t } = useTranslation();
 
   const [relaunching, setRelaunching] = useState(false);
   const [gfxAuto, setGfxAuto] = useState(true);
@@ -155,8 +157,8 @@ export function MixerTab(): JSX.Element {
         await writeGraphics(checked ? null : gfxValue);
         if (!checked) gfxPersistedRef.current = gfxValue;
         showSuccess(checked
-          ? 'Graphics set to Auto'
-          : `Graphics quality: ${gfxValue} (next launch)`);
+          ? t('mixer.gfxAuto')
+          : t('mixer.gfxSet', { value: gfxValue }));
       } catch {
         // The shared IPC adapter already surfaced one error toast. Roll the
         // optimistic switch back without emitting a duplicate notification.
@@ -166,7 +168,7 @@ export function MixerTab(): JSX.Element {
         setGfxSaving(false);
       }
     })();
-  }, [gfxAuto, gfxValue, showSuccess, writeGraphics]);
+  }, [gfxAuto, gfxValue, showSuccess, writeGraphics, t]);
 
   const onGfxCommit = useCallback(() => {
     if (gfxAuto || gfxWriteInFlightRef.current) return;
@@ -177,7 +179,7 @@ export function MixerTab(): JSX.Element {
       try {
         await writeGraphics(gfxValue);
         gfxPersistedRef.current = gfxValue;
-        showSuccess(`Graphics quality: ${gfxValue} (next launch)`);
+        showSuccess(t('mixer.gfxSet', { value: gfxValue }));
       } catch {
         setGfxValue(previous);
       } finally {
@@ -185,7 +187,7 @@ export function MixerTab(): JSX.Element {
         setGfxSaving(false);
       }
     })();
-  }, [gfxAuto, gfxValue, showSuccess, writeGraphics]);
+  }, [gfxAuto, gfxValue, showSuccess, writeGraphics, t]);
 
   const onFpsUnlimitedToggle = useCallback((checked: boolean) => {
     if (fpsWriteInFlightRef.current) return;
@@ -198,8 +200,8 @@ export function MixerTab(): JSX.Element {
         await ipc.writeFpsCap(checked ? FPS_CAP_UNLIMITED : fpsValue);
         if (!checked) fpsPersistedRef.current = fpsValue;
         showSuccess(checked
-          ? 'FPS set to unlimited (next launch)'
-          : `FPS cap: ${fpsValue} (next launch)`);
+          ? t('mixer.fpsUnlimitedSet')
+          : t('mixer.fpsCapSet', { value: fpsValue }));
       } catch {
         setFpsUnlimited(previous);
       } finally {
@@ -207,7 +209,7 @@ export function MixerTab(): JSX.Element {
         setFpsSaving(false);
       }
     })();
-  }, [fpsUnlimited, fpsValue, showSuccess]);
+  }, [fpsUnlimited, fpsValue, showSuccess, t]);
 
   const onFpsCommit = useCallback(() => {
     if (fpsUnlimited || fpsWriteInFlightRef.current) return;
@@ -218,7 +220,7 @@ export function MixerTab(): JSX.Element {
       try {
         await ipc.writeFpsCap(fpsValue);
         fpsPersistedRef.current = fpsValue;
-        showSuccess(`FPS cap: ${fpsValue} (next launch)`);
+        showSuccess(t('mixer.fpsCapSet', { value: fpsValue }));
       } catch {
         setFpsValue(previous);
       } finally {
@@ -226,7 +228,7 @@ export function MixerTab(): JSX.Element {
         setFpsSaving(false);
       }
     })();
-  }, [fpsUnlimited, fpsValue, showSuccess]);
+  }, [fpsUnlimited, fpsValue, showSuccess, t]);
 
   const onVolumeChange = useCallback((next: number) => {
     volumeRef.current = next;
@@ -275,7 +277,7 @@ export function MixerTab(): JSX.Element {
         await ipc.setRobloxVolume(next);
         volumePreviewFailedRef.current = false;
         volumeDirtyRef.current = false;
-        showSuccess(`Volume ${next}%`);
+        showSuccess(t('mixer.volumeSet', { value: next }));
       } catch {
         // A failed persistence write means the previous value remains the
         // source of truth. `ipc` already emitted the single failure toast.
@@ -293,7 +295,7 @@ export function MixerTab(): JSX.Element {
         setVolumeSaving(false);
       }
     })();
-  }, [cancelScheduledVolumePreview, showSuccess]);
+  }, [cancelScheduledVolumePreview, showSuccess, t]);
 
   const relaunchAccount = useCallback(async (account: Account) => {
     await ipc.killOneRoblox(account.id);
@@ -304,7 +306,7 @@ export function MixerTab(): JSX.Element {
     if (relaunching) return;
     const running = accountsToRelaunch(accounts);
     if (running.length === 0) {
-      showSuccess('No running accounts to relaunch');
+      showSuccess(t('mixer.noRunning'));
       return;
     }
 
@@ -317,7 +319,7 @@ export function MixerTab(): JSX.Element {
     } finally {
       setRelaunching(false);
     }
-  }, [accounts, relaunchAccount, relaunching, showError, showSuccess]);
+  }, [accounts, relaunchAccount, relaunching, showError, showSuccess, t]);
 
   const runningCount = accountsToRelaunch(accounts).length;
   const gfxDisabled = manualQualityDisabled(gfxAuto);
@@ -329,14 +331,14 @@ export function MixerTab(): JSX.Element {
           <SlidersHorizontal size={20} strokeWidth={1.8} />
         </div>
         <div className="settings-mixer-intro-copy">
-          <span className="settings-eyebrow">Client performance</span>
-          <h2>Runtime mixer</h2>
-          <p>Tune visual quality, frame pacing and live volume from one control surface.</p>
+          <span className="settings-eyebrow">{t('mixer.eyebrow')}</span>
+          <h2>{t('mixer.title')}</h2>
+          <p>{t('mixer.subtitle')}</p>
         </div>
-        <div className="settings-mixer-live" aria-label={`${runningCount} running accounts`}>
+        <div className="settings-mixer-live" aria-label={t('mixer.runningAria', { count: runningCount })}>
           <Activity size={13} aria-hidden="true" />
           <span>{runningCount}</span>
-          running
+          {t('mixer.running')}
         </div>
       </header>
 
@@ -347,21 +349,21 @@ export function MixerTab(): JSX.Element {
               <MonitorUp size={17} />
             </span>
             <div>
-              <span className="settings-eyebrow">Rendering</span>
-              <h3 id="mixer-graphics-title">Graphics quality</h3>
+              <span className="settings-eyebrow">{t('mixer.rendering')}</span>
+              <h3 id="mixer-graphics-title">{t('mixer.graphicsTitle')}</h3>
             </div>
             <label className="settings-mixer-toggle" htmlFor="mix-gfx-auto">
-              <span>Auto</span>
+              <span>{t('mixer.auto')}</span>
               <Switch
                 id="mix-gfx-auto"
-                aria-label="Automatic graphics quality"
+                aria-label={t('mixer.autoAria')}
                 checked={gfxAuto}
                 disabled={gfxSaving}
                 onChange={onGfxAutoToggle}
               />
             </label>
           </div>
-          <p>Override Roblox quality on the next launch, or let the client adapt.</p>
+          <p>{t('mixer.graphicsHint')}</p>
           <div className="settings-mixer-slider-row">
             <input
               id="mix-gfx"
@@ -372,7 +374,7 @@ export function MixerTab(): JSX.Element {
               step={1}
               value={gfxValue}
               disabled={gfxDisabled || gfxSaving}
-              aria-label="Graphics quality level"
+              aria-label={t('mixer.graphicsAria')}
               style={{
                 background: sliderFill(gfxValue, GRAPHICS_QUALITY_MIN, GRAPHICS_QUALITY_MAX),
               }}
@@ -393,21 +395,21 @@ export function MixerTab(): JSX.Element {
               <Gauge size={17} />
             </span>
             <div>
-              <span className="settings-eyebrow">Frame pacing</span>
-              <h3 id="mixer-fps-title">FPS limit</h3>
+              <span className="settings-eyebrow">{t('mixer.framePacing')}</span>
+              <h3 id="mixer-fps-title">{t('mixer.fpsTitle')}</h3>
             </div>
             <label className="settings-mixer-toggle" htmlFor="mix-fps-unl">
-              <span>Unlimited</span>
+              <span>{t('mixer.unlimited')}</span>
               <Switch
                 id="mix-fps-unl"
-                aria-label="Unlimited FPS"
+                aria-label={t('mixer.unlimitedAria')}
                 checked={fpsUnlimited}
                 disabled={fpsSaving}
                 onChange={onFpsUnlimitedToggle}
               />
             </label>
           </div>
-          <p>Set the frame ceiling applied the next time an account starts.</p>
+          <p>{t('mixer.fpsHint')}</p>
           <div className="settings-mixer-slider-row">
             <input
               id="mix-fps"
@@ -418,7 +420,7 @@ export function MixerTab(): JSX.Element {
               step={1}
               value={fpsValue}
               disabled={fpsUnlimited || fpsSaving}
-              aria-label="FPS limit value"
+              aria-label={t('mixer.fpsAria')}
               style={{ background: sliderFill(fpsValue, FPS_MIN, FPS_MAX) }}
               onChange={(event) => setFpsValue(Number(event.target.value))}
               onMouseUp={onFpsCommit}
@@ -437,9 +439,9 @@ export function MixerTab(): JSX.Element {
           <Volume2 size={17} />
         </span>
         <div className="settings-mixer-volume-copy">
-          <span className="settings-eyebrow">Live control</span>
-          <h3 id="mixer-volume-title">Master volume</h3>
-          <p>Applied instantly to running Roblox sessions.</p>
+          <span className="settings-eyebrow">{t('mixer.liveControl')}</span>
+          <h3 id="mixer-volume-title">{t('mixer.volumeTitle')}</h3>
+          <p>{t('mixer.volumeHint')}</p>
         </div>
         <div className="settings-mixer-slider-row settings-mixer-slider-row--volume">
           <input
@@ -451,7 +453,7 @@ export function MixerTab(): JSX.Element {
             step={1}
             value={volume}
             disabled={volumeSaving}
-            aria-label="Master volume percentage"
+            aria-label={t('mixer.volumeAria')}
             style={{ background: sliderFill(volume, VOLUME_MIN, VOLUME_MAX) }}
             onChange={(event) => onVolumeChange(Number(event.target.value))}
             onPointerUp={onVolumeCommit}
@@ -468,22 +470,22 @@ export function MixerTab(): JSX.Element {
           <RotateCw size={19} />
         </div>
         <div>
-          <span className="settings-eyebrow">Apply changes</span>
-          <h3 id="mixer-relaunch-title">Restart active sessions</h3>
+          <span className="settings-eyebrow">{t('mixer.applyChanges')}</span>
+          <h3 id="mixer-relaunch-title">{t('mixer.relaunchTitle')}</h3>
           <p>
             {runningCount === 0
-              ? 'No running accounts need a restart.'
-              : `${runningCount} running account${runningCount === 1 ? '' : 's'} will restart with the new limits.`}
+              ? t('mixer.relaunchNone')
+              : t(runningCount === 1 ? 'mixer.relaunchOne' : 'mixer.relaunchMany', { count: runningCount })}
           </p>
         </div>
         <Button
           variant="primary"
           onClick={() => void onApplyAndRelaunch()}
           disabled={relaunching || runningCount === 0}
-          aria-label="Apply Mixer settings and relaunch running accounts"
+          aria-label={t('mixer.relaunchAria')}
         >
           <RotateCw size={14} aria-hidden="true" />
-          {relaunching ? 'Relaunching…' : 'Apply and relaunch'}
+          {relaunching ? t('mixer.relaunching') : t('mixer.applyRelaunch')}
         </Button>
       </section>
     </div>

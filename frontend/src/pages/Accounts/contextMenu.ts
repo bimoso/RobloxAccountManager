@@ -18,6 +18,7 @@
 //    component consumes. Wiring is intentionally kept out of the pure part.
 
 import type { ContextMenuItem } from '@/components/ContextMenu';
+import type { MessageKey, Translator } from '@/i18n';
 import {
   AtSign,
   CirclePlay,
@@ -61,8 +62,8 @@ export type ContextMenuActionId =
 export interface ContextMenuItemDescriptor {
   /** Stable identity of the action (independent of the label). */
   id: ContextMenuActionId;
-  /** Text shown for the row. */
-  label: string;
+  /** Message key of the text shown for the row (resolved by the caller). */
+  labelKey: MessageKey;
   /** Renders the row with a destructive accent. @defaultValue false */
   danger?: boolean;
   /** Lucide glyph carried into the visual command palette. */
@@ -84,15 +85,15 @@ export interface ContextMenuItemDescriptor {
  * only when the account is launched.
  */
 const FIXED_ITEMS: readonly ContextMenuItemDescriptor[] = [
-  { id: 'edit', label: 'Editar cuenta', icon: PencilLine, section: 'account' },
-  { id: 'openBrowser', label: 'Abrir en navegador', icon: Globe2, section: 'account' },
-  { id: 'quickLogin', label: 'Quick login', icon: KeyRound, section: 'account' },
-  { id: 'friendRequest', label: 'Enviar solicitud de amistad', icon: UserPlus, section: 'identity' },
-  { id: 'changeDisplayName', label: 'Cambiar nombre de display', icon: UserPen, section: 'identity' },
-  { id: 'changePassword', label: 'Cambiar contraseña', icon: LockKeyhole, section: 'identity' },
+  { id: 'edit', labelKey: 'accounts.menu.edit', icon: PencilLine, section: 'account' },
+  { id: 'openBrowser', labelKey: 'accounts.menu.openBrowser', icon: Globe2, section: 'account' },
+  { id: 'quickLogin', labelKey: 'accounts.menu.quickLogin', icon: KeyRound, section: 'account' },
+  { id: 'friendRequest', labelKey: 'accounts.menu.friendRequest', icon: UserPlus, section: 'identity' },
+  { id: 'changeDisplayName', labelKey: 'accounts.menu.changeDisplayName', icon: UserPen, section: 'identity' },
+  { id: 'changePassword', labelKey: 'accounts.menu.changePassword', icon: LockKeyhole, section: 'identity' },
   {
     id: 'copyUserId',
-    label: 'Copiar ID de usuario',
+    labelKey: 'accounts.menu.copyUserId',
     icon: Hash,
     section: 'copy',
     compact: true,
@@ -100,7 +101,7 @@ const FIXED_ITEMS: readonly ContextMenuItemDescriptor[] = [
   },
   {
     id: 'copyUsername',
-    label: 'Copiar nombre de usuario',
+    labelKey: 'accounts.menu.copyUsername',
     icon: AtSign,
     section: 'copy',
     compact: true,
@@ -108,7 +109,7 @@ const FIXED_ITEMS: readonly ContextMenuItemDescriptor[] = [
   },
   {
     id: 'copyCookie',
-    label: 'Copiar cookie',
+    labelKey: 'accounts.menu.copyCookie',
     icon: Cookie,
     section: 'copy',
     compact: true,
@@ -137,7 +138,7 @@ export function contextMenuItems(launched: boolean): ContextMenuItemDescriptor[]
   if (launched) {
     items.push({
       id: 'kill',
-      label: 'Matar instancia',
+      labelKey: 'accounts.menu.kill',
       icon: CircleStop,
       section: 'session',
       danger: true,
@@ -145,7 +146,7 @@ export function contextMenuItems(launched: boolean): ContextMenuItemDescriptor[]
   }
   items.push({
     id: 'launch',
-    label: launched ? 'Relanzar' : 'Lanzar',
+    labelKey: launched ? 'accounts.menu.relaunch' : 'accounts.menu.launch',
     icon: CirclePlay,
     section: 'session',
     primary: true,
@@ -171,14 +172,16 @@ export type ContextMenuHandlers = Record<ContextMenuActionId, () => void>;
  *
  * @param launched - Whether the account currently has a launched instance.
  * @param handlers - Action to run for each {@link ContextMenuActionId}.
+ * @param t - Bound translator that resolves each descriptor's `labelKey`.
  * @returns The bound menu items, in display order.
  */
 export function buildContextMenuItems(
   launched: boolean,
   handlers: ContextMenuHandlers,
+  t: Translator,
 ): ContextMenuItem[] {
   return contextMenuItems(launched).map((descriptor) => ({
-    label: descriptor.label,
+    label: t(descriptor.labelKey),
     danger: descriptor.danger,
     icon: descriptor.icon,
     section: descriptor.section,

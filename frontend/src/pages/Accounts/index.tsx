@@ -47,6 +47,7 @@ import {
 } from '@/lib/filters';
 import { bulkBarVisible, selectAll, toggleSelection } from '@/lib/selection';
 import { useAccountStore } from '@/stores/accountStore';
+import { useTranslation } from '@/i18n/useTranslation';
 import type { Account, AccountFilter, AccountsView } from '@/types/models';
 import { AccountCard } from './AccountCard';
 import { AccountCardMenu, type AccountCardMenuActions } from './AccountCardMenu';
@@ -80,12 +81,12 @@ export interface AccountsPageProps extends AccountCardMenuActions, AccountsBulkA
   avatarUrls?: Record<string, string>;
 }
 
-const FILTER_OPTIONS: ReadonlyArray<DropdownOption<AccountFilter>> = [
-  { value: 'all', label: 'Todas' },
-  { value: 'running', label: 'En ejecución' },
-  { value: 'idle', label: 'Inactivas' },
-  { value: 'valid-first', label: 'Válidas primero' },
-  { value: 'invalid-first', label: 'Caducadas primero' },
+const FILTER_IDS: readonly AccountFilter[] = [
+  'all',
+  'running',
+  'idle',
+  'valid-first',
+  'invalid-first',
 ];
 
 const DRAG_THRESHOLD_PX = 8;
@@ -139,6 +140,13 @@ export function Accounts({
   const load = useAccountStore((state) => state.load);
   const confirmBulkDelete = useAccountStore((state) => state.confirmBulkDelete);
   const applyReorderedIds = useAccountStore((state) => state.applyReorderedIds);
+  const { t } = useTranslation();
+
+  // `t` is rebound per language, so the options re-derive on language change.
+  const filterOptions = useMemo<ReadonlyArray<DropdownOption<AccountFilter>>>(
+    () => FILTER_IDS.map((value) => ({ value, label: t(`accounts.filter.${value}`) })),
+    [t],
+  );
 
   const [view, setViewState] = useState<AccountsView>(() => resolveInitialView());
   const [filter, setFilterState] = useState<AccountFilter>(() => resolveInitialFilter());
@@ -637,14 +645,14 @@ export function Accounts({
   const header = (
     <div className="acc-header">
       <div className="acc-header__copy">
-        <span className="acc-eyebrow">Workspace / sesiones</span>
+        <span className="acc-eyebrow">{t('accounts.eyebrow')}</span>
         <h2 className="acc-title">
-          Cuentas
+          {t('accounts.title')}
           {sourceAccounts.length > 0 && (
             <span className="acc-title__count">{sourceAccounts.length}</span>
           )}
         </h2>
-        <p>Identidades, credenciales y sesiones Roblox desde un solo tablero.</p>
+        <p>{t('accounts.subtitle')}</p>
       </div>
       <div className="acc-header__actions">
         {state === 'has-items' && (
@@ -659,16 +667,16 @@ export function Accounts({
             ) : (
               <CheckSquare2 size={16} aria-hidden="true" />
             )}
-            {selectionMode ? 'Cancelar selección' : 'Seleccionar'}
+            {selectionMode ? t('accounts.cancelSelection') : t('accounts.select')}
           </button>
         )}
         {onAddAccount && (
           <button type="button" className="acc-btn acc-btn--accent acc-btn--sm" onClick={onAddAccount}>
             <Plus size={16} aria-hidden="true" />
-            Añadir
+            {t('accounts.add')}
           </button>
         )}
-        <div className="acc-viewtoggle" role="group" aria-label="Vista de cuentas">
+        <div className="acc-viewtoggle" role="group" aria-label={t('accounts.viewAria')}>
           <button
             type="button"
             className={view === 'grid' ? 'active' : ''}
@@ -676,7 +684,7 @@ export function Accounts({
             onClick={() => handleSelectView('grid')}
           >
             <Grid2X2 size={15} aria-hidden="true" />
-            Cuadrícula
+            {t('accounts.grid')}
           </button>
           <button
             type="button"
@@ -685,7 +693,7 @@ export function Accounts({
             onClick={() => handleSelectView('list')}
           >
             <Rows3 size={16} aria-hidden="true" />
-            Lista
+            {t('accounts.list')}
           </button>
         </div>
       </div>
@@ -710,18 +718,18 @@ export function Accounts({
   );
 
   const bulkBar = bulkBarVisible(selectedIds) ? (
-    <div className="acc-selbar" role="toolbar" aria-label="Acciones en lote">
+    <div className="acc-selbar" role="toolbar" aria-label={t('accounts.bulkAria')}>
       <div className="acc-selbar__chip">
         <span>
           {selectedIds.size === 1
-            ? '1 cuenta seleccionada'
-            : `${selectedIds.size} cuentas seleccionadas`}
+            ? t('accounts.oneSelected')
+            : t('accounts.manySelected', { count: selectedIds.size })}
         </span>
         <button
           type="button"
           className="acc-selbar__x"
-          aria-label="Limpiar selección"
-          title="Limpiar selección"
+          aria-label={t('accounts.clearSelection')}
+          title={t('accounts.clearSelection')}
           onClick={handleClearSelection}
         >
           <X size={15} aria-hidden="true" />
@@ -730,32 +738,32 @@ export function Accounts({
 
       <span className="acc-selbar__div" aria-hidden="true" />
 
-      {onLaunchSelected && iconAction('Lanzar', CirclePlay, () => runBulk(onLaunchSelected))}
-      {onKillSelected && iconAction('Detener', Square, () => runBulk(onKillSelected))}
+      {onLaunchSelected && iconAction(t('accounts.launch'), CirclePlay, () => runBulk(onLaunchSelected))}
+      {onKillSelected && iconAction(t('accounts.stop'), Square, () => runBulk(onKillSelected))}
       {onFriendRequestSelected &&
-        iconAction('Enviar solicitud de amistad', UserPlus, () =>
+        iconAction(t('accounts.sendFriendRequest'), UserPlus, () =>
           runBulk(onFriendRequestSelected),
         )}
-      {onNotesSelected && iconAction('Añadir notas', StickyNote, () => runBulk(onNotesSelected))}
+      {onNotesSelected && iconAction(t('accounts.addNotes'), StickyNote, () => runBulk(onNotesSelected))}
       {onCopyCookiesSelected &&
-        iconAction('Copiar cookies', Cookie, () => runBulk(onCopyCookiesSelected))}
+        iconAction(t('accounts.copyCookies'), Cookie, () => runBulk(onCopyCookiesSelected))}
       {onOpenBrowsersSelected &&
-        iconAction('Abrir navegadores', Globe2, () => runBulk(onOpenBrowsersSelected))}
+        iconAction(t('accounts.openBrowsers'), Globe2, () => runBulk(onOpenBrowsersSelected))}
 
       <span className="acc-selbar__div" aria-hidden="true" />
 
-      {iconAction('Seleccionar todo', ListChecks, handleSelectAll)}
-      {iconAction('Eliminar seleccionadas', Trash2, () => void handleDeleteSelected(), true)}
+      {iconAction(t('accounts.selectAll'), ListChecks, handleSelectAll)}
+      {iconAction(t('accounts.deleteSelected'), Trash2, () => void handleDeleteSelected(), true)}
     </div>
   ) : null;
 
   const confirmDialogElement = (
     <ConfirmDialog
       open={confirmDialog.open}
-      title="Eliminar cuentas"
+      title={t('accounts.deleteTitle')}
       message={confirmDialog.message}
-      confirmLabel="Eliminar"
-      cancelLabel="Cancelar"
+      confirmLabel={t('common.delete')}
+      cancelLabel={t('common.cancel')}
       onConfirm={() => settleConfirm(true)}
       onCancel={() => settleConfirm(false)}
     />
@@ -769,8 +777,8 @@ export function Accounts({
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Buscar por apodo, usuario o ID…"
-          aria-label="Buscar cuentas"
+          placeholder={t('accounts.searchPlaceholder')}
+          aria-label={t('accounts.searchAria')}
         />
         <AnimatePresence initial={false}>
           {query ? (
@@ -778,8 +786,8 @@ export function Accounts({
               key="clear-account-query"
               type="button"
               className="acc-search__clear"
-              aria-label="Limpiar búsqueda"
-              title="Limpiar búsqueda"
+              aria-label={t('accounts.clearSearch')}
+              title={t('accounts.clearSearch')}
               initial={reducedMotion ? false : { opacity: 0, scale: 0.72 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: reducedMotion ? 1 : 0.72 }}
@@ -798,7 +806,7 @@ export function Accounts({
         <motion.span
           className="acc-search__count"
           aria-hidden="true"
-          title={`${visibleAccounts.length} de ${sourceAccounts.length} cuentas visibles`}
+          title={t('accounts.visibleOf', { visible: visibleAccounts.length, total: sourceAccounts.length })}
           key={`${visibleAccounts.length}-${sourceAccounts.length}`}
           initial={reducedMotion ? false : { opacity: 0.55, y: 2 }}
           animate={{ opacity: 1, y: 0 }}
@@ -807,16 +815,16 @@ export function Accounts({
           {visibleAccounts.length}/{sourceAccounts.length}
         </motion.span>
         <span className="sr-only" aria-live="polite" aria-atomic="true">
-          {visibleAccounts.length} de {sourceAccounts.length} cuentas visibles
+          {t('accounts.visibleOf', { visible: visibleAccounts.length, total: sourceAccounts.length })}
         </span>
       </div>
       <div className="acc-filter">
         <ListFilter className="acc-filter__icon" size={16} aria-hidden="true" />
         <Dropdown
-          options={FILTER_OPTIONS}
+          options={filterOptions}
           value={filter}
           onChange={handleSelectFilter}
-          aria-label="Filtrar cuentas"
+          aria-label={t('accounts.filterAria')}
         />
       </div>
     </div>
@@ -827,8 +835,8 @@ export function Accounts({
       <div className="acc-page">
         {header}
         <EmptyState
-          message="No tienes ninguna cuenta guardada todavía."
-          actionLabel={onAddAccount ? 'Añadir cuenta' : undefined}
+          message={t('accounts.emptyMessage')}
+          actionLabel={onAddAccount ? t('accounts.addAccount') : undefined}
           onAction={onAddAccount}
         />
       </div>
@@ -840,7 +848,7 @@ export function Accounts({
       <div className="acc-page">
         {header}
         {toolbar}
-        <EmptyState message="Ninguna cuenta coincide con la búsqueda o el filtro." />
+        <EmptyState message={t('accounts.noResults')} />
       </div>
     );
   }
@@ -889,12 +897,12 @@ export function Accounts({
                   role="listitem"
                   aria-roledescription={
                     reorderLockedByFilter
-                      ? 'Cuenta con orden automático por estado'
-                      : 'Cuenta reordenable'
+                      ? t('accounts.drag.autoOrder')
+                      : t('accounts.drag.reorderable')
                   }
                   title={
                     reorderLockedByFilter
-                      ? 'El orden manual está desactivado mientras este filtro ordena por estado'
+                      ? t('accounts.drag.lockedTitle')
                       : undefined
                   }
                   style={{
@@ -914,8 +922,8 @@ export function Accounts({
                         <GripVertical size={17} aria-hidden="true" />
                       </span>
                       <span>
-                        <strong>{dragSettling ? 'Acomodando' : 'Nueva posición'}</strong>
-                        <small>{dragSettling ? 'Listo' : 'Suelta para colocar'}</small>
+                        <strong>{dragSettling ? t('accounts.drag.settling') : t('accounts.drag.newPosition')}</strong>
+                        <small>{dragSettling ? t('accounts.drag.done') : t('accounts.drag.release')}</small>
                       </span>
                     </motion.div>
                   ) : (

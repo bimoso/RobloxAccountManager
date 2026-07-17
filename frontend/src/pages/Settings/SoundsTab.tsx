@@ -28,7 +28,6 @@ import {
 } from 'lucide-react';
 import {
   SOUND_PROFILE_IDS,
-  SOUND_PROFILES,
   VOLUME_MAX,
   VOLUME_MIN,
   decodeAudioFile,
@@ -38,6 +37,7 @@ import {
 import { useSoundStore } from '@/stores/soundStore';
 import { useClickSound, previewProfile } from '@/hooks/useClickSound';
 import { useToastStore } from '@/stores/toastStore';
+import { useTranslation } from '@/i18n/useTranslation';
 import './Settings.css';
 
 /** Convert the stored `0..1` gain to a whole-percent slider value. */
@@ -75,6 +75,7 @@ export function SoundsTab(): JSX.Element {
 
   const showSuccess = useToastStore((s) => s.showSuccess);
   const showError = useToastStore((s) => s.showError);
+  const { t } = useTranslation();
 
   // Keep the global click-sound listener from previewing on top of the explicit
   // previews below is unnecessary — the hook here is used only for its player.
@@ -110,14 +111,14 @@ export function SoundsTab(): JSX.Element {
         setCustomSound(name, buffer);
         // Preview the newly loaded sound.
         playBuffer(getAudioContext(), buffer, volume);
-        showSuccess('Custom sound loaded.');
+        showSuccess(t('settings.sounds.customLoaded'));
       } catch {
-        showError('Could not decode that audio file.');
+        showError(t('settings.sounds.decodeFailed'));
       } finally {
         setLoadingFile(false);
       }
     },
-    [setCustomSound, showSuccess, showError, volume],
+    [setCustomSound, showSuccess, showError, volume, t],
   );
 
   const volumePct = toPercent(volume);
@@ -125,18 +126,18 @@ export function SoundsTab(): JSX.Element {
   return (
     <div className="settings-sounds">
       <p className="settings-hint">
-        Choose a click sound, or upload your own. Your selection plays on every
-        interactive element and is remembered next time.
+        {t('settings.sounds.hint')}
       </p>
 
       {/* ── Predefined profiles (Requirement 22.1) ── */}
       <div
         className="settings-sound-grid"
         role="radiogroup"
-        aria-label="Click sound profile"
+        aria-label={t('settings.sounds.groupAria')}
       >
         {SOUND_PROFILE_IDS.map((id) => {
-          const profile = SOUND_PROFILES[id];
+          const label = t(`sounds.profile.${id}.label`);
+          const desc = t(`sounds.profile.${id}.desc`);
           const selected = !useCustom && id === profileId;
           const ProfileIcon = PROFILE_ICONS[id];
           return (
@@ -144,7 +145,7 @@ export function SoundsTab(): JSX.Element {
               key={id}
               role="radio"
               aria-checked={selected}
-              aria-label={profile.label}
+              aria-label={label}
               tabIndex={0}
               className={`settings-sound-card${selected ? ' selected' : ''}`}
               onClick={() => onSelectProfile(id)}
@@ -156,12 +157,12 @@ export function SoundsTab(): JSX.Element {
               }}
             >
               <ProfileIcon className="settings-sound-icon" aria-hidden="true" />
-              <span className="settings-sound-label">{profile.label}</span>
-              <span className="settings-sound-desc">{profile.desc}</span>
+              <span className="settings-sound-label">{label}</span>
+              <span className="settings-sound-desc">{desc}</span>
               <button
                 type="button"
                 className="settings-sound-preview"
-                aria-label={`Preview ${profile.label}`}
+                aria-label={t('settings.sounds.preview', { label })}
                 onClick={(e) => {
                   e.stopPropagation();
                   previewProfile(id, volume);
@@ -176,10 +177,9 @@ export function SoundsTab(): JSX.Element {
 
       {/* ── Custom uploaded sound (Requirement 22.2) ── */}
       <section className="settings-card">
-        <h2 className="settings-card-title">Custom sound</h2>
+        <h2 className="settings-card-title">{t('settings.sounds.customTitle')}</h2>
         <p className="settings-hint">
-          Upload an audio file (WAV, MP3, OGG) to use as your click sound instead
-          of a profile.
+          {t('settings.sounds.customHint')}
         </p>
         {custom ? (
           <div className="settings-info-row">
@@ -193,7 +193,7 @@ export function SoundsTab(): JSX.Element {
               <button
                 type="button"
                 className="settings-sound-preview"
-                aria-label="Preview custom sound"
+                aria-label={t('settings.sounds.previewCustom')}
                 onClick={() => playBuffer(getAudioContext(), custom.buffer, volume)}
               >
                 <Play size={14} fill="currentColor" aria-hidden="true" />
@@ -201,10 +201,10 @@ export function SoundsTab(): JSX.Element {
               <button
                 type="button"
                 className="settings-sound-preview settings-sound-preview--danger"
-                aria-label="Remove custom sound"
+                aria-label={t('settings.sounds.removeCustom')}
                 onClick={() => {
                   clearCustomSound();
-                  showSuccess('Custom sound removed.');
+                  showSuccess(t('settings.sounds.customRemoved'));
                 }}
               >
                 <Trash2 size={14} aria-hidden="true" />
@@ -232,20 +232,20 @@ export function SoundsTab(): JSX.Element {
             ) : (
               <Upload size={16} aria-hidden="true" />
             )}
-            {loadingFile ? 'Decoding audio…' : 'Choose audio file'}
+            {loadingFile ? t('settings.sounds.decoding') : t('settings.sounds.chooseFile')}
           </button>
           <div className="settings-sound-upload-copy" aria-hidden="true">
             <span className="settings-sound-upload-icon">
               <FileAudio size={17} />
             </span>
             <span>
-              <strong>WAV, MP3 or OGG</strong>
-              <small>Processed locally on this device</small>
+              <strong>{t('settings.sounds.formats')}</strong>
+              <small>{t('settings.sounds.processedLocally')}</small>
             </span>
           </div>
         </div>
         {loadingFile ? (
-          <p className="sr-only" role="status">Decoding audio…</p>
+          <p className="sr-only" role="status">{t('settings.sounds.decoding')}</p>
         ) : null}
       </section>
 
@@ -253,7 +253,7 @@ export function SoundsTab(): JSX.Element {
       <section className="settings-card">
         <div className="settings-info-row">
           <label className="settings-card-title" htmlFor="settings-sound-volume">
-            Click volume
+            {t('settings.sounds.volumeTitle')}
           </label>
           <span className="settings-info-value">{volumePct}%</span>
         </div>
@@ -265,7 +265,7 @@ export function SoundsTab(): JSX.Element {
           max={VOLUME_MAX * 100}
           step={1}
           value={volumePct}
-          aria-label="Click sound volume percentage"
+          aria-label={t('settings.sounds.volumeAria')}
           style={{ background: sliderFill(volumePct) }}
           onChange={(e) => setVolume(Number(e.target.value) / 100)}
         />

@@ -28,6 +28,10 @@ vi.mock('@/lib/ipc', () => ({
     saveSettings: (data: unknown) => saveSettings(data),
     getRobloxVersion: () => getRobloxVersion(),
     multiInstanceStatus: () => multiInstanceStatus(),
+    // Consumed by the SessionAutomationCard mounted alongside the toggle.
+    getRunningCount: () => Promise.resolve(0),
+    onRobloxCount: () => Promise.resolve(() => undefined),
+    arrangeWindows: () => Promise.resolve(0),
   },
 }));
 

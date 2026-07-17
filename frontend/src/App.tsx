@@ -44,6 +44,7 @@ import { useEncryptionGateStore } from './stores/encryptionGateStore';
 import { useAccountStore } from './stores/accountStore';
 import { useLogStore } from './stores/logStore';
 import { initTheme } from './stores/themeStore';
+import { initLanguage } from './stores/languageStore';
 import { usePresencePolling } from './hooks/usePresencePolling';
 import './App.css';
 import './styles/liquid-glass.css';
@@ -64,6 +65,7 @@ export default function App(): JSX.Element {
   // (e.g. React 18 StrictMode's mount/unmount/remount in development).
   useEffect(() => {
     initTheme();
+    initLanguage();
     void useEncryptionGateStore.getState().init();
 
     let cancelled = false;

@@ -17,7 +17,7 @@ import type { Account } from '@/types/models';
  *   - toggling a control reflects the selected/unselected state (10.1);
  *   - a non-empty selection shows the bulk bar with the exact count and the
  *     clear / select-all / delete-selected controls (10.2);
- *   - "Seleccionar todo" marks every visible account under the active filter
+ *   - "Select all" marks every visible account under the active filter
  *     and search (10.3);
  *   - emptying the selection hides the bulk bar and exits selection mode (10.5).
  */
@@ -49,7 +49,7 @@ function cardChecks(): HTMLElement[] {
 }
 
 function bulkBar(): HTMLElement | null {
-  return screen.queryByRole('toolbar', { name: 'Acciones en lote' });
+  return screen.queryByRole('toolbar', { name: 'Bulk actions' });
 }
 
 describe('Accounts selection mode + bulk action bar (Req 10.1, 10.2, 10.3, 10.5)', () => {
@@ -66,7 +66,7 @@ describe('Accounts selection mode + bulk action bar (Req 10.1, 10.2, 10.3, 10.5)
     // No selection controls until selection mode is entered.
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
 
-    await user.click(screen.getByRole('button', { name: 'Seleccionar' }));
+    await user.click(screen.getByRole('button', { name: 'Select' }));
 
     const checks = cardChecks();
     expect(checks).toHaveLength(ACCOUNTS.length);
@@ -85,7 +85,7 @@ describe('Accounts selection mode + bulk action bar (Req 10.1, 10.2, 10.3, 10.5)
   it('shows the bulk bar with count and controls while a selection exists (10.2)', async () => {
     const user = userEvent.setup();
     render(<Accounts />);
-    await user.click(screen.getByRole('button', { name: 'Seleccionar' }));
+    await user.click(screen.getByRole('button', { name: 'Select' }));
 
     expect(bulkBar()).toBeNull();
 
@@ -93,46 +93,46 @@ describe('Accounts selection mode + bulk action bar (Req 10.1, 10.2, 10.3, 10.5)
     const bar = bulkBar();
     expect(bar).not.toBeNull();
     const withinBar = within(bar as HTMLElement);
-    expect(withinBar.getByText('1 cuenta seleccionada')).toBeInTheDocument();
-    expect(withinBar.getByRole('button', { name: 'Limpiar selección' })).toBeInTheDocument();
-    expect(withinBar.getByRole('button', { name: 'Seleccionar todo' })).toBeInTheDocument();
-    expect(withinBar.getByRole('button', { name: 'Eliminar seleccionadas' })).toBeInTheDocument();
+    expect(withinBar.getByText('1 account selected')).toBeInTheDocument();
+    expect(withinBar.getByRole('button', { name: 'Clear selection' })).toBeInTheDocument();
+    expect(withinBar.getByRole('button', { name: 'Select all' })).toBeInTheDocument();
+    expect(withinBar.getByRole('button', { name: 'Delete selected' })).toBeInTheDocument();
 
     await user.click(cardChecks()[1]);
-    expect(within(bulkBar() as HTMLElement).getByText('2 cuentas seleccionadas')).toBeInTheDocument();
+    expect(within(bulkBar() as HTMLElement).getByText('2 accounts selected')).toBeInTheDocument();
   });
 
-  it('"Seleccionar todo" marks every visible account under the current search (10.3)', async () => {
+  it('"Select all" marks every visible account under the current search (10.3)', async () => {
     const user = userEvent.setup();
     render(<Accounts />);
-    await user.click(screen.getByRole('button', { name: 'Seleccionar' }));
+    await user.click(screen.getByRole('button', { name: 'Select' }));
     await user.click(cardChecks()[0]);
 
-    await user.click(screen.getByRole('button', { name: 'Seleccionar todo' }));
-    expect(within(bulkBar() as HTMLElement).getByText('3 cuentas seleccionadas')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(within(bulkBar() as HTMLElement).getByText('3 accounts selected')).toBeInTheDocument();
     cardChecks().forEach((check) => expect(check).toHaveAttribute('aria-checked', 'true'));
 
     // Narrow the visible list via search, then select-all only marks the match.
-    await user.type(screen.getByRole('searchbox', { name: 'Buscar cuentas' }), 'alpha');
+    await user.type(screen.getByRole('searchbox', { name: 'Search accounts' }), 'alpha');
     // One card visible now.
     expect(cardChecks()).toHaveLength(1);
-    await user.click(screen.getByRole('button', { name: 'Seleccionar todo' }));
-    expect(within(bulkBar() as HTMLElement).getByText('1 cuenta seleccionada')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Select all' }));
+    expect(within(bulkBar() as HTMLElement).getByText('1 account selected')).toBeInTheDocument();
   });
 
   it('clearing the selection hides the bulk bar and exits selection mode (10.5)', async () => {
     const user = userEvent.setup();
     render(<Accounts />);
-    await user.click(screen.getByRole('button', { name: 'Seleccionar' }));
+    await user.click(screen.getByRole('button', { name: 'Select' }));
     await user.click(cardChecks()[0]);
     expect(bulkBar()).not.toBeNull();
 
-    await user.click(screen.getByRole('button', { name: 'Limpiar selección' }));
+    await user.click(screen.getByRole('button', { name: 'Clear selection' }));
     expect(bulkBar()).toBeNull();
     // Selection mode exited: no per-card controls remain.
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
     // Re-entering selection mode starts fresh (no lingering selection).
-    await user.click(screen.getByRole('button', { name: 'Seleccionar' }));
+    await user.click(screen.getByRole('button', { name: 'Select' }));
     cardChecks().forEach((check) => expect(check).toHaveAttribute('aria-checked', 'false'));
   });
 });

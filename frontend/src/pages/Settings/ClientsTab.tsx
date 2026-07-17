@@ -19,6 +19,7 @@ import {
 import { Button } from '@/components/Button';
 import { ipc } from '@/lib/ipc';
 import { useToastStore } from '@/stores/toastStore';
+import { useTranslation } from '@/i18n/useTranslation';
 import type {
   RobloxDeployment,
   RobloxDeploymentProgress,
@@ -28,8 +29,8 @@ import type {
   Settings,
 } from '@/types/models';
 
-function compactPath(path: string | null): string {
-  if (!path) return 'Ruta no expuesta por esta instalación';
+function compactPath(path: string | null, missingLabel: string): string {
+  if (!path) return missingLabel;
   if (path.length <= 68) return path;
   return `${path.slice(0, 28)}…${path.slice(-35)}`;
 }
@@ -58,6 +59,7 @@ function makeOperationId(): string {
 export function ClientsTab(): JSX.Element {
   const reducedMotion = useReducedMotion() ?? false;
   const showSuccess = useToastStore((state) => state.showSuccess);
+  const { t } = useTranslation();
   const [installations, setInstallations] = useState<RobloxInstallation[]>([]);
   const [protocol, setProtocol] = useState<RobloxProtocolState | null>(null);
   const [release, setRelease] = useState<RobloxRelease | null>(null);
@@ -136,7 +138,7 @@ export function ClientsTab(): JSX.Element {
         robloxLaunchMode: 'direct',
         robloxLaunchPresetId: installation.id,
       } : current);
-      showSuccess(`${installation.displayName} selected for MultiRoblox sessions.`);
+      showSuccess(t('clients.selectedForSessions', { name: installation.displayName }));
     } finally {
       setBusyId(null);
     }
@@ -153,7 +155,7 @@ export function ClientsTab(): JSX.Element {
         robloxLaunchMode: 'protocol',
         robloxLaunchPresetId: installation.id,
       } : current);
-      showSuccess(`${installation.displayName} now handles roblox:// and roblox-player:.`);
+      showSuccess(t('clients.nowHandles', { name: installation.displayName }));
     } finally {
       setBusyId(null);
     }
@@ -169,7 +171,7 @@ export function ClientsTab(): JSX.Element {
         robloxLaunchMode: 'direct',
         robloxLaunchPresetId: null,
       } : current);
-      showSuccess('Previous Windows protocol handlers restored.');
+      showSuccess(t('clients.handlersRestored'));
     } finally {
       setBusyId(null);
     }
@@ -197,7 +199,7 @@ export function ClientsTab(): JSX.Element {
       );
       setDeployments((current) => [deployment, ...current.filter((item) => item.id !== deployment.id)]);
       setVersionGuid('');
-      showSuccess(`${deployment.versionGuid} installed in the isolated library.`);
+      showSuccess(t('clients.installedIsolated', { version: deployment.versionGuid }));
       const rescanned = await ipc.scanRobloxInstallations();
       setInstallations(rescanned);
     } finally {
@@ -220,7 +222,7 @@ export function ClientsTab(): JSX.Element {
       setInstallations(rescanned);
       setPresetPath('');
       setPresetName('');
-      showSuccess(`${added.displayName} added from its local path.`);
+      showSuccess(t('clients.presetAdded', { name: added.displayName }));
     } finally {
       setBusyId(null);
     }
@@ -237,7 +239,7 @@ export function ClientsTab(): JSX.Element {
       ]);
       setInstallations(rescanned);
       setSettings(nextSettings);
-      showSuccess(`${installation.displayName} removed from saved presets. Files were not deleted.`);
+      showSuccess(t('clients.presetRemoved', { name: installation.displayName }));
     } finally {
       setBusyId(null);
     }
@@ -249,43 +251,43 @@ export function ClientsTab(): JSX.Element {
         <div className="clients-route-deck__intro">
           <span className="settings-card-icon settings-card-icon--feature"><Route size={18} /></span>
           <div>
-            <span className="settings-card-eyebrow">Launch routing</span>
-            <h2>Roblox client control</h2>
-            <p>Choose the client MultiRoblox launches and, separately, which installation owns Windows links.</p>
+            <span className="settings-card-eyebrow">{t('clients.routing.eyebrow')}</span>
+            <h2>{t('clients.routing.title')}</h2>
+            <p>{t('clients.routing.hint')}</p>
           </div>
           <Button variant="secondary" onClick={() => void refresh(channel.trim() || 'LIVE')} disabled={loading}>
-            <RefreshCw className={loading ? 'clients-spin' : undefined} size={14} /> Scan
+            <RefreshCw className={loading ? 'clients-spin' : undefined} size={14} /> {t('clients.scan')}
           </Button>
         </div>
 
-        <div className="clients-protocol-rail" aria-label="Current Roblox protocol route">
+        <div className="clients-protocol-rail" aria-label={t('clients.protocolAria')}>
           <div className="clients-protocol-rail__scheme">
             <span><Cable size={13} /> roblox://</span>
             <span><Cable size={13} /> roblox-player:</span>
           </div>
           <span className="clients-protocol-rail__line" aria-hidden="true"><i /><i /><i /></span>
           <div className="clients-protocol-rail__target">
-            <small>Windows handler</small>
+            <small>{t('clients.windowsHandler')}</small>
             <strong>{protocol?.robloxPlayer.installationId
-              ? installations.find((item) => item.id === protocol.robloxPlayer.installationId)?.displayName ?? 'External handler'
-              : loading ? 'Scanning registry…' : 'No verified handler'}</strong>
-            <span>{compactPath(protocol?.robloxPlayer.executable ?? null)}</span>
+              ? installations.find((item) => item.id === protocol.robloxPlayer.installationId)?.displayName ?? t('clients.externalHandler')
+              : loading ? t('clients.scanning') : t('clients.noHandler')}</strong>
+            <span>{compactPath(protocol?.robloxPlayer.executable ?? null, t('clients.pathNotExposed'))}</span>
           </div>
           <div className="clients-protocol-rail__mode">
-            <small>MultiRoblox route</small>
-            <strong>{launchMode === 'protocol' ? 'Windows protocol' : 'Direct executable'}</strong>
+            <small>{t('clients.appRoute')}</small>
+            <strong>{launchMode === 'protocol' ? t('clients.windowsProtocol') : t('clients.directExecutable')}</strong>
             <span>{directPresetId
               ? installations.find((item) => item.id === directPresetId)?.displayName ?? directPresetId
-              : 'Automatic official fallback'}</span>
+              : t('clients.autoFallback')}</span>
           </div>
         </div>
 
         {protocol?.snapshotAvailable ? (
           <div className="clients-restore">
-            <span><ShieldAlert size={15} /> A previous protocol binding is safely stored.</span>
+            <span><ShieldAlert size={15} /> {t('clients.snapshotStored')}</span>
             <Button variant="secondary" disabled={busyId !== null} onClick={() => void restoreProtocol()}>
               {busyId === 'restore' ? <LoaderCircle className="clients-spin" size={14} /> : <RotateCcw size={14} />}
-              Restore previous
+              {t('clients.restorePrevious')}
             </Button>
           </div>
         ) : null}
@@ -293,8 +295,8 @@ export function ClientsTab(): JSX.Element {
 
       <section className="clients-installations">
         <div className="clients-section-head">
-          <div><span>Detected clients</span><h3>Installations on this PC</h3></div>
-          <span>{installations.length} found</span>
+          <div><span>{t('clients.detected')}</span><h3>{t('clients.installationsTitle')}</h3></div>
+          <span>{t('clients.found', { count: installations.length })}</span>
         </div>
         <form className="clients-path-preset" onSubmit={(event) => {
           event.preventDefault();
@@ -302,7 +304,7 @@ export function ClientsTab(): JSX.Element {
         }}>
           <span className="clients-path-preset__icon"><FolderPlus size={17} /></span>
           <label>
-            <span>Version or bootstrapper path</span>
+            <span>{t('clients.pathLabel')}</span>
             <input
               value={presetPath}
               onChange={(event) => setPresetPath(event.target.value)}
@@ -311,23 +313,21 @@ export function ClientsTab(): JSX.Element {
             />
           </label>
           <label className="clients-path-preset__name">
-            <span>Preset label <em>optional</em></span>
+            <span>{t('clients.presetLabel')} <em>{t('clients.optional')}</em></span>
             <input
               value={presetName}
               onChange={(event) => setPresetName(event.target.value)}
-              placeholder="QA client"
+              placeholder={t('clients.presetPlaceholder')}
               disabled={busyId !== null}
               maxLength={80}
             />
           </label>
           <Button type="submit" variant="secondary" disabled={!presetPath.trim() || busyId !== null}>
             {busyId === 'preset:add' ? <LoaderCircle className="clients-spin" size={14} /> : <FolderPlus size={14} />}
-            Add preset
+            {t('clients.addPreset')}
           </Button>
           <small>
-            Paste a version folder or its exact .exe. Detects Roblox versions, Bloxstrap, Fishstrap,
-            Froststrap, Voidstrap, Nyxstrap, Plexity and other *strap forks through the Windows
-            uninstall registry or active handler. Only the route is stored; files are never moved or deleted.
+            {t('clients.presetHelp')}
           </small>
         </form>
         <div className="clients-installation-list">
@@ -349,11 +349,11 @@ export function ClientsTab(): JSX.Element {
                   <div className="clients-installation__copy">
                     <span>{installationBadge(installation)} · {installation.detectedBy.replace(/_/g, ' ')}</span>
                     <strong>{installation.displayName}</strong>
-                    <small title={installation.executable ?? undefined}>{compactPath(installation.executable)}</small>
+                    <small title={installation.executable ?? undefined}>{compactPath(installation.executable, t('clients.pathNotExposed'))}</small>
                   </div>
                   <div className="clients-installation__meta">
-                    <span>{installation.versionGuid || installation.displayVersion || 'Version unknown'}</span>
-                    <small>{installation.activeSchemes.length ? `${installation.activeSchemes.length}/2 protocols` : 'Not system handler'}</small>
+                    <span>{installation.versionGuid || installation.displayVersion || t('clients.versionUnknown')}</span>
+                    <small>{installation.activeSchemes.length ? t('clients.protocols', { count: installation.activeSchemes.length }) : t('clients.notSystemHandler')}</small>
                   </div>
                   <div className="clients-installation__actions">
                     <button
@@ -363,30 +363,30 @@ export function ClientsTab(): JSX.Element {
                       onClick={() => void selectManagerClient(installation)}
                     >
                       {directActive ? <Check size={12} /> : <Route size={12} />}
-                      {directActive ? 'Manager active' : 'Use in manager'}
+                      {directActive ? t('clients.managerActive') : t('clients.useInManager')}
                     </button>
                     <button
                       type="button"
                       disabled={!installation.protocolCapable || busyId !== null}
                       data-active={protocolActive || undefined}
-                      title={installation.protocolCapable ? 'Set both Windows protocol handlers' : 'This installation cannot own Win32 Roblox links'}
+                      title={installation.protocolCapable ? t('clients.protocolTitle') : t('clients.protocolIncapable')}
                       onClick={() => void activateProtocol(installation)}
                     >
                       {protocolActive ? <Check size={12} /> : <RadioTower size={12} />}
-                      {protocolActive ? 'Protocol active' : 'Own roblox://'}
+                      {protocolActive ? t('clients.protocolActive') : t('clients.ownProtocol')}
                     </button>
                     {installation.detectedBy === 'user_preset' ? (
                       <button
                         type="button"
                         className="clients-installation__remove"
                         disabled={busyId !== null}
-                        title="Forget this preset without deleting its files"
+                        title={t('clients.forgetTitle')}
                         onClick={() => void removePathPreset(installation)}
                       >
                         {busyId === `preset:remove:${installation.id}`
                           ? <LoaderCircle className="clients-spin" size={12} />
                           : <Trash2 size={12} />}
-                        Forget
+                        {t('clients.forget')}
                       </button>
                     ) : null}
                   </div>
@@ -395,46 +395,46 @@ export function ClientsTab(): JSX.Element {
             })}
           </AnimatePresence>
           {!loading && installations.length === 0 ? (
-            <p className="clients-empty">No verified Roblox installation was found.</p>
+            <p className="clients-empty">{t('clients.noInstallations')}</p>
           ) : null}
         </div>
       </section>
 
       <section className="clients-deployments">
         <div className="clients-section-head">
-          <div><span>Deployment library</span><h3>Official package archive</h3></div>
+          <div><span>{t('clients.deployLibrary')}</span><h3>{t('clients.packageArchive')}</h3></div>
           {release ? <span className="clients-live"><i /> LIVE {release.clientVersion}</span> : null}
         </div>
 
         <div className="clients-release-grid">
           <div className="clients-latest">
             <span className="clients-latest__icon"><RadioTower size={18} /></span>
-            <div><small>Latest {release?.channel ?? channel}</small><strong>{release?.versionGuid ?? 'Checking Roblox…'}</strong><span>{release?.clientVersion ?? 'Version unavailable'}</span></div>
+            <div><small>{t('clients.latest', { channel: release?.channel ?? channel })}</small><strong>{release?.versionGuid ?? t('clients.checking')}</strong><span>{release?.clientVersion ?? t('clients.versionUnavailable')}</span></div>
           </div>
           <label className="clients-field">
-            <span>Channel</span>
+            <span>{t('clients.channel')}</span>
             <input value={channel} onChange={(event) => setChannel(event.target.value)} placeholder="LIVE" disabled={Boolean(operationId)} />
           </label>
           <label className="clients-field clients-field--version">
-            <span>Version GUID <em>optional</em></span>
-            <input value={versionGuid} onChange={(event) => setVersionGuid(event.target.value)} placeholder={release?.versionGuid ?? 'version-… (blank = latest)'} disabled={Boolean(operationId)} />
+            <span>{t('clients.versionGuid')} <em>{t('clients.optional')}</em></span>
+            <input value={versionGuid} onChange={(event) => setVersionGuid(event.target.value)} placeholder={release?.versionGuid ?? t('clients.versionPlaceholder')} disabled={Boolean(operationId)} />
           </label>
           {operationId ? (
-            <Button variant="secondary" onClick={() => void cancelInstall()}><Square size={13} /> Cancel</Button>
+            <Button variant="secondary" onClick={() => void cancelInstall()}><Square size={13} /> {t('common.cancel')}</Button>
           ) : (
-            <Button variant="primary" onClick={() => void startInstall()}><Download size={14} /> Download deployment</Button>
+            <Button variant="primary" onClick={() => void startInstall()}><Download size={14} /> {t('clients.downloadDeployment')}</Button>
           )}
         </div>
 
         <p className="clients-deployment-note">
-          <ShieldAlert size={13} /> Packages come from Roblox, are size/MD5 checked and extracted into an isolated folder. Historical builds may auto-update or be rejected by Roblox.
+          <ShieldAlert size={13} /> {t('clients.deploymentNote')}
         </p>
 
         <AnimatePresence initial={false}>
           {progress && operationId ? (
             <motion.div className="clients-progress" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
               <span><LoaderCircle className="clients-spin" size={14} /> {progress.stage.replace(/_/g, ' ')}</span>
-              <strong>{progress.packageName || progress.versionGuid || 'Resolving manifest'}</strong>
+              <strong>{progress.packageName || progress.versionGuid || t('clients.resolvingManifest')}</strong>
               <span>{progress.percent == null ? '—' : `${Math.round(progress.percent)}%`}</span>
               <div><i style={{ width: `${progress.percent ?? 3}%` }} /></div>
             </motion.div>
@@ -448,16 +448,16 @@ export function ClientsTab(): JSX.Element {
               <div>
                 <strong>{deployment.versionGuid}</strong>
                 <small>{deployment.clientVersion} · {deployment.channel}</small>
-                <code title={deployment.installLocation}>{compactPath(deployment.installLocation)}</code>
+                <code title={deployment.installLocation}>{compactPath(deployment.installLocation, t('clients.pathNotExposed'))}</code>
               </div>
               <span>{(deployment.sizeBytes / (1024 * 1024)).toFixed(0)} MB</span>
               <button type="button" onClick={() => {
                 const installation = installations.find((item) => item.id === deployment.id || item.versionGuid === deployment.versionGuid);
                 if (installation) void selectManagerClient(installation);
-              }}>Use</button>
+              }}>{t('clients.use')}</button>
             </article>
           ))}
-          {!loading && deployments.length === 0 ? <p className="clients-empty">No isolated deployments installed yet.</p> : null}
+          {!loading && deployments.length === 0 ? <p className="clients-empty">{t('clients.noDeployments')}</p> : null}
         </div>
       </section>
     </div>

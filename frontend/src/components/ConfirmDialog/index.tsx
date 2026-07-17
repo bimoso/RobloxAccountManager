@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import type { CSSProperties } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { useTranslation } from '../../i18n/useTranslation';
 
 /**
  * Props for {@link ConfirmDialog}, the modal confirmation prompt used by
@@ -78,10 +79,21 @@ export function ConfirmDialog({
   message,
   onConfirm,
   onCancel,
-  title = 'Confirm',
-  confirmLabel = 'Confirm',
-  cancelLabel = 'Cancel',
+  title,
+  confirmLabel,
+  cancelLabel,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation();
+  const reducedMotion = useReducedMotion() ?? false;
+  const resolvedTitle = title ?? t('common.confirm');
+  const resolvedConfirmLabel = confirmLabel ?? t('common.confirm');
+  const resolvedCancelLabel = cancelLabel ?? t('common.cancel');
+  // Open/close asymmetry on the motion-token scale: the dialog arrives over
+  // --dur-fast and gets out of the way over --dur-quick; both collapse to 0
+  // under reduced motion.
+  const openDuration = reducedMotion ? 0 : 0.25;
+  const closeDuration = reducedMotion ? 0 : 0.15;
+  const ease = [0.22, 1, 0.36, 1] as const;
   useEffect(() => {
     if (!open) return;
     const handleKey = (event: KeyboardEvent) => {
@@ -98,22 +110,26 @@ export function ConfirmDialog({
           style={backdropStyle}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.18 }}
+          exit={{ opacity: 0, transition: { duration: closeDuration, ease } }}
+          transition={{ duration: openDuration, ease }}
           onClick={onCancel}
         >
           <motion.div
             role="dialog"
             aria-modal="true"
-            aria-label={title}
+            aria-label={resolvedTitle}
             style={dialogStyle}
-            initial={{ opacity: 0, transform: 'scale(0.95)' }}
+            initial={{ opacity: 0, transform: 'scale(0.96)' }}
             animate={{ opacity: 1, transform: 'scale(1)' }}
-            exit={{ opacity: 0, transform: 'scale(0.95)' }}
-            transition={{ duration: 0.2, ease: [0.4, 0, 0.2, 1] }}
+            exit={{
+              opacity: 0,
+              transform: 'scale(0.98)',
+              transition: { duration: closeDuration, ease },
+            }}
+            transition={{ duration: openDuration, ease }}
             onClick={(event) => event.stopPropagation()}
           >
-            <h2 style={{ margin: '0 0 8px', fontSize: '16px' }}>{title}</h2>
+            <h2 style={{ margin: '0 0 8px', fontSize: '16px' }}>{resolvedTitle}</h2>
             <p style={{ margin: 0, color: 'var(--t2)', fontSize: '14px' }}>{message}</p>
             <div style={buttonRowStyle}>
               <button
@@ -121,14 +137,14 @@ export function ConfirmDialog({
                 onClick={onCancel}
                 style={{ ...buttonBase, background: 'var(--s3)', color: 'var(--t1)' }}
               >
-                {cancelLabel}
+                {resolvedCancelLabel}
               </button>
               <button
                 type="button"
                 onClick={onConfirm}
                 style={{ ...buttonBase, background: 'var(--red)', borderColor: 'var(--red)', color: '#fff' }}
               >
-                {confirmLabel}
+                {resolvedConfirmLabel}
               </button>
             </div>
           </motion.div>

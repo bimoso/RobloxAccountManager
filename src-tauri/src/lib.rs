@@ -10,7 +10,8 @@
 //! `packages`) are added by later tasks; only the scaffold and shared state
 //! live here for now.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::Mutex as AsyncMutex;
@@ -131,6 +132,15 @@ pub mod commands;
 /// `packages_load`/`packages_save` command wrappers are added by Task 14.2.
 pub mod packages;
 
+/// Roblox game-window grid layout (the multi-instance "Window layout" feature):
+/// enumerates the visible top-level windows belonging to live
+/// `RobloxPlayerBeta.exe` processes and arranges them into a grid — either
+/// sized from the desktop work area (auto layout) or from the configured
+/// target size / windows-per-row. Provides the `roblox_arrange_windows`
+/// command plus a debounced background maintenance pass that re-arranges as
+/// instances open and close while the feature is enabled.
+pub mod window_layout;
+
 /// Window-control and external-open command layer (Task 16.1), ported from
 /// the legacy JS backend's `window-minimize` / `window-maximize` / `window-close` /
 /// `open-external` IPC handlers. Hosts the `window_minimize` / `window_maximize`
@@ -161,6 +171,17 @@ pub mod webview2;
 pub struct CachedToken {
     pub value: String,
     pub cached_at: i64,
+}
+
+/// The session-scoped parameters a successful launch was made with, remembered
+/// per account so the auto-relaunch feature can restart an unexpectedly closed
+/// instance without re-asking the renderer. In-memory only — the plaintext
+/// cookie is never persisted through this path (the renderer already holds it
+/// for the session).
+#[derive(Debug, Clone)]
+pub struct LaunchParams {
+    pub cookie: String,
+    pub target: String,
 }
 
 /// Shared, long-lived backend state, registered with Tauri via `app.manage(...)`
@@ -243,6 +264,24 @@ pub struct AppState {
     /// replacing the legacy JS build's `legacy one-shot IPC listener('login:cancel', ...)`. `None`
     /// whenever no login is in progress.
     pub login_cancel_tx: Arc<AsyncMutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+
+    /// accountId -> the cookie/target its last successful launch used, so an
+    /// unexpected close can be auto-relaunched. The kill paths clear entries (a
+    /// manual kill means "stay closed"); session-scoped, never persisted.
+    pub launch_params: Arc<Mutex<HashMap<String, LaunchParams>>>,
+
+    /// Accounts with an auto-relaunch currently in flight, guarding against a
+    /// duplicate relaunch being spawned for the same detected close.
+    pub relaunching: Arc<Mutex<HashSet<String>>>,
+
+    /// Whether the single debounced window-layout maintenance pass is running
+    /// (`window_layout::schedule_layout_pass` spawns at most one).
+    pub layout_pass_running: Arc<AtomicBool>,
+
+    /// The window set + config the last layout pass arranged, so a maintenance
+    /// tick only re-arranges when instances actually opened/closed or the
+    /// layout configuration changed (never fighting the user's manual moves).
+    pub layout_last: Arc<Mutex<Option<window_layout::LayoutStamp>>>,
 }
 
 impl Default for AppState {
@@ -263,6 +302,10 @@ impl Default for AppState {
             csrf_cache: Arc::new(AsyncMutex::new(HashMap::new())),
             ticket_cache: Arc::new(AsyncMutex::new(HashMap::new())),
             login_cancel_tx: Arc::new(AsyncMutex::new(None)),
+            launch_params: Arc::new(Mutex::new(HashMap::new())),
+            relaunching: Arc::new(Mutex::new(HashSet::new())),
+            layout_pass_running: Arc::new(AtomicBool::new(false)),
+            layout_last: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -372,6 +415,7 @@ pub fn run() {
             roblox_process::roblox_kill_all,
             roblox_process::roblox_kill_one,
             roblox_process::roblox_running_count,
+            window_layout::roblox_arrange_windows,
             native_helper::roblox_set_volume,
             native_helper::multiinstance_status,
             native_helper::antiafk_status,

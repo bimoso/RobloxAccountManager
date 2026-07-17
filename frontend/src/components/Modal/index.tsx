@@ -29,10 +29,18 @@ export interface ModalProps {
 }
 
 /**
- * Base duration (ms) of the open/close opacity + scale transition. Sits inside
- * the 180–280ms range required by Requirement 5.1 / 5.2.
+ * Base duration (ms) of the opening opacity + scale transition. Sits inside
+ * the 180–280ms range required by Requirement 5.1 / 5.2. The close is quicker
+ * (open/close asymmetry): dismissal should get out of the way, so the exit
+ * runs at {@link MODAL_CLOSE_DURATION_MS} while staying inside the same range.
  */
-const MODAL_DURATION_MS = 220;
+const MODAL_DURATION_MS = 240;
+
+/** Duration (ms) of the closing transition (see {@link MODAL_DURATION_MS}). */
+const MODAL_CLOSE_DURATION_MS = 180;
+
+/** Ease-out curve shared by the open and close phases (never bounce a close). */
+const MODAL_EASE = [0.22, 1, 0.36, 1] as const;
 
 /**
  * Accessible, animated modal dialog.
@@ -50,6 +58,7 @@ const MODAL_DURATION_MS = 220;
 export function Modal({ open, onClose, titleId, children }: ModalProps): JSX.Element {
   const reducedMotion = useReducedMotion() ?? false;
   const duration = motionDuration(MODAL_DURATION_MS, reducedMotion) / 1000;
+  const closeDuration = motionDuration(MODAL_CLOSE_DURATION_MS, reducedMotion) / 1000;
 
   useEffect(() => {
     if (!open) return;
@@ -67,8 +76,8 @@ export function Modal({ open, onClose, titleId, children }: ModalProps): JSX.Ele
           className="modal-backdrop"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration }}
+          exit={{ opacity: 0, transition: { duration: closeDuration, ease: MODAL_EASE } }}
+          transition={{ duration, ease: MODAL_EASE }}
           onClick={onClose}
         >
           <motion.div
@@ -76,10 +85,14 @@ export function Modal({ open, onClose, titleId, children }: ModalProps): JSX.Ele
             role="dialog"
             aria-modal="true"
             aria-labelledby={titleId}
-            initial={{ opacity: 0, scale: 0.95 }}
+            initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration }}
+            exit={{
+              opacity: 0,
+              scale: 0.98,
+              transition: { duration: closeDuration, ease: MODAL_EASE },
+            }}
+            transition={{ duration, ease: MODAL_EASE }}
             onClick={(event) => event.stopPropagation()}
           >
             {children}

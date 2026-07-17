@@ -5,6 +5,8 @@
 //
 // - App info: number of saved accounts (from the Account_Store) and the
 //   detected Roblox version (`roblox_get_version`) — Requirement 21.1.
+// - Interface language: EN/ES selector bound to the shared Language_System
+//   (`languageStore` via `useTranslation`); switching cross-fades the UI.
 // - Encryption key controls: an input + "Save key" action that invokes
 //   `enc_set_key` with the entered key, unchanged — Requirement 21.2.
 // - Donut Browser token: an input + "Save token" action that invokes
@@ -39,8 +41,10 @@ import {
   Check,
   CircleGauge,
   Download,
+  Globe2,
   HardDrive,
   KeyRound,
+  Languages,
   MonitorCog,
   Palette,
   RadioTower,
@@ -59,7 +63,11 @@ import { BloxGenSettingsPanel } from '@/components/BloxGenSettingsPanel';
 import { ipc } from '@/lib/ipc';
 import { useAccountStore } from '@/stores/accountStore';
 import { useToastStore } from '@/stores/toastStore';
-import { donutTokenStatus, donutTokenStatusLabel, type DonutTokenStatus } from './donutTokenStatus';
+import { LANGUAGES } from '@/i18n';
+import type { MessageKey } from '@/i18n';
+import { useTranslation } from '@/i18n/useTranslation';
+import { donutTokenStatus, type DonutTokenStatus } from './donutTokenStatus';
+import { SessionAutomationCard } from './SessionAutomationCard';
 import { ThemesTab } from './ThemesTab';
 import { SoundsTab } from './SoundsTab';
 import { MixerTab } from './MixerTab';
@@ -70,12 +78,12 @@ import './Settings.css';
 /** Settings owns local configuration, including the former standalone Mixer. */
 export type SettingsTab = 'general' | 'clients' | 'mixer' | 'themes' | 'sounds';
 
-const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string; icon: LucideIcon }> = [
-  { id: 'general', label: 'General', icon: SlidersHorizontal },
-  { id: 'clients', label: 'Clients', icon: Boxes },
-  { id: 'mixer', label: 'Mixer', icon: AudioWaveform },
-  { id: 'themes', label: 'Themes', icon: Palette },
-  { id: 'sounds', label: 'Sounds', icon: Volume2 },
+const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; labelKey: MessageKey; icon: LucideIcon }> = [
+  { id: 'general', labelKey: 'settings.tab.general', icon: SlidersHorizontal },
+  { id: 'clients', labelKey: 'settings.tab.clients', icon: Boxes },
+  { id: 'mixer', labelKey: 'settings.tab.mixer', icon: AudioWaveform },
+  { id: 'themes', labelKey: 'settings.tab.themes', icon: Palette },
+  { id: 'sounds', labelKey: 'settings.tab.sounds', icon: Volume2 },
 ];
 
 /**
@@ -87,6 +95,7 @@ export function Settings(): JSX.Element {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const reducedMotion = useReducedMotion() ?? false;
+  const { t } = useTranslation();
 
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     let nextIndex: number | null = null;
@@ -105,22 +114,23 @@ export function Settings(): JSX.Element {
     <div className="settings-page">
       <header className="settings-page-header">
         <div>
-          <span className="settings-page-kicker">Control deck / preferences</span>
-          <h1 className="settings-title">Settings</h1>
-          <p>Configure account sessions, local security and workspace behavior.</p>
+          <span className="settings-page-kicker">{t('settings.kicker')}</span>
+          <h1 className="settings-title">{t('settings.title')}</h1>
+          <p>{t('settings.subtitle')}</p>
         </div>
         <span className="settings-local-badge">
           <ShieldCheck size={14} aria-hidden="true" />
-          Local configuration
+          {t('settings.localBadge')}
         </span>
       </header>
 
       <LayoutGroup id="settings-sections">
         <div className="settings-tabs-wrap">
-          <div className="settings-tab-bar" role="tablist" aria-label="Settings sections">
+          <div className="settings-tab-bar" role="tablist" aria-label={t('settings.tabsAria')}>
             {SETTINGS_TABS.map((tab, index) => {
               const Icon = tab.icon;
               const selected = tab.id === activeTab;
+              const label = t(tab.labelKey);
               return (
                 <button
                   key={tab.id}
@@ -128,7 +138,7 @@ export function Settings(): JSX.Element {
                   id={`settings-tab-${tab.id}`}
                   type="button"
                   role="tab"
-                  aria-label={tab.label}
+                  aria-label={label}
                   aria-selected={selected}
                   aria-controls={`settings-panel-${tab.id}`}
                   tabIndex={selected ? 0 : -1}
@@ -137,7 +147,7 @@ export function Settings(): JSX.Element {
                   onKeyDown={(event) => onTabKeyDown(event, index)}
                 >
                   <Icon size={15} strokeWidth={1.9} aria-hidden="true" />
-                  <span>{tab.label}</span>
+                  <span>{label}</span>
                   {selected ? (
                     <motion.span
                       className="settings-tab-signal"
@@ -197,6 +207,7 @@ function GeneralTab(): JSX.Element {
   const executeBulkDelete = useAccountStore((s) => s.executeBulkDelete);
   const showSuccess = useToastStore((s) => s.showSuccess);
   const showError = useToastStore((s) => s.showError);
+  const { t, language, setLanguage } = useTranslation();
 
   // ── App info (Requirement 21.1) ──
   const [robloxVersion, setRobloxVersion] = useState<string | null>(null);
@@ -315,13 +326,13 @@ function GeneralTab(): JSX.Element {
     try {
       const status = await ipc.installWayfern();
       setWayfernStatus(status);
-      showSuccess(`Wayfern ${status.version ?? ''} is ready.`.trim());
+      showSuccess(t('settings.wayfern.ready', { version: status.version ?? '' }).replace(/\s{2,}/g, ' '));
     } catch {
       // Central IPC error reporting already explains the failure.
     } finally {
       setInstallingWayfern(false);
     }
-  }, [installingWayfern, showSuccess]);
+  }, [installingWayfern, showSuccess, t]);
 
   const onSelectBrowserProvider = useCallback(async (next: 'donut' | 'wayfern') => {
     if (savingProvider || next === browserProvider) return;
@@ -330,13 +341,15 @@ function GeneralTab(): JSX.Element {
     setSavingProvider(true);
     try {
       await ipc.saveSettings({ browserProvider: next });
-      showSuccess(next === 'wayfern' ? 'Standalone Wayfern selected.' : 'Donut Browser selected.');
+      showSuccess(next === 'wayfern'
+        ? t('settings.provider.wayfernSelected')
+        : t('settings.provider.donutSelected'));
     } catch {
       setBrowserProvider(previous);
     } finally {
       setSavingProvider(false);
     }
-  }, [browserProvider, savingProvider, showSuccess]);
+  }, [browserProvider, savingProvider, showSuccess, t]);
 
   // Save a new encryption key: invoke `enc_set_key` with the entered key,
   // exactly as typed (Requirement 21.2). An empty key is allowed (it disables
@@ -348,16 +361,16 @@ function GeneralTab(): JSX.Element {
       const ok = await ipc.encSetKey(encKey);
       if (ok) {
         setEncKey('');
-        showSuccess('Encryption key updated.');
+        showSuccess(t('settings.security.keyUpdated'));
       } else {
-        showError('The encryption key could not be updated.');
+        showError(t('settings.security.keyUpdateFailed'));
       }
     } catch {
       // lib/ipc already reported the failure as a toast.
     } finally {
       setSavingKey(false);
     }
-  }, [encKey, savingKey, showSuccess, showError]);
+  }, [encKey, savingKey, showSuccess, showError, t]);
 
   // Save a Donut Browser token: invoke `settings_save_donut_token` with the
   // entered token, exactly as typed (Requirement 21.3). The token value is
@@ -370,18 +383,18 @@ function GeneralTab(): JSX.Element {
       const ok = await ipc.saveDonutToken(donutToken);
       if (ok) {
         setDonutToken('');
-        showSuccess('Donut Browser token saved.');
+        showSuccess(t('settings.token.saved'));
         // Reflect the new configured/not-configured status (Requirement 21.4).
         await refreshDonutStatus();
       } else {
-        showError('The Donut Browser token could not be saved.');
+        showError(t('settings.token.saveFailed'));
       }
     } catch {
       // lib/ipc already reported the failure as a toast.
     } finally {
       setSavingToken(false);
     }
-  }, [donutToken, savingToken, showSuccess, showError, refreshDonutStatus]);
+  }, [donutToken, savingToken, showSuccess, showError, refreshDonutStatus, t]);
 
   // Toggle Anti-AFK (Requirement 21.5): persist the new value via `settings_save`
   // (through `ipc.saveSettings`). The UI updates optimistically for immediate
@@ -395,7 +408,7 @@ function GeneralTab(): JSX.Element {
       setSavingAntiAfk(true);
       try {
         await ipc.saveSettings({ antiAfk: next });
-        showSuccess(next ? 'Anti-AFK enabled.' : 'Anti-AFK disabled.');
+        showSuccess(next ? t('settings.runtime.antiAfkOn') : t('settings.runtime.antiAfkOff'));
       } catch {
         // Persist failed: revert to the previous value. lib/ipc already toasted.
         setAntiAfk(previous);
@@ -403,7 +416,7 @@ function GeneralTab(): JSX.Element {
         setSavingAntiAfk(false);
       }
     },
-    [antiAfk, savingAntiAfk, showSuccess],
+    [antiAfk, savingAntiAfk, showSuccess, t],
   );
 
   // Confirm handler for "Delete all" (Requirement 21.6): remove every saved
@@ -421,7 +434,11 @@ function GeneralTab(): JSX.Element {
   }, [accounts, deletingAll, executeBulkDelete]);
 
   const multiInstanceLabel =
-    multiInstance === null ? 'Unknown' : multiInstance ? 'Enabled' : 'Disabled';
+    multiInstance === null
+      ? t('common.unknown')
+      : multiInstance
+        ? t('common.enabled')
+        : t('common.disabled');
 
   return (
     <div className="settings-general">
@@ -430,25 +447,64 @@ function GeneralTab(): JSX.Element {
           <div className="settings-card-title-group">
             <span className="settings-card-icon"><CircleGauge size={17} /></span>
             <div>
-              <span className="settings-eyebrow">System overview</span>
-              <h2 className="settings-card-title">Application</h2>
+              <span className="settings-eyebrow">{t('settings.overview.eyebrow')}</span>
+              <h2 className="settings-card-title">{t('settings.overview.title')}</h2>
             </div>
           </div>
           <span className="settings-status-badge settings-status-badge--on">
-            <Activity size={11} /> Ready
+            <Activity size={11} /> {t('settings.overview.ready')}
           </span>
         </div>
         <div className="settings-metric-grid">
           <div className="settings-metric">
-            <span>Saved accounts</span>
+            <span>{t('settings.overview.savedAccounts')}</span>
             <strong>{accountCount}</strong>
-            <small>Encrypted locally</small>
+            <small>{t('settings.overview.encryptedLocally')}</small>
           </div>
           <div className="settings-metric settings-metric--version">
-            <span>Roblox client</span>
-            <strong title={robloxVersion ?? 'Unknown'}>{robloxVersion ?? 'Unknown'}</strong>
-            <small>Detected installation</small>
+            <span>{t('settings.overview.robloxClient')}</span>
+            <strong title={robloxVersion ?? t('common.unknown')}>{robloxVersion ?? t('common.unknown')}</strong>
+            <small>{t('settings.overview.detectedInstall')}</small>
           </div>
+        </div>
+      </section>
+
+      <section className="settings-card settings-card--language">
+        <div className="settings-card-heading">
+          <div className="settings-card-title-group">
+            <span className="settings-card-icon"><Languages size={17} /></span>
+            <div>
+              <span className="settings-eyebrow">{t('settings.language.eyebrow')}</span>
+              <h2 className="settings-card-title">{t('settings.language.title')}</h2>
+            </div>
+          </div>
+          <span className="settings-status-badge settings-status-badge--on">
+            <Globe2 size={11} /> {language.toUpperCase()}
+          </span>
+        </div>
+        <p className="settings-hint">{t('settings.language.hint')}</p>
+        <div className="settings-provider-grid" role="radiogroup" aria-label={t('settings.language.groupAria')}>
+          {LANGUAGES.map((lang) => {
+            const selected = language === lang;
+            return (
+              <button
+                key={lang}
+                type="button"
+                role="radio"
+                aria-label={t(`lang.${lang}`)}
+                aria-checked={selected}
+                className={`settings-provider-option${selected ? ' selected' : ''}`}
+                onClick={() => setLanguage(lang)}
+              >
+                <span className="settings-provider-icon"><Languages size={18} strokeWidth={1.9} /></span>
+                <span className="settings-provider-copy">
+                  <strong>{t(`lang.${lang}`)}</strong>
+                  <small>{t(lang === 'en' ? 'settings.language.enDesc' : 'settings.language.esDesc')}</small>
+                </span>
+                <span className="settings-provider-check"><Check size={14} strokeWidth={2.4} /></span>
+              </button>
+            );
+          })}
         </div>
       </section>
 
@@ -457,21 +513,21 @@ function GeneralTab(): JSX.Element {
           <div className="settings-card-title-group">
             <span className="settings-card-icon"><KeyRound size={17} /></span>
             <div>
-              <span className="settings-eyebrow">Local security</span>
-              <h2 className="settings-card-title">Encryption key</h2>
+              <span className="settings-eyebrow">{t('settings.security.eyebrow')}</span>
+              <h2 className="settings-card-title">{t('settings.security.title')}</h2>
             </div>
           </div>
         </div>
-        <p className="settings-hint">Protect saved cookies with a custom key, or leave it empty for device-bound encryption.</p>
-        <label className="settings-field-label" htmlFor="settings-enc-key">New encryption key</label>
+        <p className="settings-hint">{t('settings.security.hint')}</p>
+        <label className="settings-field-label" htmlFor="settings-enc-key">{t('settings.security.newKeyLabel')}</label>
         <div className="settings-field-row">
           <input
             id="settings-enc-key"
             className="settings-input"
             type="password"
             autoComplete="new-password"
-            placeholder="New encryption key"
-            aria-label="New encryption key"
+            placeholder={t('settings.security.newKeyLabel')}
+            aria-label={t('settings.security.newKeyLabel')}
             value={encKey}
             onChange={(event) => setEncKey(event.target.value)}
           />
@@ -479,9 +535,9 @@ function GeneralTab(): JSX.Element {
             variant="primary"
             onClick={() => void onSaveKey()}
             disabled={savingKey}
-            aria-label="Save encryption key"
+            aria-label={t('settings.security.saveKeyAria')}
           >
-            {savingKey ? 'Saving…' : 'Save key'}
+            {savingKey ? t('common.saving') : t('settings.security.saveKey')}
           </Button>
         </div>
       </section>
@@ -491,8 +547,8 @@ function GeneralTab(): JSX.Element {
           <div className="settings-card-title-group">
             <span className="settings-card-icon settings-card-icon--feature"><RadioTower size={18} /></span>
             <div>
-              <span className="settings-eyebrow">Account sessions</span>
-              <h2 className="settings-card-title">Browser provider</h2>
+              <span className="settings-eyebrow">{t('settings.provider.eyebrow')}</span>
+              <h2 className="settings-card-title">{t('settings.provider.title')}</h2>
             </div>
           </div>
           <span className="settings-status-badge settings-status-badge--on">
@@ -500,10 +556,9 @@ function GeneralTab(): JSX.Element {
           </span>
         </div>
         <p className="settings-hint">
-          Pick how isolated account browsers are launched. Donut uses its Local API;
-          Wayfern runs as a standalone portable browser with one profile per account.
+          {t('settings.provider.hint')}
         </p>
-        <div className="settings-provider-grid" role="radiogroup" aria-label="Account browser provider">
+        <div className="settings-provider-grid" role="radiogroup" aria-label={t('settings.provider.groupAria')}>
           <button
             type="button"
             role="radio"
@@ -515,8 +570,8 @@ function GeneralTab(): JSX.Element {
           >
             <span className="settings-provider-icon"><HardDrive size={18} strokeWidth={1.9} /></span>
             <span className="settings-provider-copy">
-              <strong>Donut Browser</strong>
-              <small>Managed profiles through the local API</small>
+              <strong>{t('settings.provider.donut')}</strong>
+              <small>{t('settings.provider.donutDesc')}</small>
             </span>
             <span className="settings-provider-check"><Check size={14} strokeWidth={2.4} /></span>
           </button>
@@ -531,8 +586,8 @@ function GeneralTab(): JSX.Element {
           >
             <span className="settings-provider-icon"><MonitorCog size={18} strokeWidth={1.9} /></span>
             <span className="settings-provider-copy">
-              <strong>Wayfern portable</strong>
-              <small>Standalone browser with isolated profiles</small>
+              <strong>{t('settings.provider.wayfern')}</strong>
+              <small>{t('settings.provider.wayfernDesc')}</small>
             </span>
             <span className="settings-provider-check"><Check size={14} strokeWidth={2.4} /></span>
           </button>
@@ -542,13 +597,15 @@ function GeneralTab(): JSX.Element {
           <div>
             <strong>
               {installingWayfern
-                ? wayfernProgress?.stage === 'extracting' ? 'Extracting Wayfern…' : 'Downloading Wayfern…'
+                ? wayfernProgress?.stage === 'extracting'
+                  ? t('settings.wayfern.extracting')
+                  : t('settings.wayfern.downloading')
                 : wayfernStatus?.installed
-                  ? `Wayfern ${wayfernStatus.version ?? ''} installed`
-                  : 'Wayfern is not installed'}
+                  ? t('settings.wayfern.installed', { version: wayfernStatus.version ?? '' }).replace(/\s{2,}/g, ' ')
+                  : t('settings.wayfern.notInstalled')}
             </strong>
             <small>
-              Official windows-x64 portable build · download is approximately 1.06 GB
+              {t('settings.wayfern.buildNote')}
             </small>
           </div>
           <Button
@@ -560,17 +617,17 @@ function GeneralTab(): JSX.Element {
             {installingWayfern
               ? `${Math.round(wayfernProgress?.percent ?? 0)}%`
               : wayfernStatus?.updateAvailable
-                ? 'Update'
+                ? t('settings.wayfern.update')
                 : wayfernStatus?.installed
-                  ? 'Recheck'
-                  : 'Download'}
+                  ? t('settings.wayfern.recheck')
+                  : t('settings.wayfern.download')}
           </Button>
         </div>
         {installingWayfern ? (
           <div
             className="settings-download-track"
             role="progressbar"
-            aria-label="Wayfern download"
+            aria-label={t('settings.wayfern.progressAria')}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={Math.round(wayfernProgress?.percent ?? 0)}
@@ -585,8 +642,8 @@ function GeneralTab(): JSX.Element {
           <div className="settings-card-title-group">
             <span className="settings-card-icon"><ShieldCheck size={17} /></span>
             <div>
-              <span className="settings-eyebrow">Authentication</span>
-              <h2 className="settings-card-title">Donut Browser token</h2>
+              <span className="settings-eyebrow">{t('settings.token.eyebrow')}</span>
+              <h2 className="settings-card-title">{t('settings.token.title')}</h2>
             </div>
           </div>
           <span
@@ -594,21 +651,25 @@ function GeneralTab(): JSX.Element {
               donutStatus === 'configured' ? ' settings-status-badge--on' : ''
             }`}
           >
-            {donutStatus === null ? 'Unknown' : donutTokenStatusLabel(donutStatus)}
+            {donutStatus === null
+              ? t('common.unknown')
+              : donutStatus === 'configured'
+                ? t('settings.token.configured')
+                : t('settings.token.notConfigured')}
           </span>
         </div>
         <p className="settings-hint">
-          Authorize profile control through Donut Browser's local API.
+          {t('settings.token.hint')}
         </p>
-        <label className="settings-field-label" htmlFor="settings-donut-token">API token</label>
+        <label className="settings-field-label" htmlFor="settings-donut-token">{t('settings.token.label')}</label>
         <div className="settings-field-row">
           <input
             id="settings-donut-token"
             className="settings-input"
             type="password"
             autoComplete="off"
-            placeholder="Donut Browser token"
-            aria-label="Donut Browser token"
+            placeholder={t('settings.token.placeholder')}
+            aria-label={t('settings.token.placeholder')}
             value={donutToken}
             onChange={(event) => setDonutToken(event.target.value)}
           />
@@ -616,9 +677,9 @@ function GeneralTab(): JSX.Element {
             variant="primary"
             onClick={() => void onSaveToken()}
             disabled={savingToken}
-            aria-label="Save Donut Browser token"
+            aria-label={t('settings.token.saveAria')}
           >
-            {savingToken ? 'Saving…' : 'Save token'}
+            {savingToken ? t('common.saving') : t('settings.token.save')}
           </Button>
         </div>
       </section> : null}
@@ -628,8 +689,8 @@ function GeneralTab(): JSX.Element {
           <div className="settings-card-title-group">
             <span className="settings-card-icon"><Zap size={17} /></span>
             <div>
-              <span className="settings-eyebrow">Runtime</span>
-              <h2 className="settings-card-title">Instance behavior</h2>
+              <span className="settings-eyebrow">{t('settings.runtime.eyebrow')}</span>
+              <h2 className="settings-card-title">{t('settings.runtime.title')}</h2>
             </div>
           </div>
           <span
@@ -642,8 +703,8 @@ function GeneralTab(): JSX.Element {
         </div>
         <div className="settings-toggle-row">
           <span>
-            <strong>Anti-AFK</strong>
-            <small>Keep active sessions from timing out while idle.</small>
+            <strong>{t('sidebar.antiAfk')}</strong>
+            <small>{t('settings.runtime.antiAfkHint')}</small>
           </span>
           <Switch
             checked={antiAfk ?? false}
@@ -654,6 +715,8 @@ function GeneralTab(): JSX.Element {
         </div>
       </section>
 
+      <SessionAutomationCard />
+
       <BloxGenSettingsPanel className="settings-card--wide" />
 
       <section className="settings-card settings-card--wide settings-card--danger">
@@ -661,35 +724,33 @@ function GeneralTab(): JSX.Element {
           <div className="settings-card-title-group">
             <span className="settings-card-icon settings-card-icon--danger"><Trash2 size={17} /></span>
             <div>
-              <span className="settings-eyebrow">Destructive action</span>
-              <h2 className="settings-card-title">Danger zone</h2>
+              <span className="settings-eyebrow">{t('settings.danger.eyebrow')}</span>
+              <h2 className="settings-card-title">{t('settings.danger.title')}</h2>
             </div>
           </div>
         </div>
         <div className="settings-field-row settings-field-row--between">
           <p className="settings-hint">
-            Permanently remove all {accountCount} saved account{accountCount === 1 ? '' : 's'} and their local metadata.
+            {t(accountCount === 1 ? 'settings.danger.hintOne' : 'settings.danger.hintMany', { count: accountCount })}
           </p>
           <Button
             variant="danger"
             onClick={() => setDeleteAllOpen(true)}
             disabled={deletingAll || accountCount === 0}
-            aria-label="Delete all saved accounts"
+            aria-label={t('settings.danger.deleteAllAria')}
           >
             <Trash2 size={15} strokeWidth={2} aria-hidden="true" />
-            Delete all
+            {t('settings.danger.deleteAll')}
           </Button>
         </div>
       </section>
 
       <ConfirmDialog
         open={deleteAllOpen}
-        title="Delete all accounts"
-        message={`This will permanently remove all ${accountCount} saved account${
-          accountCount === 1 ? '' : 's'
-        }. This action is irreversible and cannot be undone.`}
-        confirmLabel="Delete all"
-        cancelLabel="Cancel"
+        title={t('settings.danger.confirmTitle')}
+        message={t(accountCount === 1 ? 'settings.danger.confirmOne' : 'settings.danger.confirmMany', { count: accountCount })}
+        confirmLabel={t('settings.danger.deleteAll')}
+        cancelLabel={t('common.cancel')}
         onConfirm={() => void onConfirmDeleteAll()}
         onCancel={() => setDeleteAllOpen(false)}
       />

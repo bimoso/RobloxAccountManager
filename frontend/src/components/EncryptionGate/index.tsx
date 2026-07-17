@@ -2,6 +2,7 @@ import { useId, useState, type FormEvent } from 'react';
 import { Modal } from '../Modal';
 import { Button } from '../Button';
 import { useEncryptionGateStore } from '../../stores/encryptionGateStore';
+import { useTranslation } from '../../i18n/useTranslation';
 import './EncryptionGate.css';
 
 /**
@@ -19,6 +20,7 @@ function SetupModalBody(): JSX.Element {
   const errorMessage = useEncryptionGateStore((s) => s.errorMessage);
   const [key, setKey] = useState('');
   const titleId = useId();
+  const { t } = useTranslation();
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -28,15 +30,14 @@ function SetupModalBody(): JSX.Element {
   return (
     <div className="enc-gate">
       <h2 id={titleId} className="enc-gate__title">
-        Set an encryption key
+        {t('encgate.setupTitle')}
       </h2>
       <p className="enc-gate__desc">
-        Protect your saved cookies with an encryption key. You can also skip this
-        step to store them unencrypted.
+        {t('encgate.setupDesc')}
       </p>
       <form className="enc-gate__form" onSubmit={onSubmit}>
         <label className="enc-gate__label" htmlFor={`${titleId}-input`}>
-          Encryption key
+          {t('encgate.keyLabel')}
         </label>
         <input
           id={`${titleId}-input`}
@@ -55,10 +56,10 @@ function SetupModalBody(): JSX.Element {
         ) : null}
         <div className="enc-gate__actions">
           <Button type="button" variant="secondary" onClick={() => void submitSetup('')}>
-            Skip
+            {t('encgate.skip')}
           </Button>
           <Button type="submit" variant="primary">
-            Set key
+            {t('encgate.setKey')}
           </Button>
         </div>
       </form>
@@ -77,6 +78,7 @@ function UnlockModalBody(): JSX.Element {
   const errorMessage = useEncryptionGateStore((s) => s.errorMessage);
   const [key, setKey] = useState('');
   const titleId = useId();
+  const { t } = useTranslation();
 
   const onSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -86,14 +88,14 @@ function UnlockModalBody(): JSX.Element {
   return (
     <div className="enc-gate">
       <h2 id={titleId} className="enc-gate__title">
-        Unlock your accounts
+        {t('encgate.unlockTitle')}
       </h2>
       <p className="enc-gate__desc">
-        Enter your encryption key to decrypt and load your saved accounts.
+        {t('encgate.unlockDesc')}
       </p>
       <form className="enc-gate__form" onSubmit={onSubmit}>
         <label className="enc-gate__label" htmlFor={`${titleId}-input`}>
-          Encryption key
+          {t('encgate.keyLabel')}
         </label>
         <input
           id={`${titleId}-input`}
@@ -112,7 +114,7 @@ function UnlockModalBody(): JSX.Element {
         ) : null}
         <div className="enc-gate__actions">
           <Button type="submit" variant="primary">
-            Unlock
+            {t('encgate.unlock')}
           </Button>
         </div>
       </form>

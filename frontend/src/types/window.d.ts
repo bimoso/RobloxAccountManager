@@ -98,6 +98,7 @@ export interface TauriApi {
   killAllRoblox: () => Promise<void>;
   killOneRoblox: (id: string) => Promise<void>;
   getRunningCount: () => Promise<number>;
+  arrangeWindows: () => Promise<number>;
   onAllRobloxClosed: (cb: () => void) => Promise<UnlistenFn>;
   launchRoblox: (id: string, cookie: string, target: string) => Promise<LaunchResult>;
   openExternal: (url: string) => Promise<void>;

@@ -131,7 +131,7 @@ describe('App shell wiring (task 29.6)', () => {
     render(<App />);
     // The Accounts page renders its heading once access is granted.
     expect(
-      await screen.findByRole('heading', { name: /cuentas/i }),
+      await screen.findByRole('heading', { name: /^accounts/i }),
     ).toBeInTheDocument();
   });
 
@@ -143,7 +143,7 @@ describe('App shell wiring (task 29.6)', () => {
       await screen.findByRole('heading', { name: /unlock your accounts/i }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole('heading', { name: /cuentas/i }),
+      screen.queryByRole('heading', { name: /^accounts/i }),
     ).not.toBeInTheDocument();
   });
 

@@ -68,12 +68,15 @@
 }
 
 .ram-titlebar__name {
+  overflow: hidden;
   color: var(--t1);
   font-family: var(--font-head);
   font-size: 14px;
   font-weight: 700;
   letter-spacing: -0.025em;
   line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ram-titlebar__kicker {
@@ -155,6 +158,73 @@
   gap: 2px;
   margin-left: 3px;
   -webkit-app-region: no-drag;
+}
+
+/* ── Language switcher (EN | ES segmented pill) ── */
+.ram-titlebar__lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  margin-right: 5px;
+  padding: 3px;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  background: rgba(14, 20, 36, 0.58);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  -webkit-app-region: no-drag;
+}
+
+.ram-titlebar__lang-opt {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 100%;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--t3);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  cursor: pointer;
+  transition: color var(--dur-quick, 150ms) var(--ease-smooth-out, ease);
+}
+
+.ram-titlebar__lang-opt:hover {
+  color: var(--t1);
+}
+
+.ram-titlebar__lang-opt.active {
+  color: var(--on-accent, #07101b);
+}
+
+.ram-titlebar__lang-opt:focus-visible {
+  outline: 2px solid var(--ring, var(--ac));
+  outline-offset: 1px;
+}
+
+.ram-titlebar__lang-thumb {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 7px;
+  background: var(--grad);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 6px 14px -8px var(--ac3);
+}
+
+.ram-titlebar__lang-code {
+  position: relative;
+  z-index: 1;
+}
+
+body.light .ram-titlebar__lang {
+  background: rgba(255, 255, 255, 0.56);
 }
 
 .ram-titlebar__btn {

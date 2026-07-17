@@ -9,6 +9,7 @@ import {
 import { createPortal } from 'react-dom';
 import { motion, useIsPresent, useReducedMotion } from 'framer-motion';
 import type { LucideIcon } from 'lucide-react';
+import { useTranslation } from '../../i18n/useTranslation';
 import './ContextMenu.css';
 
 /** Viewport coordinates at which a {@link ContextMenu} is anchored. */
@@ -116,6 +117,7 @@ export function ContextMenu({
   const [pos, setPos] = useState<ContextMenuAnchor>(anchor);
   const reducedMotion = useReducedMotion() ?? false;
   const isPresent = useIsPresent();
+  const { t } = useTranslation();
   const sections = useMemo(() => sectionItems(items), [items]);
 
   // Clamp against the real layout box. Entrance scale must not shrink the
@@ -275,7 +277,7 @@ export function ContextMenu({
     <motion.div
       ref={menuRef}
       role="menu"
-      aria-label={title ? `Acciones para ${title}` : 'Acciones'}
+      aria-label={title ? t('contextmenu.actionsFor', { title }) : t('contextmenu.actions')}
       className="command-menu"
       data-context-menu-portal="true"
       initial={reducedMotion ? false : { opacity: 0, scale: 0.975, y: -2 }}
@@ -310,7 +312,7 @@ export function ContextMenu({
             {title && <strong title={title}>{title}</strong>}
             {subtitle && <span className="command-menu__subtitle" title={subtitle}>{subtitle}</span>}
           </div>
-          <kbd aria-label="Cerrar con Escape">ESC</kbd>
+          <kbd aria-label={t('contextmenu.escClose')}>ESC</kbd>
         </div>
       )}
 

@@ -109,13 +109,13 @@ describe('Accounts drag reorder — no accidental reorder (Req 11.3)', () => {
 
   it('disables manual reorder while a validity sort filter is active', () => {
     render(<Accounts />);
-    fireEvent.click(screen.getByRole('combobox', { name: 'Filtrar cuentas' }));
-    fireEvent.click(screen.getByRole('option', { name: 'Válidas primero' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Filter accounts' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Valid first' }));
 
     const wrappers = cardWrappers();
     expect(wrappers[0]).toHaveAttribute(
       'aria-roledescription',
-      'Cuenta con orden automático por estado',
+      'Account auto-ordered by status',
     );
     expect(wrappers[0]).toHaveClass('sort-locked');
 
@@ -184,7 +184,7 @@ describe('Accounts drag reorder — no accidental reorder (Req 11.3)', () => {
     expect(clone?.parentElement).toBe(document.body);
     expect(clone?.style.transform).toContain('translateX(310px)');
     expect(clone?.style.transform).toContain('translateY(108px)');
-    expect(document.querySelector('.acc-drop-slot')).toHaveTextContent('Nueva posición');
+    expect(document.querySelector('.acc-drop-slot')).toHaveTextContent('New position');
     expect(document.body).toHaveClass('acc-dragging');
 
     fireEvent(

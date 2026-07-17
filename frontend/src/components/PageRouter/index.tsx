@@ -14,7 +14,8 @@ import {
   type Transition,
 } from 'framer-motion';
 import { motionDuration, navDirection, type NavDirection } from '@/lib/animation';
-import { NAV_PAGES, useNavigationStore, type PageId } from '@/stores/navigationStore';
+import { useNavigationStore, type PageId } from '@/stores/navigationStore';
+import { useTranslation } from '@/i18n/useTranslation';
 import { AccountsContainer } from '@/pages/Accounts/AccountsContainer';
 import { PackagesPage } from '@/pages/Packages';
 import ChartsPage from '@/pages/Charts';
@@ -153,7 +154,7 @@ function TransitionPage({
       exit="exit"
       transition={transition}
       role="main"
-      aria-label={`${pageLabel} page`}
+      aria-label={pageLabel}
       aria-hidden={isPresent ? undefined : true}
       tabIndex={-1}
     >
@@ -187,6 +188,7 @@ function TransitionPage({
 export function PageRouter({ pages }: PageRouterProps): JSX.Element {
   const activePage = useNavigationStore((state) => state.activePage);
   const activeIndex = useNavigationStore((state) => state.activeIndex);
+  const { t } = useTranslation();
 
   // Retain the previous ordinal across renders. On the render where the page
   // changes this still holds the prior index, so `navDirection` sees the real
@@ -209,7 +211,7 @@ export function PageRouter({ pages }: PageRouterProps): JSX.Element {
 
   const content =
     pages?.[activePage] ?? createElement(PAGE_COMPONENTS[activePage]);
-  const pageLabel = NAV_PAGES.find((page) => page.id === activePage)?.label ?? activePage;
+  const pageLabel = t('router.pageAria', { page: t(`nav.${activePage}`) });
 
   return (
     <div style={routerStyle}>

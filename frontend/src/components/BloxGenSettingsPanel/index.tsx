@@ -12,6 +12,7 @@ import {
   maskBloxGenApiKey,
 } from '@/lib/bloxgen';
 import { useToastStore } from '@/stores/toastStore';
+import { useTranslation } from '@/i18n/useTranslation';
 import './BloxGenSettingsPanel.css';
 
 export { BLOXGEN_KEY_CHANGED_EVENT } from '@/lib/bloxgen';
@@ -40,6 +41,7 @@ export function BloxGenSettingsPanel({
   const [visible, setVisible] = useState(false);
   const [touched, setTouched] = useState(false);
   const showSuccess = useToastStore((state) => state.showSuccess);
+  const { t } = useTranslation();
 
   useEffect(() => {
     const persisted = getPersisted<string>(PERSISTENCE_KEYS.bloxgenApiKey);
@@ -61,7 +63,7 @@ export function BloxGenSettingsPanel({
     setDraft(trimmed);
     window.dispatchEvent(new Event(BLOXGEN_KEY_CHANGED_EVENT));
     onSaved?.(trimmed);
-    showSuccess('BloxGen API key guardada');
+    showSuccess(t('bloxgen.saved'));
   };
 
   return (
@@ -74,25 +76,24 @@ export function BloxGenSettingsPanel({
           <KeyRound size={17} strokeWidth={1.8} />
         </span>
         <div>
-          <span className="bloxgen-settings__eyebrow">Generación de cuentas</span>
-          <h3 id={`${inputId}-title`}>BloxGen API key</h3>
+          <span className="bloxgen-settings__eyebrow">{t('bloxgen.eyebrow')}</span>
+          <h3 id={`${inputId}-title`}>{t('bloxgen.title')}</h3>
         </div>
         <span
           className="bloxgen-settings__status"
           data-state={isValidBloxGenApiKey(savedKey) ? 'ready' : 'missing'}
         >
           {isValidBloxGenApiKey(savedKey) ? <Check size={13} /> : <KeyRound size={13} />}
-          {isValidBloxGenApiKey(savedKey) ? 'Configurada' : 'Sin configurar'}
+          {isValidBloxGenApiKey(savedKey) ? t('bloxgen.configured') : t('bloxgen.notConfigured')}
         </span>
       </div>
 
       <p className="bloxgen-settings__copy">
-        Se usa sólo al pedir una cuenta nueva. La interfaz la guarda localmente y nunca la
-        incluye en el historial.
+        {t('bloxgen.copy')}
       </p>
 
       <label className="bloxgen-settings__label" htmlFor={inputId}>
-        Clave privada
+        {t('bloxgen.keyLabel')}
       </label>
       <div className="bloxgen-settings__field" data-invalid={showError || undefined}>
         <input
@@ -116,7 +117,7 @@ export function BloxGenSettingsPanel({
         <button
           type="button"
           className="bloxgen-settings__reveal"
-          aria-label={visible ? 'Ocultar BloxGen API key' : 'Mostrar BloxGen API key'}
+          aria-label={visible ? t('bloxgen.hide') : t('bloxgen.show')}
           aria-pressed={visible}
           onClick={() => setVisible((current) => !current)}
         >
@@ -127,10 +128,10 @@ export function BloxGenSettingsPanel({
       <div className="bloxgen-settings__footer">
         <p id={`${inputId}-help`} data-invalid={showError || undefined}>
           {showError
-            ? 'La clave debe comenzar con BLOX- y no puede contener espacios.'
+            ? t('bloxgen.invalid')
             : isValidBloxGenApiKey(savedKey)
               ? maskBloxGenApiKey(savedKey)
-              : 'Formato requerido: BLOX-tu-clave'}
+              : t('bloxgen.format')}
         </p>
         <Button
           variant="secondary"
@@ -139,7 +140,7 @@ export function BloxGenSettingsPanel({
           onClick={save}
         >
           <Save size={15} aria-hidden="true" />
-          Guardar clave
+          {t('bloxgen.save')}
         </Button>
       </div>
     </section>

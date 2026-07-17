@@ -16,6 +16,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Switch } from '../Switch';
+import { useTranslation } from '../../i18n/useTranslation';
+import type { MessageKey } from '../../i18n';
 
 const NAV_ICONS: Record<PageId, LucideIcon> = {
   accounts: UsersRound,
@@ -26,6 +28,25 @@ const NAV_ICONS: Record<PageId, LucideIcon> = {
   logs: ScrollText,
   credits: HeartHandshake,
 };
+
+/**
+ * Sidebar sections: purely presentational grouping of {@link NAV_PAGES} into
+ * labelled clusters (Manage / Discover / System). The flattened page order is
+ * identical to `NAV_PAGES`, so ordinal indices — and therefore the
+ * `PageRouter`'s navigation direction — are unaffected.
+ */
+const NAV_SECTIONS: ReadonlyArray<{
+  /** Stable section identifier (used as the React key). */
+  readonly id: string;
+  /** Message key of the small section heading shown above the group. */
+  readonly labelKey: MessageKey;
+  /** The pages in this section, preserving their `NAV_PAGES` relative order. */
+  readonly pages: readonly PageId[];
+}> = [
+  { id: 'manage', labelKey: 'sidebar.sectionManage', pages: ['accounts', 'packages'] },
+  { id: 'discover', labelKey: 'sidebar.sectionDiscover', pages: ['charts', 'generator'] },
+  { id: 'system', labelKey: 'sidebar.sectionSystem', pages: ['settings', 'logs', 'credits'] },
+];
 
 /**
  * Props for {@link Sidebar}.
@@ -44,10 +65,12 @@ export interface SidebarProps {
 
 /**
  * Application sidebar rendered as a floating frosted-glass dock. Renders the
- * navigation entries in {@link NAV_PAGES} order as glass icon-chip pills,
- * highlights the active page from the `navigationStore` (gradient chip + accent
- * bar), and routes clicks through the store's `navigate` action (Requirement
- * 4). Styling lives in `styles/liquid-glass.css`.
+ * navigation entries in {@link NAV_PAGES} order — visually clustered into the
+ * {@link NAV_SECTIONS} groups — highlights the active page from the
+ * `navigationStore` (gradient chip + accent bar), and routes clicks through the
+ * store's `navigate` action (Requirement 4). All visible labels resolve
+ * through the Language_System (`useTranslation`). Styling lives in
+ * `styles/liquid-glass.css`.
  */
 export function Sidebar({
   antiAfkEnabled,
@@ -55,6 +78,7 @@ export function Sidebar({
 }: SidebarProps): JSX.Element {
   const activePage = useNavigationStore((state) => state.activePage);
   const navigate = useNavigationStore((state) => state.navigate);
+  const { t } = useTranslation();
 
   const showAntiAfk =
     antiAfkEnabled !== undefined && onAntiAfkChange !== undefined;
@@ -64,54 +88,68 @@ export function Sidebar({
   };
 
   return (
-    <nav id="sidebar" className="ram-nav" aria-label="Primary">
+    <nav id="sidebar" className="ram-nav" aria-label={t('sidebar.primaryAria')}>
       <div className="ram-nav__heading" aria-hidden="true">
-        <span>Workspace</span>
+        <span>{t('sidebar.workspace')}</span>
         <span>{String(NAV_PAGES.length).padStart(2, '0')}</span>
       </div>
 
       <div className="ram-nav__links">
-      {NAV_PAGES.map((page, index) => {
-        const isActive = page.id === activePage;
-        const Icon = NAV_ICONS[page.id];
-        return (
-          <button
-            key={page.id}
-            type="button"
-            className={`ram-nav__item${isActive ? ' active' : ''}`}
-            aria-current={isActive ? 'page' : undefined}
-            data-order={String(index + 1).padStart(2, '0')}
-            onClick={() => handleNavigate(page.id)}
-          >
-            <span aria-hidden="true" className="sr-only">{page.icon}</span>
-            <span aria-hidden="true" className="ram-nav__icon">
-              <Icon size={17} strokeWidth={1.8} />
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.id} className="ram-nav__section">
+            <span className="ram-nav__section-label" aria-hidden="true">
+              {t(section.labelKey)}
             </span>
-            <span className="ram-nav__label">{page.label}</span>
-          </button>
-        );
-      })}
+            {section.pages.map((pageId) => {
+              const page = NAV_PAGES.find((entry) => entry.id === pageId);
+              if (!page) return null;
+              const index = NAV_PAGES.indexOf(page);
+              const isActive = page.id === activePage;
+              const Icon = NAV_ICONS[page.id];
+              return (
+                <button
+                  key={page.id}
+                  type="button"
+                  className={`ram-nav__item${isActive ? ' active' : ''}`}
+                  aria-current={isActive ? 'page' : undefined}
+                  data-order={String(index + 1).padStart(2, '0')}
+                  onClick={() => handleNavigate(page.id)}
+                >
+                  <span aria-hidden="true" className="sr-only">{page.icon}</span>
+                  <span aria-hidden="true" className="ram-nav__icon">
+                    <Icon size={17} strokeWidth={1.8} />
+                  </span>
+                  <span className="ram-nav__label">{t(`nav.${page.id}`)}</span>
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </div>
 
       <div className="ram-nav__spacer" aria-hidden="true" />
 
       {showAntiAfk ? (
-        <div className="ram-nav__afk" title="Keep instances past the 20-minute idle kick">
+        <div className="ram-nav__afk" title={t('sidebar.antiAfkTitle')}>
             <span className="ram-nav__afk-label">
             <Zap aria-hidden="true" size={16} strokeWidth={1.9} />
-            Anti-AFK
+            {t('sidebar.antiAfk')}
           </span>
-          <Switch checked={antiAfkEnabled} onChange={onAntiAfkChange} aria-label="Anti-AFK" />
+          <Switch
+            checked={antiAfkEnabled}
+            onChange={onAntiAfkChange}
+            aria-label={t('sidebar.antiAfk')}
+          />
         </div>
       ) : null}
 
-      <div className="ram-nav__status" aria-label="Local control layer active">
+      <div className="ram-nav__status" aria-label={t('sidebar.statusAria')}>
         <span className="ram-nav__status-icon" aria-hidden="true">
           <ShieldCheck size={16} strokeWidth={1.9} />
         </span>
         <span>
-          <strong>Local control</strong>
-          <small>Encrypted workspace</small>
+          <strong>{t('sidebar.localControl')}</strong>
+          <small>{t('sidebar.encryptedWorkspace')}</small>
         </span>
         <i aria-hidden="true" />
       </div>

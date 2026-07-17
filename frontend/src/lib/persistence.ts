@@ -28,6 +28,8 @@
 export const PERSISTENCE_KEYS = {
   /** Active theme name (Requirement 3.3, 3.4, 27.1). */
   theme: 'ui-theme',
+  /** Active interface language ('en' | 'es'). */
+  language: 'ui-language',
   /** Accounts page layout: grid or list (Requirement 27.1). */
   view: 'ui-view',
   /** Active accounts filter (Requirement 27.1). */

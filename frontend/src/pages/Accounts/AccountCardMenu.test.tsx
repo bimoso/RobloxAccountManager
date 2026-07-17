@@ -33,11 +33,11 @@ describe('AccountCardMenu viewport anchor', () => {
 
     const menu = screen.getByRole('menu');
     expect(menu).toHaveStyle({ left: '321px', top: '187px' });
-    expect(menu).toHaveAttribute('aria-label', 'Acciones para pointer-user');
+    expect(menu).toHaveAttribute('aria-label', 'Actions for pointer-user');
     expect(within(menu).getByText('@pointer-user')).toBeInTheDocument();
     expect(screen.getAllByRole('menuitem')).toHaveLength(10);
-    expect(screen.getByRole('menuitem', { name: 'Lanzar' })).toHaveClass('is-primary');
-    expect(screen.getByRole('menuitem', { name: 'Copiar cookie' })).toHaveClass(
+    expect(screen.getByRole('menuitem', { name: 'Launch' })).toHaveClass('is-primary');
+    expect(screen.getByRole('menuitem', { name: 'Copy cookie' })).toHaveClass(
       'command-menu__item--compact',
     );
   });
@@ -49,7 +49,7 @@ describe('AccountCardMenu viewport anchor', () => {
     const card = screen.getByRole('heading', { level: 3, name: 'pointer-user' }).closest('.acc-card');
     fireEvent.contextMenu(card as HTMLElement, { clientX: 220, clientY: 160 });
     const menu = screen.getByRole('menu');
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Lanzar' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Launch' }));
 
     expect(onLaunch).toHaveBeenCalledWith(ACCOUNT);
     expect(menu).toBeInTheDocument();

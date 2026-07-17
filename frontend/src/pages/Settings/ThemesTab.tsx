@@ -12,6 +12,7 @@
 // (Requirement 1.1).
 
 import { useThemeStore, THEME_NAMES } from '@/stores/themeStore';
+import { useTranslation } from '@/i18n/useTranslation';
 import type { ThemeName } from '@/types/models';
 import './Settings.css';
 
@@ -63,28 +64,29 @@ const THEME_PREVIEWS: Readonly<Record<ThemeName, ThemePreview>> = {
 export function ThemesTab(): JSX.Element {
   const activeTheme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
+  const { t } = useTranslation();
 
   return (
     <div className="settings-themes">
       <p className="settings-hint">
-        Choose a color theme. Your selection applies instantly across the whole
-        app and is remembered next time.
+        {t('settings.themes.hint')}
       </p>
       <div
         className="settings-theme-grid"
         role="radiogroup"
-        aria-label="Application theme"
+        aria-label={t('settings.themes.groupAria')}
       >
         {THEME_NAMES.map((name) => {
           const preview = THEME_PREVIEWS[name];
           const selected = name === activeTheme;
+          const label = t(`theme.${name}`);
           return (
             <button
               key={name}
               type="button"
               role="radio"
               aria-checked={selected}
-              aria-label={preview.label}
+              aria-label={label}
               className={`settings-theme-card${selected ? ' selected' : ''}`}
               onClick={() => setTheme(name)}
             >
@@ -102,7 +104,7 @@ export function ThemesTab(): JSX.Element {
                   style={{ background: preview.accent }}
                 />
               </span>
-              <span className="settings-theme-label">{preview.label}</span>
+              <span className="settings-theme-label">{label}</span>
             </button>
           );
         })}

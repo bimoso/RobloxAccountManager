@@ -138,6 +138,43 @@ pub struct Settings {
         skip_serializing_if = "RobloxLaunchMode::is_direct"
     )]
     pub roblox_launch_mode: RobloxLaunchMode,
+    /// Relaunch an account automatically after its Roblox client exits
+    /// unexpectedly (a watch-detected close; manual kills never relaunch).
+    /// Absent (`None`) means disabled.
+    #[serde(rename = "autoRelaunch", skip_serializing_if = "Option::is_none")]
+    pub auto_relaunch: Option<bool>,
+    /// Close an account's existing tracked Roblox process before launching it
+    /// again, so each account keeps at most one client. Absent means disabled.
+    #[serde(
+        rename = "replaceRunningInstance",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub replace_running_instance: Option<bool>,
+    /// Arrange Roblox game windows into a grid as instances open and close.
+    /// Absent means disabled.
+    #[serde(
+        rename = "windowLayoutEnabled",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub window_layout_enabled: Option<bool>,
+    /// Size the grid cells from the desktop work area (`true`) instead of the
+    /// fixed `windowTargetWidth`/`windowTargetHeight`. Absent means disabled.
+    #[serde(rename = "windowAutoLayout", skip_serializing_if = "Option::is_none")]
+    pub window_auto_layout: Option<bool>,
+    /// Fixed grid-cell width in pixels for the manual window layout (350 when
+    /// absent).
+    #[serde(rename = "windowTargetWidth", skip_serializing_if = "Option::is_none")]
+    pub window_target_width: Option<u32>,
+    /// Fixed grid-cell height in pixels for the manual window layout (350 when
+    /// absent).
+    #[serde(
+        rename = "windowTargetHeight",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub window_target_height: Option<u32>,
+    /// Windows placed per grid row in the manual window layout (1 when absent).
+    #[serde(rename = "windowPerRow", skip_serializing_if = "Option::is_none")]
+    pub window_per_row: Option<u32>,
     /// Catch-all preserving any unrecognized/legacy field on round-trip.
     #[serde(flatten)]
     pub extra: Map<String, Value>,

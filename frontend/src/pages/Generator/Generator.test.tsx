@@ -82,7 +82,7 @@ describe('Generator secure automatic add flow', () => {
     const user = userEvent.setup();
     render(<Generator />);
 
-    await user.click(screen.getByRole('button', { name: /configurar BloxGen$/i }));
+    await user.click(screen.getByRole('button', { name: /configure BloxGen$/i }));
 
     expect(mocks.navigate).toHaveBeenCalledWith('settings');
     expect(mocks.fetch).not.toHaveBeenCalled();
@@ -100,11 +100,11 @@ describe('Generator secure automatic add flow', () => {
     const user = userEvent.setup();
     render(<Generator />);
 
-    await user.click(screen.getByRole('button', { name: /generar y añadir/i }));
+    await user.click(screen.getByRole('button', { name: /generate and add/i }));
 
     await waitFor(() => expect(mocks.validateCookie).toHaveBeenCalledWith('invalid-cookie'));
     expect(mocks.add).not.toHaveBeenCalled();
-    expect(await screen.findByText('Rechazada')).toBeInTheDocument();
+    expect(await screen.findByText('Rejected')).toBeInTheDocument();
     expect(mocks.writeGenHistory).toHaveBeenCalledWith([
       expect.objectContaining({ result: 'rejected', step: 'validate' }),
     ]);
@@ -128,7 +128,7 @@ describe('Generator secure automatic add flow', () => {
     const user = userEvent.setup();
     render(<Generator />);
 
-    await user.click(screen.getByRole('button', { name: /generar y añadir/i }));
+    await user.click(screen.getByRole('button', { name: /generate and add/i }));
 
     await waitFor(() => expect(mocks.add).toHaveBeenCalledTimes(1));
     expect(mocks.validateCookie.mock.invocationCallOrder[0]).toBeLessThan(
@@ -141,7 +141,7 @@ describe('Generator secure automatic add flow', () => {
         cookie: 'valid-cookie',
       }),
     );
-    expect(await screen.findByText('Añadida')).toBeInTheDocument();
-    expect(mocks.showSuccess).toHaveBeenCalledWith('VerifiedRobloxName se añadió a Cuentas');
+    expect(await screen.findByText('Added')).toBeInTheDocument();
+    expect(mocks.showSuccess).toHaveBeenCalledWith('VerifiedRobloxName was added to Accounts');
   });
 });

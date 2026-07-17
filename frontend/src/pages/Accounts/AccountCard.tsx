@@ -9,6 +9,8 @@ import {
   StickyNote,
 } from 'lucide-react';
 import { accountBadges, displayName } from '@/lib/filters';
+import { useTranslation } from '@/i18n/useTranslation';
+import type { Language, Translator } from '@/i18n';
 import type { Account } from '@/types/models';
 import './accounts.css';
 
@@ -52,11 +54,11 @@ function initials(label: string): string {
 }
 
 /** Compact, locale-aware activity label for the operational metadata row. */
-function lastActivity(value: string | null): string {
-  if (!value) return 'Sin actividad';
+function lastActivity(value: string | null, language: Language, t: Translator): string {
+  if (!value) return t('accounts.card.noActivity');
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return 'Actividad reciente';
-  return new Intl.DateTimeFormat('es-MX', {
+  if (Number.isNaN(parsed.getTime())) return t('accounts.card.recentActivity');
+  return new Intl.DateTimeFormat(language === 'es' ? 'es-MX' : 'en-US', {
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
@@ -80,20 +82,27 @@ export function AccountCard({
   onLaunch,
 }: AccountCardProps): JSX.Element {
   const [avatarFailed, setAvatarFailed] = useState(false);
+  const { t, language } = useTranslation();
 
   const label = displayName(account);
   const badges = accountBadges(account);
   const note = accountNotes(account);
   const selectionMode = onSelectToggle !== undefined;
   const showAvatar = avatarUrl && !avatarFailed;
-  const activity = useMemo(() => lastActivity(account.lastUsed), [account.lastUsed]);
+  const activity = useMemo(
+    () => lastActivity(account.lastUsed, language, t),
+    [account.lastUsed, language, t],
+  );
   const accountHandle = account.username ? `@${account.username}` : `UID ${account.userId}`;
   const status = badges.expired ? 'expired' : badges.launched ? 'live' : 'ready';
+  const instanceCount = Math.max(1, Number(account.launchedInstanceCount ?? 1));
   const statusLabel = badges.expired
-    ? 'Credencial caducada'
+    ? t('accounts.card.expired')
     : badges.launched
-      ? `${Math.max(1, Number(account.launchedInstanceCount ?? 1))} activa${Number(account.launchedInstanceCount ?? 1) === 1 ? '' : 's'}`
-      : 'Lista';
+      ? instanceCount === 1
+        ? t('accounts.card.activeOne')
+        : t('accounts.card.activeMany', { count: instanceCount })
+      : t('accounts.card.ready');
 
   const classes = [
     'acc-card',
@@ -128,7 +137,7 @@ export function AccountCard({
           className="acc-check"
           role="checkbox"
           aria-checked={selected}
-          aria-label={selected ? 'Deselect' : 'Select'}
+          aria-label={selected ? t('accounts.card.deselect') : t('accounts.card.select')}
           onClick={(event) => {
             event.stopPropagation();
             onSelectToggle?.();
@@ -144,7 +153,7 @@ export function AccountCard({
             {showAvatar ? (
               <img
                 src={avatarUrl}
-                alt={`Avatar de ${label}`}
+                alt={t('accounts.card.avatarAlt', { name: label })}
                 onError={() => setAvatarFailed(true)}
               />
             ) : (
@@ -171,7 +180,7 @@ export function AccountCard({
             <button
               type="button"
               className="acc-iconbtn acc-iconbtn--menu"
-              aria-label="Más acciones"
+              aria-label={t('accounts.card.moreActions')}
               onClick={(event) => {
                 event.stopPropagation();
                 onOpenMenu();
@@ -183,22 +192,22 @@ export function AccountCard({
         </div>
       </div>
 
-      <div className="acc-card__meta" aria-label="Datos operativos de la cuenta">
-        <span title={`Roblox user ID ${account.userId}`}>
+      <div className="acc-card__meta" aria-label={t('accounts.card.metaAria')}>
+        <span title={t('accounts.card.uidTitle', { id: account.userId })}>
           <ShieldCheck size={14} aria-hidden="true" />
           <span className="acc-card__meta-label">UID</span>
           <code>{account.userId}</code>
         </span>
-        <span title={`Última actividad: ${activity}`}>
+        <span title={t('accounts.card.lastActivityTitle', { value: activity })}>
           <Clock3 size={14} aria-hidden="true" />
-          <span className="acc-card__meta-label">Última</span>
+          <span className="acc-card__meta-label">{t('accounts.card.last')}</span>
           <strong>{activity}</strong>
         </span>
       </div>
 
       <div className={`acc-card__note${note ? '' : ' is-empty'}`} title={note || undefined}>
         <StickyNote size={14} aria-hidden="true" />
-        <span>{note || 'Sin notas de operación'}</span>
+        <span>{note || t('accounts.card.noNotes')}</span>
       </div>
 
       <div className="acc-card__footer">
@@ -211,8 +220,12 @@ export function AccountCard({
             )}
           </span>
           <span>
-            <small>Sesión</small>
-            <strong>{badges.launched ? 'En curso' : badges.expired ? 'Requiere acceso' : 'Disponible'}</strong>
+            <small>{t('accounts.card.session')}</small>
+            <strong>{badges.launched
+              ? t('accounts.card.inProgress')
+              : badges.expired
+                ? t('accounts.card.needsAccess')
+                : t('accounts.card.available')}</strong>
           </span>
         </div>
         <button
@@ -228,7 +241,7 @@ export function AccountCard({
           ) : (
             <CirclePlay size={16} aria-hidden="true" />
           )}
-          {badges.launched ? 'Relanzar' : 'Lanzar'}
+          {badges.launched ? t('accounts.card.relaunch') : t('accounts.card.launch')}
         </button>
       </div>
     </div>

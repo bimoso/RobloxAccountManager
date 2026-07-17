@@ -25,15 +25,15 @@ describe('BloxGenSettingsPanel', () => {
     const onSaved = vi.fn();
     render(<BloxGenSettingsPanel onSaved={onSaved} />);
 
-    const input = screen.getByLabelText('Clave privada');
+    const input = screen.getByLabelText('Private key');
     await user.type(input, 'not-a-key');
     await user.tab();
-    expect(screen.getByText(/debe comenzar con BLOX-/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /guardar clave/i })).toBeDisabled();
+    expect(screen.getByText(/must start with BLOX-/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save key/i })).toBeDisabled();
 
     await user.clear(input);
     await user.type(input, 'BLOX-local-test');
-    await user.click(screen.getByRole('button', { name: /guardar clave/i }));
+    await user.click(screen.getByRole('button', { name: /save key/i }));
 
     expect(getPersisted(PERSISTENCE_KEYS.bloxgenApiKey)).toBe('BLOX-local-test');
     expect(onSaved).toHaveBeenCalledWith('BLOX-local-test');

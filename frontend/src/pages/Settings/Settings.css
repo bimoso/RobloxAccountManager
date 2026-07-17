@@ -953,6 +953,66 @@ body.light .settings-input {
   font-size: 9.5px;
 }
 
+/* ── Multi-instance session automation card ── */
+
+.settings-session-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+@media (max-width: 1080px) {
+  .settings-session-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.settings-toggle-row--muted {
+  opacity: 0.55;
+}
+
+.settings-session-controls {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 11px;
+}
+
+.settings-session-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.settings-session-inline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.settings-session-input {
+  width: 128px;
+  flex: 0 0 auto;
+}
+
+.settings-session-input--narrow {
+  width: 84px;
+}
+
+.settings-session-unit {
+  color: var(--t3);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings-session-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+
 .settings-info-row {
   display: flex;
   align-items: center;

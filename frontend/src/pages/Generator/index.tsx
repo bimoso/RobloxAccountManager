@@ -30,6 +30,8 @@ import { getPersisted, PERSISTENCE_KEYS } from '@/lib/persistence';
 import { useAccountStore } from '@/stores/accountStore';
 import { useNavigationStore } from '@/stores/navigationStore';
 import { useToastStore } from '@/stores/toastStore';
+import { useTranslation } from '@/i18n/useTranslation';
+import type { Translator } from '@/i18n';
 import {
   runGeneratorPipeline,
   type GeneratorPhase,
@@ -39,13 +41,11 @@ import './Generator.css';
 
 const STEPS: ReadonlyArray<{
   id: GenerationStep;
-  label: string;
-  detail: string;
   Icon: typeof Sparkles;
 }> = [
-  { id: 'generate', label: 'Generar', detail: 'BloxGen', Icon: Sparkles },
-  { id: 'validate', label: 'Validar', detail: 'Roblox', Icon: ShieldCheck },
-  { id: 'add', label: 'Añadir', detail: 'Cuentas', Icon: UserPlus },
+  { id: 'generate', Icon: Sparkles },
+  { id: 'validate', Icon: ShieldCheck },
+  { id: 'add', Icon: UserPlus },
 ];
 
 type StepVisualState = 'pending' | 'active' | 'complete' | 'error';
@@ -79,24 +79,24 @@ function stepVisualState(
   return 'pending';
 }
 
-function phaseLabel(phase: GeneratorPhase): string {
-  if (phase === 'generating') return 'Solicitando una cuenta a BloxGen…';
-  if (phase === 'validating') return 'Comprobando la cookie directamente con Roblox…';
-  if (phase === 'adding') return 'Guardando la cuenta validada…';
-  return 'Generar y añadir cuenta';
+function phaseLabel(phase: GeneratorPhase, t: Translator): string {
+  if (phase === 'generating') return t('gen.phase.generating');
+  if (phase === 'validating') return t('gen.phase.validating');
+  if (phase === 'adding') return t('gen.phase.adding');
+  return t('gen.phase.idle');
 }
 
-function resultLabel(entry: SafeGenHistoryEntry): string {
-  if (entry.result === 'added' || !entry.result) return 'Añadida';
-  if (entry.result === 'rejected') return 'Rechazada';
-  return 'Falló';
+function resultLabel(entry: SafeGenHistoryEntry, t: Translator): string {
+  if (entry.result === 'added' || !entry.result) return t('gen.result.added');
+  if (entry.result === 'rejected') return t('gen.result.rejected');
+  return t('gen.result.failed');
 }
 
-function resultDescription(entry: SafeGenHistoryEntry): string {
-  if (entry.result === 'added' || !entry.result) return 'Validada y guardada en Cuentas';
-  if (entry.step === 'validate') return 'La cookie no superó la validación';
-  if (entry.step === 'add') return 'Validó, pero no pudo guardarse';
-  return 'BloxGen no completó la solicitud';
+function resultDescription(entry: SafeGenHistoryEntry, t: Translator): string {
+  if (entry.result === 'added' || !entry.result) return t('gen.resultDesc.added');
+  if (entry.step === 'validate') return t('gen.resultDesc.validate');
+  if (entry.step === 'add') return t('gen.resultDesc.add');
+  return t('gen.resultDesc.generate');
 }
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -110,6 +110,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
 
 export default function Generator(): JSX.Element {
   const reducedMotion = useReducedMotion() ?? false;
+  const { t } = useTranslation();
   const [apiKey, setApiKey] = useState(readApiKey);
   const [history, setHistory] = useState<SafeGenHistoryEntry[]>([]);
   const [phase, setPhase] = useState<GeneratorPhase>('idle');
@@ -179,13 +180,13 @@ export default function Generator(): JSX.Element {
 
     if (outcome.ok) {
       setPhase('success');
-      showSuccess(`${outcome.validation.username} se añadió a Cuentas`);
+      showSuccess(t('gen.addedToAccounts', { name: outcome.validation.username }));
     } else {
       setFailure(outcome);
       setPhase('error');
       showError(outcome.message);
     }
-  }, [addAccount, navigate, persistHistoryEntry, showError, showSuccess]);
+  }, [addAccount, navigate, persistHistoryEntry, showError, showSuccess, t]);
 
   const handleClear = useCallback(async () => {
     if (history.length === 0) return;
@@ -193,41 +194,41 @@ export default function Generator(): JSX.Element {
     try {
       await ipc.clearGenHistory();
       setHistory(clearGenHistory<SafeGenHistoryEntry>());
-      showSuccess('Historial de generación borrado');
+      showSuccess(t('gen.historyCleared'));
     } finally {
       setClearing(false);
     }
-  }, [history.length, showSuccess]);
+  }, [history.length, showSuccess, t]);
 
   const handleCopy = useCallback(
     async (entry: SafeGenHistoryEntry) => {
       if (!entry.username || !entry.password) return;
       const copied = await copyToClipboard(`${entry.username}:${entry.password}`);
-      if (copied) showSuccess(`Credenciales de ${entry.username} copiadas`);
-      else showError('No se pudieron copiar las credenciales');
+      if (copied) showSuccess(t('gen.credsCopied', { name: entry.username }));
+      else showError(t('gen.credsCopyFailed'));
     },
-    [showError, showSuccess],
+    [showError, showSuccess, t],
   );
 
   return (
     <section className="gen-page" aria-labelledby="gen-title">
       <header className="gen-header">
         <div>
-          <span className="gen-eyebrow">Provisioning / cuentas</span>
-          <h1 id="gen-title">Generator</h1>
-          <p>Genera una cuenta, verifica su cookie y la añade sin pasos manuales.</p>
+          <span className="gen-eyebrow">{t('gen.eyebrow')}</span>
+          <h1 id="gen-title">{t('gen.title')}</h1>
+          <p>{t('gen.subtitle')}</p>
         </div>
         <button
           type="button"
           className="gen-key-chip"
           data-state={keyReady ? 'ready' : 'missing'}
-          aria-label={keyReady ? 'BloxGen API key configurada; abrir Settings' : 'Configurar BloxGen API key en Settings'}
+          aria-label={keyReady ? t('gen.keyChipReadyAria') : t('gen.keyChipMissingAria')}
           onClick={() => navigate('settings')}
         >
           <KeyRound size={14} />
           <span>
-            <small>BloxGen key</small>
-            <strong>{keyReady ? maskBloxGenApiKey(apiKey) : 'Configurar en Settings'}</strong>
+            <small>{t('gen.keyChipLabel')}</small>
+            <strong>{keyReady ? maskBloxGenApiKey(apiKey) : t('gen.configureInSettings')}</strong>
           </span>
           <Settings2 size={14} />
         </button>
@@ -237,13 +238,13 @@ export default function Generator(): JSX.Element {
         <div className="gen-command__intro">
           <span className="gen-command__index" aria-hidden="true">01</span>
           <div>
-            <span className="gen-command__kicker">Pipeline seguro</span>
-            <h2 id="gen-command-title">Una acción, tres comprobaciones</h2>
-            <p>La cuenta sólo llega a tu biblioteca después de que Roblox confirme la cookie.</p>
+            <span className="gen-command__kicker">{t('gen.securePipeline')}</span>
+            <h2 id="gen-command-title">{t('gen.commandTitle')}</h2>
+            <p>{t('gen.commandCopy')}</p>
           </div>
         </div>
 
-        <ol className="gen-pipeline" aria-label="Progreso de generación">
+        <ol className="gen-pipeline" aria-label={t('gen.progressAria')}>
           {STEPS.map((step, index) => {
             const state = stepVisualState(index, phase, failure);
             const Icon = step.Icon;
@@ -253,8 +254,8 @@ export default function Generator(): JSX.Element {
                   {state === 'complete' ? <Check size={16} /> : state === 'error' ? <CircleAlert size={16} /> : <Icon size={16} />}
                 </span>
                 <span className="gen-pipeline__copy">
-                  <strong>{step.label}</strong>
-                  <small>{step.detail}</small>
+                  <strong>{t(`gen.step.${step.id}`)}</strong>
+                  <small>{t(`gen.step.${step.id}Detail`)}</small>
                 </span>
                 {state === 'active' && !reducedMotion && (
                   <motion.span
@@ -286,12 +287,12 @@ export default function Generator(): JSX.Element {
               {phase === 'success' ? <Check size={15} /> : phase === 'error' ? <CircleAlert size={15} /> : <ShieldCheck size={15} />}
               <span>
                 {phase === 'success'
-                  ? 'Cuenta validada y añadida automáticamente.'
+                  ? t('gen.status.success')
                   : phase === 'error'
                     ? failure?.message
                     : keyReady
-                      ? 'Listo. La cookie nunca se guarda en este historial.'
-                      : 'Configura una BloxGen API key válida para empezar.'}
+                      ? t('gen.status.ready')
+                      : t('gen.status.needKey')}
               </span>
             </motion.div>
           </AnimatePresence>
@@ -303,7 +304,7 @@ export default function Generator(): JSX.Element {
             onClick={() => void handleGenerate()}
           >
             {running ? <LoaderCircle className="gen-spinner" size={17} /> : keyReady ? <Sparkles size={17} /> : <Settings2 size={17} />}
-            {running ? phaseLabel(phase) : keyReady ? 'Generar y añadir' : 'Configurar BloxGen'}
+            {running ? phaseLabel(phase, t) : keyReady ? t('gen.generateAdd') : t('gen.configure')}
           </Button>
         </div>
       </section>
@@ -313,14 +314,14 @@ export default function Generator(): JSX.Element {
           <div>
             <History size={17} aria-hidden="true" />
             <span>
-              <small>Auditoría local</small>
-              <h2 id="gen-history-title">Historial</h2>
+              <small>{t('gen.localAudit')}</small>
+              <h2 id="gen-history-title">{t('gen.historyTitle')}</h2>
             </span>
             <span className="gen-history__count">{history.length}</span>
           </div>
           <Button variant="ghost" className="gen-clear" disabled={clearing || history.length === 0} onClick={() => void handleClear()}>
             <Trash2 size={14} />
-            {clearing ? 'Borrando…' : 'Borrar'}
+            {clearing ? t('gen.clearing') : t('gen.clear')}
           </Button>
         </header>
 
@@ -328,8 +329,8 @@ export default function Generator(): JSX.Element {
           <div className="gen-empty">
             <span className="gen-empty__mark" aria-hidden="true"><Sparkles size={20} /></span>
             <div>
-              <strong>La primera ejecución aparecerá aquí.</strong>
-              <p>Verás qué paso terminó y si la cuenta llegó a Cuentas. Nunca se muestra la cookie.</p>
+              <strong>{t('gen.emptyTitle')}</strong>
+              <p>{t('gen.emptyCopy')}</p>
             </div>
           </div>
         ) : (
@@ -348,12 +349,12 @@ export default function Generator(): JSX.Element {
                     {successful ? <Check size={15} /> : <CircleAlert size={15} />}
                   </span>
                   <span className="gen-history__identity">
-                    <strong>{entry.username || 'Intento sin cuenta'}</strong>
-                    <small>{resultDescription(entry)}</small>
+                    <strong>{entry.username || t('gen.attemptNoAccount')}</strong>
+                    <small>{resultDescription(entry, t)}</small>
                   </span>
                   <span className="gen-history__result">
-                    <strong>{resultLabel(entry)}</strong>
-                    <small>{entry.step === 'validate' ? 'Paso 02' : entry.step === 'add' ? 'Paso 03' : 'Paso 01'}</small>
+                    <strong>{resultLabel(entry, t)}</strong>
+                    <small>{t('gen.stepBadge', { num: entry.step === 'validate' ? '02' : entry.step === 'add' ? '03' : '01' })}</small>
                   </span>
                   <time dateTime={entry.createdAt}>
                     <Clock3 size={13} />
@@ -365,8 +366,8 @@ export default function Generator(): JSX.Element {
                     type="button"
                     className="gen-history__copy"
                     disabled={!successful || !entry.username || !entry.password}
-                    aria-label={`Copiar credenciales de ${entry.username || 'la generación'}`}
-                    title={successful && entry.password ? 'Copiar usuario y contraseña' : 'Sin credenciales disponibles'}
+                    aria-label={t('gen.copyAria', { name: entry.username || t('gen.copyFallbackName') })}
+                    title={successful && entry.password ? t('gen.copyTitle') : t('gen.noCredentials')}
                     onClick={() => void handleCopy(entry)}
                   >
                     <Copy size={14} />

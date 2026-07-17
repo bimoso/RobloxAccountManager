@@ -16,6 +16,7 @@
 
 import { create } from 'zustand';
 import { getPersisted, setPersisted, PERSISTENCE_KEYS } from '../lib/persistence';
+import { withViewTransition } from '../lib/viewTransition';
 import type { ThemeName } from '../types/models';
 
 /**
@@ -118,7 +119,12 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     // In-memory selection first so the session keeps the theme even if the
     // subsequent persist is a no-op on failure (Requirement 3.6, Property 4).
     set({ theme });
-    applyThemeClass(theme);
+    // Cross-fade the palette swap through a view transition when the platform
+    // supports it; otherwise (jsdom, reduced motion) the class swap is
+    // synchronous exactly as before, keeping the 300ms budget of Req 3.2.
+    withViewTransition(() => {
+      applyThemeClass(theme);
+    });
     setPersisted(PERSISTENCE_KEYS.theme, theme);
   },
   toggleTheme: () => {

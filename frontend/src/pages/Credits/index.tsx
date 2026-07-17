@@ -14,6 +14,7 @@
 import type { MouseEvent } from 'react';
 import { useState, useEffect } from 'react';
 import { ipc } from '@/lib/ipc';
+import { useTranslation } from '@/i18n/useTranslation';
 import './Credits.css';
 
 /** A single external link shown on a contributor card. */
@@ -99,6 +100,7 @@ const LINK_ICON_PATHS: Record<CreditLink['icon'], string> = {
  * and sets robust static fallback for Discord to avoid CORS.
  */
 export function CreditsPage(): JSX.Element {
+  const { t } = useTranslation();
   const [failedDiscordAvatars, setFailedDiscordAvatars] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -135,8 +137,8 @@ export function CreditsPage(): JSX.Element {
   return (
     <div className="credits-page">
       <header className="credits-header">
-        <h1 className="credits-title">Credits</h1>
-        <p className="credits-sub">The people behind RobloxAccountManager.</p>
+        <h1 className="credits-title">{t('credits.title')}</h1>
+        <p className="credits-sub">{t('credits.subtitle')}</p>
       </header>
 
       <div className="credits-scroll">

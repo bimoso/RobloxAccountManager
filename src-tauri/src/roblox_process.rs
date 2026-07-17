@@ -1088,6 +1088,166 @@ impl WatchNotifier for TauriWatchNotifier {
     }
 }
 
+/// The [`WatchNotifier`] the watch loop runs with: every notification is
+/// forwarded to the wrapped [`TauriWatchNotifier`], except that a
+/// watch-detected close is intercepted when auto-relaunch is enabled and launch
+/// parameters are remembered for the account — instead of emitting
+/// `roblox://closed`, a background relaunch is spawned, and the closed event is
+/// only emitted if that relaunch fails (so the account's running indicator
+/// never flickers off across a successful relaunch).
+///
+/// Only the watch loop uses this wrapper. The kill paths construct the plain
+/// [`TauriWatchNotifier`] directly, so a user-initiated kill is never
+/// auto-relaunched.
+pub struct AutoRelaunchNotifier {
+    app: AppHandle,
+    inner: TauriWatchNotifier,
+}
+
+impl AutoRelaunchNotifier {
+    pub fn new(app: AppHandle) -> Self {
+        let inner = TauriWatchNotifier::new(app.clone());
+        Self { app, inner }
+    }
+
+    /// Decide whether this watch-detected close gets auto-relaunched. Returns
+    /// `true` when a relaunch task was spawned (or one is already in flight),
+    /// in which case the closed event is suppressed.
+    fn try_spawn_relaunch(&self, account_id: &str) -> bool {
+        use tauri::Manager;
+        if !is_auto_relaunch_enabled(&self.app) {
+            return false;
+        }
+        let state = self.app.state::<AppState>();
+        let params = state
+            .launch_params
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(account_id)
+            .cloned();
+        let Some(params) = params else {
+            return false;
+        };
+        {
+            let mut relaunching = state
+                .relaunching
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if !relaunching.insert(account_id.to_string()) {
+                return true; // already being relaunched; keep suppressing
+            }
+        }
+        let app = self.app.clone();
+        let inner = self.inner.clone();
+        let account_id = account_id.to_string();
+        tokio::spawn(async move {
+            relaunch_closed_account(app, inner, account_id, params).await;
+        });
+        true
+    }
+}
+
+impl WatchNotifier for AutoRelaunchNotifier {
+    fn notify_closed(&self, account_id: &str) {
+        if self.try_spawn_relaunch(account_id) {
+            return;
+        }
+        self.inner.notify_closed(account_id);
+        // An instance went away for good: compact the window grid (no-op while
+        // the window-layout feature is disabled).
+        crate::window_layout::schedule_layout_pass(&self.app, 1_000);
+    }
+
+    fn notify_count(&self, count: usize) {
+        self.inner.notify_count(count);
+    }
+
+    fn notify_all_closed(&self) {
+        self.inner.notify_all_closed();
+    }
+}
+
+/// The background auto-relaunch for one unexpectedly closed account: wait for a
+/// launch-queue slot, re-check the remembered parameters (a manual kill in the
+/// meantime clears them and already emitted the closed event — abort quietly),
+/// then run the full launch flow again. Only a FAILED relaunch emits
+/// `roblox://closed`, so the renderer's running indicator stays on across a
+/// successful relaunch.
+async fn relaunch_closed_account(
+    app: AppHandle,
+    inner: TauriWatchNotifier,
+    account_id: String,
+    params: crate::LaunchParams,
+) {
+    use tauri::Manager;
+
+    let username = load_accounts_quiet(&app)
+        .into_iter()
+        .find(|a| a.id == account_id)
+        .map(|a| a.username);
+    let who = username.clone().unwrap_or_else(|| account_id.clone());
+    crate::logging::send_log(
+        &app,
+        "warn",
+        "relaunch",
+        &format!("Instance for {who} closed unexpectedly - auto-relaunching"),
+        serde_json::json!({ "accountId": account_id, "username": username }),
+    );
+
+    let result = {
+        let state = app.state::<AppState>();
+        let st = state.inner();
+        let _slot = acquire_launch_slot(st).await;
+        let still_wanted = st
+            .launch_params
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains_key(&account_id);
+        if still_wanted {
+            Some(do_launch(&app, st, &account_id, &params.cookie, &params.target).await)
+        } else {
+            None // manually killed while queued; the kill already notified
+        }
+    };
+
+    {
+        let state = app.state::<AppState>();
+        state
+            .relaunching
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&account_id);
+    }
+
+    match result {
+        Some(r) if r.success => {
+            crate::logging::send_log(
+                &app,
+                "ok",
+                "relaunch",
+                &format!("Auto-relaunched Roblox for {who}"),
+                serde_json::json!({ "accountId": account_id, "username": username }),
+            );
+        }
+        Some(r) => {
+            // The relaunch failed: only now surface the close to the renderer.
+            inner.notify_closed(&account_id);
+            crate::window_layout::schedule_layout_pass(&app, 1_000);
+            crate::logging::send_log(
+                &app,
+                "err",
+                "relaunch",
+                &format!(
+                    "Auto-relaunch failed for {who}: {}",
+                    r.error.as_deref().unwrap_or("unknown error")
+                ),
+                serde_json::json!({ "accountId": account_id, "username": username }),
+            );
+        }
+        None => {}
+    }
+}
+
 /// Arm (or re-arm) watching for `account_id` with a fresh post-launch grace
 /// period, a direct port of the legacy JS backend's `_watchRoblox(accountId)`:
 /// ```js
@@ -1565,6 +1725,14 @@ pub async fn kill_one(
     notifier: &dyn WatchNotifier,
     account_id: &str,
 ) -> KillResult {
+    // A manual kill means "stay closed": drop the remembered launch parameters
+    // so the auto-relaunch feature never resurrects this instance.
+    state
+        .launch_params
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(account_id);
+
     let pid = untrack_account(state, account_id).await;
 
     if let Err(e) = crate::platform::ensure_windows() {
@@ -1610,6 +1778,14 @@ pub async fn kill_all(
     notifier: &dyn WatchNotifier,
     mutex_refresh: &dyn MutexHolderRefresh,
 ) -> KillResult {
+    // A manual kill-all means "everything stays closed": drop every remembered
+    // launch parameter so auto-relaunch cannot resurrect any instance.
+    state
+        .launch_params
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clear();
+
     let watched_ids = untrack_all(state).await;
 
     if let Err(e) = crate::platform::ensure_windows() {
@@ -1689,11 +1865,67 @@ pub fn launch_singleton_mode(multi_instance_enabled: bool) -> LaunchSingletonMod
 /// usable value — following the identical swallow-to-default pattern
 /// `native_helper.rs`'s `setting_enabled` uses.
 pub fn is_multi_instance_enabled(app: &AppHandle) -> bool {
-    crate::accounts::store_dir(app)
-        .ok()
-        .and_then(|dir| crate::settings::load_from_dir(&dir).ok())
-        .map(|s| s.multi_instance)
+    load_settings_quiet(app).map(|s| s.multi_instance).unwrap_or(false)
+}
+
+/// Read the Settings_Store quietly (`None` on any failure), for the launch-time
+/// feature flags below — a settings read problem must never break a launch.
+fn load_settings_quiet(app: &AppHandle) -> Option<crate::models::Settings> {
+    let dir = crate::accounts::store_dir(app).ok()?;
+    crate::settings::load_from_dir(&dir).ok()
+}
+
+/// Whether "replace running instance" is enabled: launching an account closes
+/// that account's existing tracked client first, so each account keeps at most
+/// one instance. A store read failure resolves to `false` (current behavior:
+/// launches stack).
+pub fn is_replace_running_enabled(app: &AppHandle) -> bool {
+    load_settings_quiet(app)
+        .map(|s| s.replace_running_instance == Some(true))
         .unwrap_or(false)
+}
+
+/// Whether auto-relaunch is enabled: an account whose instance exits
+/// unexpectedly (a watch-detected close, never a manual kill) is launched again
+/// with the parameters remembered from its last launch. A store read failure
+/// resolves to `false`.
+pub fn is_auto_relaunch_enabled(app: &AppHandle) -> bool {
+    load_settings_quiet(app)
+        .map(|s| s.auto_relaunch == Some(true))
+        .unwrap_or(false)
+}
+
+/// Poll the Roblox process list until `pid` is no longer present, or
+/// `max_wait_ms` elapses. Used by the replace-running-instance path so the new
+/// client is not spawned while the old one is still tearing down (its singleton
+/// handles would collide). An enumeration failure returns immediately — the
+/// launch must not be held hostage by a broken `tasklist`.
+async fn wait_for_pid_gone(pid: u32, max_wait_ms: i64) {
+    let started = now_ms();
+    loop {
+        match enumerate_roblox_pids().await {
+            Some(pids) if !pids.contains(&pid) => return,
+            None => return,
+            _ => {}
+        }
+        if now_ms() - started >= max_wait_ms {
+            return;
+        }
+        sleep_ms(300).await;
+    }
+}
+
+/// "Replace running instance": close this account's previously tracked client
+/// (untracking it first so the watch loop cannot count the disappearance as an
+/// unexpected close) and wait for the process to actually exit. No
+/// `roblox://closed` is emitted — the account is being launched again
+/// immediately, so its running indicator should not flicker off.
+async fn replace_existing_instance(state: &AppState, account_id: &str) {
+    let pid = untrack_account(state, account_id).await;
+    if let Some(pid) = pid {
+        let _ = run_taskkill_pid(pid).await;
+        wait_for_pid_gone(pid, WAIT_FULLY_CLOSED_MS).await;
+    }
 }
 
 /// The "close singleton handles + hold mutex" side effect a multi-instance launch
@@ -2074,6 +2306,13 @@ async fn do_launch(
         return LaunchResult::fail(e);
     }
 
+    // (0.5) "Replace running instance": when enabled, close this account's
+    //       previous tracked client before spawning the replacement, so the
+    //       account never stacks a second instance.
+    if is_replace_running_enabled(app) {
+        replace_existing_instance(state, account_id).await;
+    }
+
     // (1) Close ROBLOX_singletonEvent from any running client + hold the mutex
     //     (multi-instance), matching `await closeSingletonAndHoldMutex()`. A hold
     //     failure means the mutex is NOT actually held, so we must not proceed
@@ -2142,6 +2381,21 @@ async fn do_launch(
     mark_launched(state);
     state.ticket_cache.lock().await.remove(cookie);
 
+    // Remember this launch's parameters so an unexpected close can be
+    // auto-relaunched (session-scoped; the kill paths clear the entry because a
+    // manual kill means "stay closed").
+    state
+        .launch_params
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(
+            account_id.to_string(),
+            crate::LaunchParams {
+                cookie: cookie.to_string(),
+                target: target.to_string(),
+            },
+        );
+
     let (username, user_id) = touch_last_used(app, account_id);
     let pid = state
         .account_pids
@@ -2175,14 +2429,22 @@ async fn do_launch(
     );
 
     // (7) Arm the watch/poll close-detection for this account and ensure the
-    //     shared poll loop is running (`_watchRoblox(accountId)`).
+    //     shared poll loop is running (`_watchRoblox(accountId)`). The loop's
+    //     notifier is the auto-relaunch wrapper: a watch-detected (unexpected)
+    //     close relaunches the account instead of emitting `roblox://closed`
+    //     when the feature is enabled; manual kills bypass this wrapper.
     arm_watch(state, account_id).await;
     ensure_watch_loop(
         state,
         Arc::new(TasklistPresenceProbe),
-        Arc::new(TauriWatchNotifier::new(app.clone())),
+        Arc::new(AutoRelaunchNotifier::new(app.clone())),
     )
     .await;
+
+    // With window layout enabled, keep arranging while the new client's window
+    // appears (a bootstrapper can take a while to show it). The pass exits
+    // immediately when the feature is disabled.
+    crate::window_layout::schedule_layout_pass(app, 4_000);
 
     // If a non-default master volume is configured, apply it to the new instance
     // once its audio session has spun up (~9s after the window appears).
@@ -2326,7 +2588,11 @@ pub async fn roblox_kill_one(
     );
 
     let notifier = TauriWatchNotifier::new(app.clone());
-    Ok(kill_one(st, &notifier, &account_id).await)
+    let result = kill_one(st, &notifier, &account_id).await;
+    // Compact the window grid now that this instance is gone (no-op while the
+    // window-layout feature is disabled).
+    crate::window_layout::schedule_layout_pass(&app, 1_000);
+    Ok(result)
 }
 
 /// `roblox:runningCount` — return the number of live `RobloxPlayerBeta.exe`
