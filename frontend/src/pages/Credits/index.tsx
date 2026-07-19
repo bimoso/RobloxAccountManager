@@ -14,6 +14,7 @@
 import type { MouseEvent } from 'react';
 import { useState, useEffect } from 'react';
 import { ipc } from '@/lib/ipc';
+import { createKeyedSessionCache } from '@/lib/sessionCache';
 import { useTranslation } from '@/i18n/useTranslation';
 import './Credits.css';
 
@@ -95,6 +96,13 @@ const LINK_ICON_PATHS: Record<CreditLink['icon'], string> = {
 };
 
 /**
+ * Resolved Roblox avatar URLs keyed by contributor name, kept across unmounts
+ * so re-entering Credits paints the real avatars immediately instead of
+ * re-hitting the thumbnails API on every visit.
+ */
+const robloxAvatarCache = createKeyedSessionCache<string, string>();
+
+/**
  * The Credits page. Renders every contributor with role, name and external
  * links. Dynamically pulls avatars from Roblox on mount (via Tauri bridge)
  * and sets robust static fallback for Discord to avoid CORS.
@@ -104,18 +112,27 @@ export function CreditsPage(): JSX.Element {
   const [failedDiscordAvatars, setFailedDiscordAvatars] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [robloxAvatars, setRobloxAvatars] = useState<Record<string, string>>({
-    Bimo: 'https://tr.rbxcdn.com/30DAY-AvatarHeadshot-085CDD34A4FD1FF80594B29A20A3C513-Png/150/150/AvatarHeadshot/Png/isCircular',
+  const [robloxAvatars, setRobloxAvatars] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {
+      Bimo: 'https://tr.rbxcdn.com/30DAY-AvatarHeadshot-085CDD34A4FD1FF80594B29A20A3C513-Png/150/150/AvatarHeadshot/Png/isCircular',
+    };
+    for (const contributor of CONTRIBUTORS) {
+      const cachedUrl = robloxAvatarCache.get(contributor.name);
+      if (cachedUrl) initial[contributor.name] = cachedUrl;
+    }
+    return initial;
   });
 
   useEffect(() => {
     CONTRIBUTORS.forEach((contributor) => {
-      // Fetch Roblox profile photo via Tauri bridge (No CORS)
-      if (contributor.robloxId) {
+      // Fetch Roblox profile photo via Tauri bridge (No CORS). A cached URL
+      // from a previous visit is already on screen — skip the re-fetch.
+      if (contributor.robloxId && !robloxAvatarCache.get(contributor.name)) {
         ipc.getAvatarThumbnails([contributor.robloxId])
           .then((res) => {
             const item = res?.data?.[0];
             if (item?.imageUrl) {
+              robloxAvatarCache.set(contributor.name, item.imageUrl);
               setRobloxAvatars((prev) => ({
                 ...prev,
                 [contributor.name]: item.imageUrl,

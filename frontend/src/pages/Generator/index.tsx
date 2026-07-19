@@ -27,6 +27,7 @@ import {
 } from '@/lib/genHistory';
 import { ipc } from '@/lib/ipc';
 import { getPersisted, PERSISTENCE_KEYS } from '@/lib/persistence';
+import { createSessionCache } from '@/lib/sessionCache';
 import { useAccountStore } from '@/stores/accountStore';
 import { useNavigationStore } from '@/stores/navigationStore';
 import { useToastStore } from '@/stores/toastStore';
@@ -54,6 +55,13 @@ function readApiKey(): string {
   const value = getPersisted<string>(PERSISTENCE_KEYS.bloxgenApiKey);
   return typeof value === 'string' ? value : '';
 }
+
+/**
+ * Last known generation history, kept across unmounts so re-entering the page
+ * paints the audit list immediately (no empty-state flash) while the mount
+ * load silently re-reads the on-disk history.
+ */
+const historyCache = createSessionCache<SafeGenHistoryEntry[]>();
 
 function phaseStepIndex(phase: GeneratorPhase): number {
   if (phase === 'generating') return 0;
@@ -112,7 +120,7 @@ export default function Generator(): JSX.Element {
   const reducedMotion = useReducedMotion() ?? false;
   const { t } = useTranslation();
   const [apiKey, setApiKey] = useState(readApiKey);
-  const [history, setHistory] = useState<SafeGenHistoryEntry[]>([]);
+  const [history, setHistory] = useState<SafeGenHistoryEntry[]>(() => historyCache.get() ?? []);
   const [phase, setPhase] = useState<GeneratorPhase>('idle');
   const [failure, setFailure] = useState<GeneratorPipelineFailure | null>(null);
   const [clearing, setClearing] = useState(false);
@@ -139,7 +147,11 @@ export default function Generator(): JSX.Element {
     void ipc
       .readGenHistory()
       .then((loaded) => {
-        if (!cancelled) setHistory(sanitizeGenHistory(loaded));
+        if (!cancelled) {
+          const sanitized = sanitizeGenHistory(loaded);
+          historyCache.set(sanitized);
+          setHistory(sanitized);
+        }
       })
       .catch(() => {
         // The IPC layer already surfaced the read failure. The empty state is usable.
@@ -148,6 +160,12 @@ export default function Generator(): JSX.Element {
       cancelled = true;
     };
   }, []);
+
+  // Keep the session snapshot in step with in-page mutations (new generation
+  // outcomes, history clear) so the next mount hydrates the same list.
+  useEffect(() => {
+    historyCache.set(history);
+  }, [history]);
 
   const newestHistory = useMemo(() => [...history].reverse(), [history]);
 

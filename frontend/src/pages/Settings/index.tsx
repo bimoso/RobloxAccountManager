@@ -61,6 +61,7 @@ import { Switch } from '@/components/Switch';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { BloxGenSettingsPanel } from '@/components/BloxGenSettingsPanel';
 import { ipc } from '@/lib/ipc';
+import { createSessionCache } from '@/lib/sessionCache';
 import { useAccountStore } from '@/stores/accountStore';
 import { useToastStore } from '@/stores/toastStore';
 import { LANGUAGES } from '@/i18n';
@@ -197,6 +198,24 @@ export function Settings(): JSX.Element {
 }
 
 /**
+ * Last known General-tab data, kept across unmounts. The tab is remounted on
+ * every visit to Settings (and on every tab switch), so without this the whole
+ * panel showed "Unknown" badges and disabled toggles while every mount-time
+ * IPC call re-resolved. The tab hydrates from this snapshot for an instant
+ * paint and still re-runs the mount loads silently to pick up outside changes.
+ */
+interface GeneralTabSnapshot {
+  robloxVersion: string | null;
+  multiInstance: boolean | null;
+  antiAfk: boolean | null;
+  browserProvider: 'donut' | 'wayfern';
+  donutStatus: DonutTokenStatus | null;
+  wayfernStatus: WayfernStatus | null;
+}
+
+const generalTabCache = createSessionCache<GeneralTabSnapshot>();
+
+/**
  * The General tab body (Requirement 21.1–21.3, 21.5, 21.6). All controls wire
  * directly to the shared IPC surface; `lib/ipc` already surfaces failures as an
  * error toast, so success is the only extra feedback this component adds.
@@ -209,17 +228,22 @@ function GeneralTab(): JSX.Element {
   const showError = useToastStore((s) => s.showError);
   const { t, language, setLanguage } = useTranslation();
 
+  // Hydrate every mount-loaded field from the session snapshot so revisiting
+  // Settings paints the last known values immediately; the mount effect below
+  // still re-loads everything to reconcile with outside changes.
+  const cached = generalTabCache.get();
+
   // ── App info (Requirement 21.1) ──
-  const [robloxVersion, setRobloxVersion] = useState<string | null>(null);
+  const [robloxVersion, setRobloxVersion] = useState<string | null>(cached?.robloxVersion ?? null);
 
   // ── Multi-instance status (Requirement 21.5) ──
-  const [multiInstance, setMultiInstance] = useState<boolean | null>(null);
+  const [multiInstance, setMultiInstance] = useState<boolean | null>(cached?.multiInstance ?? null);
 
   // ── Anti-AFK toggle (Requirement 21.5) ──
   // Reflects the persisted `antiAfk` setting. `null` means "not yet loaded",
   // which keeps the toggle disabled until the current value is known so we
   // never render (or persist) a value that contradicts the stored setting.
-  const [antiAfk, setAntiAfk] = useState<boolean | null>(null);
+  const [antiAfk, setAntiAfk] = useState<boolean | null>(cached?.antiAfk ?? null);
   const [savingAntiAfk, setSavingAntiAfk] = useState(false);
 
   // ── Encryption key control (Requirement 21.2) ──
@@ -233,14 +257,28 @@ function GeneralTab(): JSX.Element {
   // ── Donut Browser token status (Requirement 21.4) ──
   // Only the configured / not-configured status is ever held or shown here —
   // never the token value itself. `null` means "not yet loaded".
-  const [donutStatus, setDonutStatus] = useState<DonutTokenStatus | null>(null);
+  const [donutStatus, setDonutStatus] = useState<DonutTokenStatus | null>(cached?.donutStatus ?? null);
 
   // ── Account browser provider ──
-  const [browserProvider, setBrowserProvider] = useState<'donut' | 'wayfern'>('donut');
+  const [browserProvider, setBrowserProvider] = useState<'donut' | 'wayfern'>(cached?.browserProvider ?? 'donut');
   const [savingProvider, setSavingProvider] = useState(false);
-  const [wayfernStatus, setWayfernStatus] = useState<WayfernStatus | null>(null);
+  const [wayfernStatus, setWayfernStatus] = useState<WayfernStatus | null>(cached?.wayfernStatus ?? null);
   const [wayfernProgress, setWayfernProgress] = useState<WayfernProgress | null>(null);
   const [installingWayfern, setInstallingWayfern] = useState(false);
+
+  // Mirror the loaded/mutated values back into the session snapshot on every
+  // change (loads, optimistic toggles, reverts) so the next mount hydrates
+  // from exactly what was last on screen.
+  useEffect(() => {
+    generalTabCache.set({
+      robloxVersion,
+      multiInstance,
+      antiAfk,
+      browserProvider,
+      donutStatus,
+      wayfernStatus,
+    });
+  }, [robloxVersion, multiInstance, antiAfk, browserProvider, donutStatus, wayfernStatus]);
 
   // Load the current settings and derive the Donut token status. Kept as a
   // stable callback so it can be reused on mount and to refresh after a save.

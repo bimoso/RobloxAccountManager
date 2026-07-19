@@ -113,6 +113,35 @@ describe('ChartsPage load-failure retry (Requirement 18.4)', () => {
   });
 });
 
+/**
+ * Session-cache behaviour: navigating away unmounts the page, and coming back
+ * must paint the last listing instantly from the module-level games cache —
+ * no skeleton, no second network load within the freshness window.
+ */
+describe('ChartsPage session cache', () => {
+  it('re-mounting within the TTL paints the cached ranking without re-fetching', async () => {
+    mockedFetch.mockResolvedValue(DISCOVERY_GAMES);
+
+    const first = render(<ChartsPage />);
+    expect(
+      await screen.findByRole('article', { name: /rank 1: signal peak/i }),
+    ).toBeInTheDocument();
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+
+    // Navigate away (PageRouter unmounts the page) and come back.
+    first.unmount();
+    render(<ChartsPage />);
+
+    // The cached ranking is on screen synchronously — no loading skeleton.
+    expect(
+      screen.getByRole('article', { name: /rank 1: signal peak/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: /loading games/i })).not.toBeInTheDocument();
+    // And the fresh cache short-circuits the network load entirely.
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('ChartsPage discovery controls', () => {
   it('renders a ranked leader board and useful reach telemetry', async () => {
     mockedFetch.mockResolvedValueOnce(DISCOVERY_GAMES);

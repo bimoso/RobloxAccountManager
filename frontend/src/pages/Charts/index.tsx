@@ -41,6 +41,7 @@ import { fetchChartGames } from './chartsApi';
 import { searchGames } from './searchGames';
 import { CHART_TABS, type ChartSortId, type Game } from './types';
 import { ipc } from '@/lib/ipc';
+import { createKeyedSessionCache } from '@/lib/sessionCache';
 import { useLaunchIntentStore } from '@/stores/launchIntentStore';
 import { usePlaceLibraryStore } from '@/stores/placeLibraryStore';
 import { useToastStore } from '@/stores/toastStore';
@@ -98,6 +99,31 @@ const compactNumber = new Intl.NumberFormat('en', {
 
 const EMPTY_GAMES: Game[] = [];
 
+/**
+ * Per-tab games cache that survives page unmounts, so re-entering Charts (or
+ * returning to a tab) paints the last listing instantly instead of showing the
+ * skeleton and re-hitting the Roblox APIs on every visit.
+ */
+const gamesCache = createKeyedSessionCache<ChartSortId, Game[]>();
+
+/**
+ * How long a cached tab listing is served without revalidating. Within this
+ * window re-entering the page costs zero network calls; past it the cached
+ * listing still paints instantly and a silent background reload refreshes the
+ * ranking (the skeleton only ever shows when there is no cached data at all).
+ */
+const GAMES_CACHE_TTL_MS = 5 * 60_000;
+
+/** Builds the initial per-tab games state from whatever the cache holds. */
+function cachedGamesByTab(): Partial<Record<ChartSortId, Game[]>> {
+  const cached: Partial<Record<ChartSortId, Game[]>> = {};
+  for (const tab of CHART_TABS) {
+    const games = gamesCache.get(tab.id);
+    if (games) cached[tab.id] = games;
+  }
+  return cached;
+}
+
 function formatPlayers(value: number | null): string {
   return typeof value === 'number' ? compactNumber.format(value) : '—';
 }
@@ -112,7 +138,7 @@ export default function ChartsPage(): JSX.Element {
   const [searchFocused, setSearchFocused] = useState(false);
   const [gamesByTab, setGamesByTab] = useState<
     Partial<Record<ChartSortId, Game[]>>
-  >({});
+  >(cachedGamesByTab);
   const [status, setStatus] = useState<LoadStatus>('idle');
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const placeLibrary = usePlaceLibraryStore((state) => state.entries);
@@ -131,6 +157,7 @@ export default function ChartsPage(): JSX.Element {
     setStatus('loading');
     try {
       const games = await fetchChartGames(tab);
+      gamesCache.set(tab, games);
       setGamesByTab((previous) => ({ ...previous, [tab]: games }));
       if (activeTabRef.current === tab) setStatus('loaded');
     } catch {
@@ -143,6 +170,12 @@ export default function ChartsPage(): JSX.Element {
       void loadTab(activeTab);
     } else {
       setStatus('loaded');
+      // Cached listing already on screen: revalidate silently once it has
+      // gone stale. The load-status flags only drive UI when there is no
+      // data for the tab, so this refresh never surfaces a skeleton.
+      if (!gamesCache.isFresh(activeTab, GAMES_CACHE_TTL_MS)) {
+        void loadTab(activeTab);
+      }
     }
   }, [activeTab, gamesByTab, loadTab]);
 

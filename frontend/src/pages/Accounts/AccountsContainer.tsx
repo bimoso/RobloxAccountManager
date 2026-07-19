@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ipc } from '@/lib/ipc';
+import { createKeyedSessionCache } from '@/lib/sessionCache';
 import { useAccountStore } from '@/stores/accountStore';
 import type { Account } from '@/types/models';
 import { Accounts } from './index';
@@ -12,6 +13,24 @@ import { ChangePasswordModal } from './ChangePasswordModal';
 import { BulkNotesModal } from './BulkNotesModal';
 import type { EditFormValues } from './editAccount';
 import { useLaunchIntentStore } from '@/stores/launchIntentStore';
+
+/**
+ * Avatar thumbnail URLs keyed by Roblox userId. Module-level (not a ref) so
+ * the resolved thumbnails survive page unmounts: re-entering Accounts paints
+ * every known avatar immediately instead of re-fetching the whole set and
+ * flashing placeholders on each visit.
+ */
+const avatarThumbCache = createKeyedSessionCache<string, string>();
+
+/** Maps each account id to its cached avatar URL (misses are simply absent). */
+function cachedAvatarUrls(accounts: Account[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const account of accounts) {
+    const url = avatarThumbCache.get(account.userId);
+    if (url) map[account.id] = url;
+  }
+  return map;
+}
 
 /**
  * Wires the presentational {@link Accounts} page to the app: it resolves avatar
@@ -27,31 +46,26 @@ export function AccountsContainer(): JSX.Element {
   const add = useAccountStore((state) => state.add);
   const update = useAccountStore((state) => state.update);
 
-  // ── Avatar resolution (batched, cached by userId) ──
-  const [avatarUrls, setAvatarUrls] = useState<Record<string, string>>({});
-  const avatarCacheRef = useRef<Record<string, string>>({});
+  // ── Avatar resolution (batched, cached by userId across mounts) ──
+  const [avatarUrls, setAvatarUrls] = useState<Record<string, string>>(() =>
+    cachedAvatarUrls(accounts),
+  );
 
   useEffect(() => {
     let cancelled = false;
-    const cache = avatarCacheRef.current;
 
     // Collect the userIds we do not have a thumbnail for yet.
     const need: string[] = [];
     const seen = new Set<string>();
     for (const account of accounts) {
       const uid = account.userId;
-      if (!uid || cache[uid] || seen.has(uid)) continue;
+      if (!uid || avatarThumbCache.get(uid) || seen.has(uid)) continue;
       seen.add(uid);
       need.push(uid);
     }
 
     const rebuild = (): void => {
-      const map: Record<string, string> = {};
-      for (const account of accounts) {
-        const url = cache[account.userId];
-        if (url) map[account.id] = url;
-      }
-      if (!cancelled) setAvatarUrls(map);
+      if (!cancelled) setAvatarUrls(cachedAvatarUrls(accounts));
     };
 
     if (need.length === 0) {
@@ -68,7 +82,9 @@ export function AccountsContainer(): JSX.Element {
         try {
           const res = await ipc.getAvatarThumbnails(chunk);
           for (const item of res?.data ?? []) {
-            if (item && item.imageUrl) cache[String(item.targetId)] = item.imageUrl;
+            if (item && item.imageUrl) {
+              avatarThumbCache.set(String(item.targetId), item.imageUrl);
+            }
           }
         } catch {
           /* leave these as placeholders; a later render can retry */

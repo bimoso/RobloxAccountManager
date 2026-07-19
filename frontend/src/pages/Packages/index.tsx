@@ -15,11 +15,19 @@ import {
 import { Button } from '@/components/Button';
 import { ipc } from '@/lib/ipc';
 import { displayPackage, upsertPackage } from '@/lib/packages';
+import { createSessionCache } from '@/lib/sessionCache';
 import { useAccountStore } from '@/stores/accountStore';
 import { useTranslation } from '@/i18n/useTranslation';
 import type { Account, Package } from '@/types/models';
 import { PackageEditModal } from './PackageEditModal';
 import './Packages.css';
+
+/**
+ * Last loaded package list, kept across unmounts so re-entering the page
+ * paints the saved groups immediately (no 0-count/empty-state flash) while the
+ * mount load silently re-reads the backing store.
+ */
+const packagesCache = createSessionCache<Package[]>();
 
 /** Optional observers for the create/edit flows owned by this page. */
 export interface PackagesPageProps {
@@ -42,7 +50,7 @@ export function PackagesPage({
   onCreatePackage,
   onEditPackage,
 }: PackagesPageProps): JSX.Element {
-  const [packages, setPackages] = useState<Package[]>([]);
+  const [packages, setPackages] = useState<Package[]>(() => packagesCache.get() ?? []);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Package | null>(null);
   const accounts = useAccountStore((state) => state.accounts);
@@ -55,7 +63,10 @@ export function PackagesPage({
     void (async () => {
       try {
         const loaded = await ipc.loadPackages();
-        if (!cancelled) setPackages(loaded);
+        if (!cancelled) {
+          packagesCache.set(loaded);
+          setPackages(loaded);
+        }
       } catch {
         // The IPC layer owns error reporting; retain the last known view.
       }
@@ -97,6 +108,7 @@ export function PackagesPage({
   const handleSavePackage = async (pkg: Package): Promise<void> => {
     const merged = upsertPackage(packages, pkg);
     await ipc.savePackages(merged);
+    packagesCache.set(merged);
     setPackages(merged);
     setModalOpen(false);
   };

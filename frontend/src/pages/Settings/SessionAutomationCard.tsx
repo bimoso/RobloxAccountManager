@@ -27,6 +27,7 @@ import { AppWindow, LayoutGrid } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Switch } from '@/components/Switch';
 import { ipc } from '@/lib/ipc';
+import { createSessionCache } from '@/lib/sessionCache';
 import { useToastStore } from '@/stores/toastStore';
 import { useTranslation } from '@/i18n/useTranslation';
 
@@ -38,6 +39,25 @@ const DEFAULT_PER_ROW = 1;
 
 /** Cadence of the live window-count poll while the card is mounted. */
 const WINDOW_COUNT_POLL_MS = 4_000;
+
+/**
+ * Last known card state, kept across unmounts. The card is remounted on every
+ * visit to Settings, so without this every control started disabled (values
+ * `null`) until the stored settings re-resolved. The card hydrates from this
+ * snapshot for an instant, interactive paint and still re-loads the settings
+ * on mount to reconcile with outside changes.
+ */
+interface SessionAutomationSnapshot {
+  autoRelaunch: boolean | null;
+  replaceRunning: boolean | null;
+  layoutEnabled: boolean | null;
+  autoLayout: boolean | null;
+  savedSize: [number, number];
+  savedPerRow: number;
+  runningCount: number;
+}
+
+const sessionAutomationCache = createSessionCache<SessionAutomationSnapshot>();
 
 /**
  * Parse a "WxH" target-size string (e.g. `350x350`, `640 × 360`) into a
@@ -61,17 +81,40 @@ export function SessionAutomationCard(): JSX.Element {
 
   // `null` = not yet loaded; the controls stay disabled until the stored
   // values are known so a render can never contradict (or clobber) the store.
-  const [autoRelaunch, setAutoRelaunch] = useState<boolean | null>(null);
-  const [replaceRunning, setReplaceRunning] = useState<boolean | null>(null);
-  const [layoutEnabled, setLayoutEnabled] = useState<boolean | null>(null);
-  const [autoLayout, setAutoLayout] = useState<boolean | null>(null);
-  const [sizeText, setSizeText] = useState(`${DEFAULT_TARGET_W}x${DEFAULT_TARGET_H}`);
-  const [perRowText, setPerRowText] = useState(String(DEFAULT_PER_ROW));
-  const [savedSize, setSavedSize] = useState<[number, number]>([DEFAULT_TARGET_W, DEFAULT_TARGET_H]);
-  const [savedPerRow, setSavedPerRow] = useState(DEFAULT_PER_ROW);
+  // A previous mount's snapshot counts as "known": hydrating from it keeps the
+  // controls interactive across revisits while the mount load reconciles.
+  const cached = sessionAutomationCache.get();
+  const [autoRelaunch, setAutoRelaunch] = useState<boolean | null>(cached?.autoRelaunch ?? null);
+  const [replaceRunning, setReplaceRunning] = useState<boolean | null>(cached?.replaceRunning ?? null);
+  const [layoutEnabled, setLayoutEnabled] = useState<boolean | null>(cached?.layoutEnabled ?? null);
+  const [autoLayout, setAutoLayout] = useState<boolean | null>(cached?.autoLayout ?? null);
+  const [sizeText, setSizeText] = useState(
+    cached ? `${cached.savedSize[0]}x${cached.savedSize[1]}` : `${DEFAULT_TARGET_W}x${DEFAULT_TARGET_H}`,
+  );
+  const [perRowText, setPerRowText] = useState(
+    cached ? String(cached.savedPerRow) : String(DEFAULT_PER_ROW),
+  );
+  const [savedSize, setSavedSize] = useState<[number, number]>(
+    cached?.savedSize ?? [DEFAULT_TARGET_W, DEFAULT_TARGET_H],
+  );
+  const [savedPerRow, setSavedPerRow] = useState(cached?.savedPerRow ?? DEFAULT_PER_ROW);
   const [saving, setSaving] = useState(false);
   const [arranging, setArranging] = useState(false);
-  const [runningCount, setRunningCount] = useState(0);
+  const [runningCount, setRunningCount] = useState(cached?.runningCount ?? 0);
+
+  // Mirror the loaded/mutated values back into the session snapshot so the
+  // next mount hydrates from exactly what was last on screen.
+  useEffect(() => {
+    sessionAutomationCache.set({
+      autoRelaunch,
+      replaceRunning,
+      layoutEnabled,
+      autoLayout,
+      savedSize,
+      savedPerRow,
+      runningCount,
+    });
+  }, [autoRelaunch, replaceRunning, layoutEnabled, autoLayout, savedSize, savedPerRow, runningCount]);
 
   // Load the stored settings once on mount.
   useEffect(() => {

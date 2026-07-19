@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { ipc } from '@/lib/ipc';
+import { createSessionCache } from '@/lib/sessionCache';
 import { useToastStore } from '@/stores/toastStore';
 import { useTranslation } from '@/i18n/useTranslation';
 import type {
@@ -55,17 +56,38 @@ function makeOperationId(): string {
     : `deployment-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+/**
+ * Last known scan results, kept across unmounts. Opening the Clients tab runs
+ * a full refresh (installation scan, protocol state, latest-release network
+ * check, deployment listing, settings), so without this every visit showed
+ * the whole deck in its loading state. The tab hydrates from this snapshot
+ * for an instant paint and still re-runs the refresh on mount — silently when
+ * cached data is already on screen.
+ */
+interface ClientsSnapshot {
+  installations: RobloxInstallation[];
+  protocol: RobloxProtocolState | null;
+  release: RobloxRelease | null;
+  deployments: RobloxDeployment[];
+  settings: Settings | null;
+}
+
+const clientsCache = createSessionCache<ClientsSnapshot>();
+
 /** Roblox client, protocol-routing and isolated deployment control deck. */
 export function ClientsTab(): JSX.Element {
   const reducedMotion = useReducedMotion() ?? false;
   const showSuccess = useToastStore((state) => state.showSuccess);
   const { t } = useTranslation();
-  const [installations, setInstallations] = useState<RobloxInstallation[]>([]);
-  const [protocol, setProtocol] = useState<RobloxProtocolState | null>(null);
-  const [release, setRelease] = useState<RobloxRelease | null>(null);
-  const [deployments, setDeployments] = useState<RobloxDeployment[]>([]);
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Hydrate from the session snapshot so a revisit paints the last scan
+  // immediately; the mount refresh below reconciles silently.
+  const cached = clientsCache.get();
+  const [installations, setInstallations] = useState<RobloxInstallation[]>(cached?.installations ?? []);
+  const [protocol, setProtocol] = useState<RobloxProtocolState | null>(cached?.protocol ?? null);
+  const [release, setRelease] = useState<RobloxRelease | null>(cached?.release ?? null);
+  const [deployments, setDeployments] = useState<RobloxDeployment[]>(cached?.deployments ?? []);
+  const [settings, setSettings] = useState<Settings | null>(cached?.settings ?? null);
+  const [loading, setLoading] = useState(cached === undefined);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [channel, setChannel] = useState('LIVE');
   const [versionGuid, setVersionGuid] = useState('');
@@ -74,8 +96,16 @@ export function ClientsTab(): JSX.Element {
   const [operationId, setOperationId] = useState<string | null>(null);
   const [progress, setProgress] = useState<RobloxDeploymentProgress | null>(null);
 
-  const refresh = useCallback(async (requestedChannel = 'LIVE'): Promise<void> => {
-    setLoading(true);
+  // Mirror every loaded/mutated slice back into the session snapshot so the
+  // next mount hydrates from exactly what was last on screen.
+  useEffect(() => {
+    clientsCache.set({ installations, protocol, release, deployments, settings });
+  }, [installations, protocol, release, deployments, settings]);
+
+  const refresh = useCallback(async (requestedChannel = 'LIVE', options?: { silent?: boolean }): Promise<void> => {
+    // A silent refresh revalidates behind the cached data already on screen
+    // without flipping the deck into its loading state.
+    if (!options?.silent) setLoading(true);
     try {
       const [nextInstallations, nextProtocol, nextRelease, nextDeployments, nextSettings] =
         await Promise.all([
@@ -96,7 +126,10 @@ export function ClientsTab(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    void refresh('LIVE');
+    // Always silent: the initial `loading` state (set from the cache probe
+    // during render) already shows the spinner on a first-ever mount, and a
+    // hydrated revisit revalidates behind the cached deck without flashing.
+    void refresh('LIVE', { silent: true });
   }, [refresh]);
 
   useEffect(() => {
