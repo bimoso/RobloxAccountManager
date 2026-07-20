@@ -90,6 +90,8 @@ export const ipc = {
 
   // ── Login (CDP cookie-capture flow) ──
   openLogin: () => call('openLogin', [], true),
+  loginCredentials: (username: string, password: string) =>
+    call('loginCredentials', [username, password], true),
   cancelLogin: () => call('cancelLogin', [], true),
 
   // ── Roblox launch / process control ──

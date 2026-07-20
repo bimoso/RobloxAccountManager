@@ -112,6 +112,12 @@ pub mod browser_launcher;
 /// installation, per-account profiles and CDP launch/cookie injection.
 pub mod wayfern;
 
+/// Humanized keystroke timing for the credential auto-login flow: a
+/// dependency-free, deterministic-given-a-seed delay model that jitters the
+/// per-character cadence when [`browser_launcher`] auto-fills the Roblox login
+/// form, so a bulk `user:pass` fill does not type like a bot.
+pub mod humanize;
+
 /// Windows Roblox client discovery, protocol-handler presets, release lookup,
 /// and verified managed deployment installation.
 pub mod roblox_installations;
@@ -436,6 +442,7 @@ pub fn run() {
             roblox_installations::roblox_deployment_install,
             roblox_installations::roblox_deployment_cancel,
             browser_launcher::roblox_open_login,
+            browser_launcher::roblox_login_credentials,
             browser_launcher::login_cancel,
             packages::packages_load,
             packages::packages_save,

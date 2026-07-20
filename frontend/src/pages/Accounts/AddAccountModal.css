@@ -1,0 +1,279 @@
+/* AddAccountModal — the "Añadir cuenta" dialog.
+ *
+ * Shares the app's glass-card / accent-gradient language (see Generator.css):
+ * a JetBrains Mono eyebrow, a Space Grotesk title, a segmented method switcher,
+ * and per-method panels. All colours come from theme tokens so every theme and
+ * both light/dark schemes are covered. */
+
+.addacc {
+  display: flex;
+  width: min(468px, 92vw);
+  flex-direction: column;
+  gap: 16px;
+}
+
+.addacc__head {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.addacc__eyebrow {
+  color: var(--acB, var(--ac));
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.addacc__title {
+  margin: 0;
+  font-family: var(--font-head);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--t1);
+}
+
+.addacc__subtitle {
+  margin: 2px 0 0;
+  color: var(--t2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ── Segmented method switcher ── */
+.addacc__tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--bd);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--glass-card, var(--s2)) 70%, transparent);
+}
+
+.addacc__tab {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 9px 4px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--t3);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: color 160ms var(--smooth), background-color 160ms var(--smooth);
+}
+
+.addacc__tab span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.addacc__tab svg {
+  color: currentColor;
+  opacity: 0.85;
+}
+
+.addacc__tab:hover {
+  color: var(--t2);
+  background: color-mix(in srgb, var(--ac) 8%, transparent);
+}
+
+.addacc__tab[aria-selected='true'] {
+  color: #fff;
+  background: linear-gradient(135deg, var(--ac), color-mix(in srgb, var(--ac) 55%, var(--acB, var(--ac))));
+  box-shadow: 0 6px 16px -10px color-mix(in srgb, var(--ac) 90%, transparent);
+}
+
+.addacc__tab:focus-visible {
+  outline: 2px solid var(--ac);
+  outline-offset: 1px;
+}
+
+/* ── Panel scaffolding ── */
+.addacc__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.addacc__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--t2);
+}
+
+.addacc__input,
+.addacc__textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--bd2);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--s2, var(--bg)) 82%, transparent);
+  color: var(--t1);
+  font-size: 13px;
+  font-weight: 400;
+  transition: border-color 150ms var(--smooth), box-shadow 150ms var(--smooth);
+}
+
+.addacc__textarea {
+  min-height: 132px;
+  resize: vertical;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.addacc__input::placeholder,
+.addacc__textarea::placeholder {
+  color: var(--t3);
+}
+
+.addacc__input:focus,
+.addacc__textarea:focus {
+  outline: 0;
+  border-color: color-mix(in srgb, var(--ac) 65%, var(--bd2));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac) 18%, transparent);
+}
+
+.addacc__input:disabled,
+.addacc__textarea:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.addacc__hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  color: var(--t2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.addacc__hint svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--ac-h, var(--ac));
+}
+
+.addacc__count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ac-h, var(--ac));
+}
+
+.addacc__error {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  color: var(--red);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.addacc__error svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+/* ── Progress ── */
+.addacc__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.addacc__track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--s3, var(--bd)) 70%, transparent);
+}
+
+.addacc__fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--ac), var(--acB, var(--ac)));
+  transition: width 200ms var(--smooth);
+}
+
+.addacc__progress-label {
+  margin: 0;
+  color: var(--t2);
+  font-size: 11.5px;
+}
+
+.addacc__progress-label strong {
+  color: var(--t1);
+  font-weight: 700;
+}
+
+/* ── Result summary ── */
+.addacc__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--bd);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--green) 8%, transparent);
+}
+
+.addacc__summary[data-tone='mixed'] {
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+}
+
+.addacc__summary-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--t1);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.addacc__summary-head svg {
+  color: var(--green);
+}
+
+.addacc__summary[data-tone='mixed'] .addacc__summary-head svg {
+  color: var(--red);
+}
+
+.addacc__failures {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 148px;
+  margin: 0;
+  padding-left: 16px;
+  overflow-y: auto;
+  color: var(--red);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* ── Footer ── */
+.addacc__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}

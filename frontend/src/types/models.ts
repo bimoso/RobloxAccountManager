@@ -29,6 +29,18 @@ export interface Account {
   nickname: string;
   /** Encrypted at rest; never shown in plain text in the UI. */
   cookie: string;
+  /**
+   * The account's login password, saved so the app can re-sign-in when the
+   * cookie expires. Encrypted at rest by the backend (same format as `cookie`);
+   * empty/absent when the user never attached credentials.
+   */
+  password?: string;
+  /**
+   * The login identifier (username or email) used to sign in, which may differ
+   * from the cookie-resolved `username`. Used verbatim for re-login; falls back
+   * to `username` when absent.
+   */
+  loginUsername?: string;
   createdAt: string;
   lastUsed: string | null;
   donutProfileId: string | null;

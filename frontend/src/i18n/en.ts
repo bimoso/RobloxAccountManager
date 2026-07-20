@@ -639,6 +639,7 @@ export const en = {
   'accounts.menu.edit': 'Edit account',
   'accounts.menu.openBrowser': 'Open in browser',
   'accounts.menu.quickLogin': 'Quick login',
+  'accounts.menu.reLogin': 'Re-login with credentials',
   'accounts.menu.friendRequest': 'Send friend request',
   'accounts.menu.changeDisplayName': 'Change display name',
   'accounts.menu.changePassword': 'Change password',

@@ -791,6 +791,12 @@ pub fn encrypt_account(
         o.cookie = encrypt_field(&o.cookie, passphrase_mode, safe_storage_ready, device_key)
             .map_err(|e| format!("account '{}' ({}): {}", o.id, o.nickname, e))?;
     }
+    // The saved login password is a credential too, so it is encrypted with the
+    // same context and idempotence guard as the cookie.
+    if !o.password.is_empty() && !is_encrypted(&o.password) {
+        o.password = encrypt_field(&o.password, passphrase_mode, safe_storage_ready, device_key)
+            .map_err(|e| format!("account '{}' ({}) password: {}", o.id, o.nickname, e))?;
+    }
     // Mirror `o._enc = true;` so the persisted JSON keeps the legacy JS runtime marker.
     o.extra
         .insert("_enc".to_string(), serde_json::Value::Bool(true));
@@ -833,6 +839,25 @@ pub fn decrypt_account(
             }
             Err(e) => {
                 return Err(format!("account '{}' ({}): {}", o.id, o.nickname, e))
+            }
+        }
+    }
+    // Decrypt the saved password under the same context as the cookie. It shares
+    // the cookie's key, so a failure here means the account is undecryptable as a
+    // whole; surface it (ciphertext preserved) rather than silently blanking a
+    // stored credential.
+    if !o.password.is_empty() {
+        match decrypt_field(&o.password, passphrase_mode, safe_storage_ready, device_key) {
+            Ok(Some(plain)) => o.password = plain,
+            Ok(None) => {
+                return Err(format!(
+                    "account '{}' ({}): stored password could not be decrypted \
+                     (empty result or keychain unavailable)",
+                    o.id, o.nickname
+                ))
+            }
+            Err(e) => {
+                return Err(format!("account '{}' ({}) password: {}", o.id, o.nickname, e))
             }
         }
     }
@@ -1162,6 +1187,8 @@ mod session_tests {
             user_id: "123".to_string(),
             nickname: "Main".to_string(),
             cookie: cookie.to_string(),
+            password: String::new(),
+            login_username: None,
             created_at: "2024-01-01T00:00:00.000Z".to_string(),
             last_used: None,
             donut_profile_id: None,
@@ -1296,6 +1323,34 @@ mod session_tests {
         let enc = encrypt_account(&acct, false, false, Some(device)).unwrap();
         let dec = decrypt_account(&enc, false, false, Some(device)).unwrap();
         assert_eq!(dec.cookie, "_|WARNING:-.ROBLOSECURITY=ROUNDTRIP");
+    }
+
+    #[test]
+    fn encrypt_then_decrypt_account_round_trips_the_password() {
+        let _g = guard();
+        let device = [0x55u8; KEY_LEN];
+        let mut acct = sample_account("_|WARNING:-.ROBLOSECURITY=RT");
+        acct.password = "s3cr3t p@ss:word".to_string();
+        let enc = encrypt_account(&acct, false, false, Some(device)).unwrap();
+        // The stored password is encrypted at rest, just like the cookie.
+        assert!(is_encrypted(&enc.password));
+        assert_ne!(enc.password, "s3cr3t p@ss:word");
+        // Re-encrypting is idempotent — an already-encrypted password is untouched.
+        let enc2 = encrypt_account(&enc, false, false, Some(device)).unwrap();
+        assert_eq!(enc2.password, enc.password);
+        // And it round-trips back to the plaintext on decrypt.
+        let dec = decrypt_account(&enc, false, false, Some(device)).unwrap();
+        assert_eq!(dec.password, "s3cr3t p@ss:word");
+    }
+
+    #[test]
+    fn encrypt_account_leaves_empty_password_untouched() {
+        let _g = guard();
+        let device = [0x66u8; KEY_LEN];
+        let acct = sample_account("_|WARNING:-.ROBLOSECURITY=RT");
+        let enc = encrypt_account(&acct, false, false, Some(device)).unwrap();
+        // No credentials attached: the password field stays empty (never encrypted).
+        assert_eq!(enc.password, "");
     }
 
     #[test]

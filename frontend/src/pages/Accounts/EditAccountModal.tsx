@@ -109,11 +109,15 @@ export function EditAccountModal({
     nickname: '',
     gameTarget: '',
     notes: '',
+    loginUsername: '',
+    password: '',
   });
   const [values, setValues] = useState<EditFormValues>({
     nickname: '',
     gameTarget: '',
     notes: '',
+    loginUsername: '',
+    password: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -140,6 +144,10 @@ export function EditAccountModal({
       nickname: values.nickname.trim(),
       gameTarget: values.gameTarget.trim(),
       notes: values.notes.trim(),
+      loginUsername: values.loginUsername.trim(),
+      // The password is stored verbatim — never trimmed — since surrounding
+      // whitespace could be significant.
+      password: values.password,
     };
     const changedFields = computeChangedFields(initial, finalValues);
 
@@ -199,6 +207,30 @@ export function EditAccountModal({
             value={values.notes}
             placeholder="Notas"
             onChange={(event) => setField('notes', event.target.value)}
+          />
+        </label>
+
+        <label style={labelStyle}>
+          Usuario de inicio de sesión
+          <input
+            style={inputStyle}
+            type="text"
+            value={values.loginUsername}
+            placeholder="Usuario o correo (para re-login)"
+            autoComplete="off"
+            onChange={(event) => setField('loginUsername', event.target.value)}
+          />
+        </label>
+
+        <label style={labelStyle}>
+          Contraseña
+          <input
+            style={inputStyle}
+            type="password"
+            value={values.password}
+            placeholder="Contraseña guardada (para re-login)"
+            autoComplete="new-password"
+            onChange={(event) => setField('password', event.target.value)}
           />
         </label>
 

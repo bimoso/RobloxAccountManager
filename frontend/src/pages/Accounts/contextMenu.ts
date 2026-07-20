@@ -29,6 +29,7 @@ import {
   KeyRound,
   LockKeyhole,
   PencilLine,
+  RefreshCw,
   UserPen,
   UserPlus,
 } from 'lucide-react';
@@ -46,6 +47,7 @@ export type ContextMenuActionId =
   | 'edit'
   | 'openBrowser'
   | 'quickLogin'
+  | 'reLogin'
   | 'friendRequest'
   | 'changeDisplayName'
   | 'changePassword'
@@ -88,6 +90,7 @@ const FIXED_ITEMS: readonly ContextMenuItemDescriptor[] = [
   { id: 'edit', labelKey: 'accounts.menu.edit', icon: PencilLine, section: 'account' },
   { id: 'openBrowser', labelKey: 'accounts.menu.openBrowser', icon: Globe2, section: 'account' },
   { id: 'quickLogin', labelKey: 'accounts.menu.quickLogin', icon: KeyRound, section: 'account' },
+  { id: 'reLogin', labelKey: 'accounts.menu.reLogin', icon: RefreshCw, section: 'account' },
   { id: 'friendRequest', labelKey: 'accounts.menu.friendRequest', icon: UserPlus, section: 'identity' },
   { id: 'changeDisplayName', labelKey: 'accounts.menu.changeDisplayName', icon: UserPen, section: 'identity' },
   { id: 'changePassword', labelKey: 'accounts.menu.changePassword', icon: LockKeyhole, section: 'identity' },

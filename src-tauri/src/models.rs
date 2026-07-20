@@ -63,6 +63,20 @@ pub struct Account {
     pub nickname: String,
     /// Encrypted at rest, same tag-prefixed format as the legacy JS build.
     pub cookie: String,
+    /// The account's login password, stored so the app can re-sign-in when the
+    /// cookie expires. Encrypted at rest exactly like [`Self::cookie`] (same
+    /// tag-prefixed format); empty when the user never attached credentials.
+    /// Optional in the on-disk JSON (defaulted on load) and omitted entirely when
+    /// empty, so an account without saved credentials keeps its prior byte shape.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub password: String,
+    /// The login identifier typed for this account (a username or email), which
+    /// may differ from the cookie-resolved [`Self::username`] — e.g. when the
+    /// account signs in with an email. Used verbatim for re-login; falls back to
+    /// `username` when absent. Not a secret, so stored plaintext like `username`.
+    /// Omitted from the JSON when absent to preserve the prior on-disk shape.
+    #[serde(rename = "loginUsername", default, skip_serializing_if = "Option::is_none")]
+    pub login_username: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: String,
     #[serde(rename = "lastUsed")]

@@ -132,17 +132,23 @@ export function invalidCookieMessage(index: number, reason?: string): string {
 }
 
 /**
- * Extract a message from a thrown value, falling back to a cookie-identifying
- * default so a rejected `validate`/`add` still names the offending cookie.
+ * Extract a message from a thrown value, falling back to an entry-identifying
+ * default so a rejected effect still names the offending entry. `label`
+ * defaults to the cookie label so existing callers keep their wording; the combo
+ * flow passes {@link comboLabel} to say "Cuenta #N" instead.
  */
-function describeError(err: unknown, index: number): string {
+function describeError(
+  err: unknown,
+  index: number,
+  label: (index: number) => string = cookieLabel,
+): string {
   if (err instanceof Error && err.message.trim()) {
-    return `${cookieLabel(index)}: ${err.message.trim()}`;
+    return `${label(index)}: ${err.message.trim()}`;
   }
   if (typeof err === 'string' && err.trim()) {
-    return `${cookieLabel(index)}: ${err.trim()}`;
+    return `${label(index)}: ${err.trim()}`;
   }
-  return invalidCookieMessage(index);
+  return `${label(index)}: error desconocido.`;
 }
 
 /**
@@ -192,6 +198,7 @@ export function normalizeValidation(raw: unknown): CookieValidation {
 export function buildAccountToAdd(
   validation: CookieValidation,
   cookie: string,
+  credentials?: { loginUsername?: string; password?: string },
 ): Account {
   return {
     id: '',
@@ -199,6 +206,10 @@ export function buildAccountToAdd(
     userId: validation.userId ?? '',
     nickname: '',
     cookie,
+    // Attach saved login credentials when provided (from a user:pass[:cookie]
+    // add); omitted for the plain cookie flows, which leave them blank.
+    password: credentials?.password ?? '',
+    loginUsername: credentials?.loginUsername,
     createdAt: '',
     lastUsed: null,
     donutProfileId: null,
@@ -286,4 +297,293 @@ export function parseCookieLines(raw: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+}
+
+// ── Credential flow (user:pass, user:pass:cookie, humanized auto-login) ──────
+//
+// The credential flow imports accounts from `username:password` credentials, and
+// optionally an inline cookie (`username:password:cookie`). Per pasted entry the
+// modal decides how to obtain a valid session and whether to add a new account
+// or attach the credentials to an existing one (upsert by username):
+//   - has an inline cookie → validate it directly;
+//   - matches an existing account → no login, just attach the credentials;
+//   - otherwise → drive a visible humanized auto-login to capture a fresh cookie.
+// The orchestration here stays pure and dependency-injected (the modal wires the
+// real IPC/store effects; tests inject controlled mocks), and passwords NEVER
+// appear in progress events, failures, or the returned summary.
+
+/** The canonical `.ROBLOSECURITY` value signature, used to locate an inline
+ * cookie inside a `username:password:cookie` line without mis-splitting on the
+ * colons the cookie itself contains (e.g. its `WARNING:` prefix). */
+const ROBLOSECURITY_MARKER = /_\|WARNING/i;
+
+/** A single parsed credential entry from the paste box. */
+export interface CredentialEntry {
+  /** The login identifier (username or email) — before the first colon. */
+  username: string;
+  /** The password — everything after the first colon (up to any inline cookie). */
+  password: string;
+  /** An inline `.ROBLOSECURITY` cookie, present only for `user:pass:cookie` lines. */
+  cookie?: string;
+}
+
+/**
+ * Normalized result of a humanized credential login (the backend
+ * `roblox_login_credentials` command), mirroring the cookie-capture
+ * `LoginResult` shape: `{ success, cookie?, username?, userId?, error? }`.
+ */
+export interface CredentialLoginResult {
+  /** Whether a session cookie was captured AND verified. */
+  success: boolean;
+  /** The captured `.ROBLOSECURITY` cookie, present only on success. */
+  cookie?: string;
+  /** The verified username, present only on success. */
+  username?: string;
+  /** The verified user id, present only on success. */
+  userId?: string;
+  /** A user-facing failure reason, present only on failure. */
+  error?: string;
+}
+
+/**
+ * The outcome of resolving one credential entry to a usable session: a valid
+ * cookie plus the verified identity, or a failure with a reason. The modal's
+ * injected `resolve` produces this by branching (validate cookie / reuse an
+ * existing account / auto-login); {@link processCredentials} stays agnostic to
+ * which path was taken.
+ */
+export interface CredentialOutcome {
+  /** Whether a valid session was obtained. */
+  ok: boolean;
+  /** The resolved `.ROBLOSECURITY` cookie, present only when `ok`. */
+  cookie?: string;
+  /** The resolved username, present only when `ok`. */
+  username?: string;
+  /** The resolved user id, present only when `ok`. */
+  userId?: string;
+  /** A user-facing failure reason, present only when not `ok`. */
+  error?: string;
+}
+
+/** A single failed entry, identified by USERNAME only — never the password. */
+export interface CredentialFailure {
+  /** Zero-based position of the entry in the input list. */
+  index: number;
+  /** The entry's username, identifying which line failed. */
+  username: string;
+  /** Human-readable reason, already identifying the entry by its number. */
+  reason: string;
+}
+
+/** Summary of a completed credential run, mirroring {@link BatchSummary}. */
+export interface CredentialSummary {
+  /** Total number of entries the run attempted. */
+  total: number;
+  /** Number of entries that resolved and were saved (added or updated). */
+  saved: number;
+  /** One entry per failure, in input order (no passwords). */
+  failures: CredentialFailure[];
+}
+
+/** The stage of processing a single entry, reported to `onProgress`. */
+export type CredentialPhase = 'resolving' | 'saving';
+
+/** Progress event emitted before each per-entry step (password-free). */
+export interface CredentialProgressEvent {
+  /** Zero-based index of the entry currently being processed. */
+  index: number;
+  /** Total number of entries in the run. */
+  total: number;
+  /** The username currently being processed. */
+  username: string;
+  /** Which step is starting for this entry. */
+  phase: CredentialPhase;
+}
+
+/** Effects injected into {@link processCredentials}. */
+export interface ProcessCredentialsDeps {
+  /**
+   * Obtain a valid session for an entry: validate its inline cookie, reuse a
+   * matching existing account, or drive the humanized auto-login. Invoked once
+   * per entry and awaited before the next (sequential — one browser window at a
+   * time when a login is needed).
+   */
+  resolve: (
+    entry: CredentialEntry,
+    index: number,
+  ) => Promise<CredentialOutcome> | CredentialOutcome;
+  /**
+   * Persist the resolved account, carrying the entry's credentials.
+   * Implementations decide whether to add a new account or update an existing
+   * one (upsert by username).
+   */
+  save: (
+    entry: CredentialEntry,
+    outcome: CredentialOutcome,
+    index: number,
+  ) => Promise<void> | void;
+  /** Optional progress callback, invoked before each per-entry step. */
+  onProgress?: (event: CredentialProgressEvent) => void;
+  /**
+   * Optional cooperative-cancellation check, consulted BEFORE each entry. When
+   * it returns `true`, processing stops and the remaining entries are left
+   * untouched (the summary reflects only what was attempted).
+   */
+  shouldAbort?: () => boolean;
+}
+
+/**
+ * Parse a pasted credential blob into entries. Each non-blank line is one of:
+ *   - `username:password` — split on the FIRST colon, so a password may contain
+ *     colons; or
+ *   - `username:password:cookie` — where `cookie` is a `.ROBLOSECURITY` value.
+ *
+ * The inline cookie is located by its `_|WARNING` signature (not by counting
+ * colons), so the colons inside the cookie never mis-split the credentials, and
+ * a colon-bearing password still parses correctly in the no-cookie case. A line
+ * with no colon, or an empty username or password, is skipped. Pure so the modal
+ * and tests share the exact same parsing.
+ *
+ * @param raw - The raw textarea contents.
+ * @returns The valid entries in their original order.
+ */
+export function parseCredentialLines(raw: string): CredentialEntry[] {
+  const entries: CredentialEntry[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    let creds = trimmed;
+    let cookie: string | undefined;
+    const marker = ROBLOSECURITY_MARKER.exec(trimmed);
+    if (marker && marker.index > 0) {
+      cookie = trimmed.slice(marker.index).trim();
+      // Drop the trailing `:` that separated the password from the cookie.
+      creds = trimmed.slice(0, marker.index).replace(/:\s*$/, '').trim();
+    }
+
+    const colon = creds.indexOf(':');
+    if (colon <= 0) continue;
+    const username = creds.slice(0, colon).trim();
+    const password = creds.slice(colon + 1);
+    if (!username || !password) continue;
+    entries.push(cookie ? { username, password, cookie } : { username, password });
+  }
+  return entries;
+}
+
+/**
+ * Build the label identifying an entry by its position (1-based).
+ */
+export function credentialLabel(index: number): string {
+  return `Cuenta #${index + 1}`;
+}
+
+/**
+ * Normalize the untyped `ipc.loginCredentials` response into a
+ * {@link CredentialLoginResult}, treating a malformed response as a failure
+ * rather than throwing.
+ */
+export function normalizeCredentialLogin(raw: unknown): CredentialLoginResult {
+  if (typeof raw !== 'object' || raw === null) {
+    return { success: false };
+  }
+  const record = raw as Record<string, unknown>;
+  const username =
+    typeof record.username === 'string' ? record.username : undefined;
+  const userId =
+    typeof record.userId === 'string'
+      ? record.userId
+      : typeof record.userId === 'number'
+        ? String(record.userId)
+        : undefined;
+  const cookie = typeof record.cookie === 'string' ? record.cookie : undefined;
+  const error = typeof record.error === 'string' ? record.error : undefined;
+  const success = record.success === true && !!cookie && username !== undefined;
+  return { success, cookie, username, userId, error };
+}
+
+/**
+ * Find an existing account whose `username` matches `username`
+ * case-insensitively — the upsert key for attaching credentials to an account
+ * that was already added by cookie.
+ *
+ * @param accounts - The current accounts.
+ * @param username - The username to match.
+ * @returns The matching account, or `undefined`.
+ */
+export function findAccountByUsername(
+  accounts: readonly Account[],
+  username: string,
+): Account | undefined {
+  const needle = username.trim().toLowerCase();
+  if (!needle) return undefined;
+  return accounts.find((account) => account.username.trim().toLowerCase() === needle);
+}
+
+/**
+ * Process a batch of credential entries SEQUENTIALLY, mirroring
+ * {@link processBatchCookies}.
+ *
+ * For every entry, in input order:
+ *   1. Emits a `'resolving'` progress event, then invokes `resolve` once and
+ *      awaits it.
+ *   2. If resolving failed (or threw), records a {@link CredentialFailure}
+ *      identifying the entry by username and CONTINUES with the rest.
+ *   3. On success, emits a `'saving'` event and invokes `save`; a successful
+ *      save increments `saved`.
+ *
+ * Passwords never appear in progress events, failures, or the returned summary.
+ *
+ * @param entries - The entries to process, in input order.
+ * @param deps - The injected `resolve` / `save` / `onProgress` effects.
+ * @returns A {@link CredentialSummary} of the run.
+ */
+export async function processCredentials(
+  entries: readonly CredentialEntry[],
+  deps: ProcessCredentialsDeps,
+): Promise<CredentialSummary> {
+  const { resolve, save, onProgress, shouldAbort } = deps;
+  const total = entries.length;
+  const failures: CredentialFailure[] = [];
+  let saved = 0;
+
+  for (let index = 0; index < total; index += 1) {
+    // Cooperative cancellation: stop cleanly between entries so a user who hits
+    // "Cancelar" is not forced to sit through the whole list.
+    if (shouldAbort?.()) break;
+    const entry = entries[index];
+    const { username } = entry;
+
+    onProgress?.({ index, total, username, phase: 'resolving' });
+    let outcome: CredentialOutcome;
+    try {
+      outcome = await resolve(entry, index);
+    } catch (err) {
+      failures.push({ index, username, reason: describeError(err, index, credentialLabel) });
+      continue;
+    }
+
+    if (!outcome.ok || !outcome.cookie || !outcome.username) {
+      const reason = outcome.error?.trim();
+      failures.push({
+        index,
+        username,
+        reason: reason
+          ? `${credentialLabel(index)}: ${reason}`
+          : `${credentialLabel(index)}: no se pudo iniciar sesión.`,
+      });
+      continue;
+    }
+
+    onProgress?.({ index, total, username, phase: 'saving' });
+    try {
+      await save(entry, outcome, index);
+      saved += 1;
+    } catch (err) {
+      failures.push({ index, username, reason: describeError(err, index, credentialLabel) });
+    }
+  }
+
+  return { total, saved, failures };
 }

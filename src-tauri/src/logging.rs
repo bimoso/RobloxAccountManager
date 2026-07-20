@@ -825,6 +825,8 @@ mod tests {
             user_id: "42".to_string(),
             nickname: String::new(),
             cookie: String::new(),
+            password: String::new(),
+            login_username: None,
             created_at: String::new(),
             last_used: None,
             donut_profile_id: None,

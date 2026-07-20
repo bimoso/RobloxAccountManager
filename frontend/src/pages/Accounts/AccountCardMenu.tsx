@@ -25,6 +25,8 @@ export interface AccountCardMenuActions {
   onEdit?: (account: Account) => void;
   /** Start the quick-login flow (task 19.3). */
   onQuickLogin?: (account: Account) => void;
+  /** Re-login with saved credentials when the cookie has expired. */
+  onReLogin?: (account: Account) => void;
   /** Open the batch friend-request modal (task 19.3). */
   onFriendRequest?: (account: Account) => void;
   /** Open the change-display-name modal (task 19.3). */
@@ -88,6 +90,7 @@ export function AccountCardMenu({
   onLaunch,
   onEdit,
   onQuickLogin,
+  onReLogin,
   onFriendRequest,
   onChangeDisplayName,
   onChangePassword,
@@ -123,6 +126,7 @@ export function AccountCardMenu({
       edit: () => onEdit?.(account),
       openBrowser: () => void ipc.openAccountBrowser(account.id),
       quickLogin: () => onQuickLogin?.(account),
+      reLogin: () => onReLogin?.(account),
       friendRequest: () => onFriendRequest?.(account),
       changeDisplayName: () => onChangeDisplayName?.(account),
       changePassword: () => onChangePassword?.(account),
@@ -135,6 +139,7 @@ export function AccountCardMenu({
       onLaunch,
       onEdit,
       onQuickLogin,
+      onReLogin,
       onFriendRequest,
       onChangeDisplayName,
       onChangePassword,

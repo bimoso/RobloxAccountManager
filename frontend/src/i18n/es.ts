@@ -632,6 +632,7 @@ export const es: Record<MessageKey, string> = {
   'accounts.menu.edit': 'Editar cuenta',
   'accounts.menu.openBrowser': 'Abrir en navegador',
   'accounts.menu.quickLogin': 'Quick login',
+  'accounts.menu.reLogin': 'Iniciar sesión de nuevo',
   'accounts.menu.friendRequest': 'Enviar solicitud de amistad',
   'accounts.menu.changeDisplayName': 'Cambiar nombre de display',
   'accounts.menu.changePassword': 'Cambiar contraseña',

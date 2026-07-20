@@ -34,6 +34,10 @@ export interface EditFormValues {
   gameTarget: string;
   /** Free-form notes attached to the account (Account.notes). */
   notes: string;
+  /** The login identifier used for re-login, may be a username or email (Account.loginUsername). */
+  loginUsername: string;
+  /** The saved login password, encrypted at rest by the backend (Account.password). */
+  password: string;
 }
 
 /**
@@ -68,6 +72,10 @@ export function editFormInitialValues(account: Account): EditFormValues {
     // the index signature and coerce to the form's string shape.
     gameTarget: toFieldString(account.gameTarget),
     notes: toFieldString(account.notes),
+    // Login credentials for re-login: preloaded so an untouched field diffs as
+    // "unchanged" and the stored value is preserved on save.
+    loginUsername: toFieldString(account.loginUsername),
+    password: toFieldString(account.password),
   };
 }
 

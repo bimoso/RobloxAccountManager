@@ -573,6 +573,87 @@ pub fn add(accounts: &mut Vec<Account>, account: Account) -> Result<Account, Add
     Ok(account)
 }
 
+/// `true` when an incoming add-payload `id` value must NOT override the minted
+/// id: absent-equivalent (`null`) or a blank/whitespace-only string. Any other
+/// value keeps the legacy spread's caller-wins behavior.
+fn is_blank_incoming_id(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::String(s) => s.trim().is_empty(),
+        _ => false,
+    }
+}
+
+/// Assemble the JSON object `accounts_add` materializes into the new
+/// [`Account`]: `{ id: minted_id, ...incoming, createdAt: created_at,
+/// lastUsed: null }`, reproducing the legacy handler's spread — with one guard
+/// the legacy spread lacked.
+///
+/// The redesigned Renderer_UI builds its add payloads from the full typed
+/// `Account` shape, so it sends placeholder identity fields (`id: ""`).
+/// Spreading those verbatim let the blank id CLOBBER the minted one: the first
+/// such add persisted an account whose `id` was `""`, and every later add then
+/// collided with it via [`AddError::DuplicateId`] ("could not be saved"). A
+/// blank or `null` incoming `id` is therefore skipped so the minted id wins; a
+/// non-blank incoming id still overrides, preserving legacy spread semantics
+/// for callers that mint their own.
+pub fn mint_account_json(incoming: Value, minted_id: &str, created_at: &str) -> Value {
+    let mut obj = Map::new();
+    obj.insert("id".to_string(), Value::String(minted_id.to_string()));
+    if let Value::Object(fields) = incoming {
+        for (key, value) in fields {
+            if key == "id" && is_blank_incoming_id(&value) {
+                continue;
+            }
+            obj.insert(key, value);
+        }
+    }
+    obj.insert("createdAt".to_string(), Value::String(created_at.to_string()));
+    obj.insert("lastUsed".to_string(), Value::Null);
+    // The renderer omits `nickname` on add; default it so the typed model is
+    // complete (legacy JS runtime stored it as `undefined`, which is falsy just like "").
+    obj.entry("nickname".to_string())
+        .or_insert_with(|| Value::String(String::new()));
+    Value::Object(obj)
+}
+
+/// Re-mint a unique id for every account whose stored id is blank
+/// (empty/whitespace-only), returning how many were repaired (`0` means the
+/// store was already sound and nothing needs persisting).
+///
+/// Stores written while the add-payload spread let a blank renderer `id`
+/// override the minted one (see [`mint_account_json`]) contain an account with
+/// `id: ""`; that entry then blocked EVERY subsequent add with
+/// [`AddError::DuplicateId`]. Minted ids follow the store's existing
+/// `Date.now().toString()` convention, starting at `base_millis` and bumping
+/// until unique against every id already in the store, so the repair can never
+/// introduce a collision of its own. Non-blank ids are never touched.
+pub fn backfill_blank_ids(accounts: &mut [Account], base_millis: i64) -> usize {
+    let mut taken: std::collections::HashSet<String> = accounts
+        .iter()
+        .map(|account| account.id.clone())
+        .filter(|id| !id.trim().is_empty())
+        .collect();
+
+    let mut next = base_millis;
+    let mut healed = 0;
+    for account in accounts.iter_mut() {
+        if !account.id.trim().is_empty() {
+            continue;
+        }
+        let mut candidate = next.to_string();
+        while taken.contains(&candidate) {
+            next += 1;
+            candidate = next.to_string();
+        }
+        next += 1;
+        taken.insert(candidate.clone());
+        account.id = candidate;
+        healed += 1;
+    }
+    healed
+}
+
 /// Apply a partial `data` update to the account with `id`, mirroring
 /// `accounts:update`:
 ///
@@ -828,7 +909,7 @@ pub fn accounts_load(app: AppHandle) -> Result<Vec<Account>, String> {
             device_key,
         } = crypto_context::resolve(&dir);
 
-        let loaded = load_from_dir(&dir, passphrase_mode, safe_storage_ready, device_key)
+        let mut loaded = load_from_dir(&dir, passphrase_mode, safe_storage_ready, device_key)
             .map_err(|e| e.to_string())?;
 
         for err in &loaded.errors {
@@ -839,6 +920,34 @@ pub fn accounts_load(app: AppHandle) -> Result<Vec<Account>, String> {
                 &format!("Could not decrypt account \"{}\": {}", err.nickname, err.message),
                 serde_json::json!({ "id": err.id }),
             );
+        }
+
+        // Repair stores damaged while a blank renderer `id` could override the
+        // minted one (see `backfill_blank_ids`): re-mint the blank ids and
+        // persist. The healed ids are adopted ONLY once they are on disk, so the
+        // renderer never holds an id the store cannot resolve.
+        let mut healed_accounts = loaded.accounts.clone();
+        let healed = backfill_blank_ids(&mut healed_accounts, now_millis());
+        if healed > 0 {
+            match save_to_dir(&dir, &healed_accounts, passphrase_mode, safe_storage_ready, device_key) {
+                Ok(()) => {
+                    loaded.accounts = healed_accounts;
+                    logging::send_log(
+                        &app,
+                        "warn",
+                        "accounts",
+                        &format!("Re-minted {healed} account id(s) that were saved blank by an earlier add bug."),
+                        serde_json::json!({ "healed": healed }),
+                    );
+                }
+                Err(e) => logging::send_log(
+                    &app,
+                    "err",
+                    "accounts",
+                    &format!("Could not persist the re-minted account id(s): {e}"),
+                    serde_json::json!({ "healed": healed }),
+                ),
+            }
         }
 
         Ok(loaded.accounts)
@@ -854,10 +963,11 @@ pub fn accounts_load(app: AppHandle) -> Result<Vec<Account>, String> {
 /// accounts.push(a); saveAccounts(accounts); return a;
 /// ```
 ///
-/// `account` arrives as an arbitrary JSON object (the renderer sends e.g.
-/// `{ username, userId, cookie, gameTarget }` with no `id`/`nickname`), so the
-/// minted object is assembled at the JSON layer to reproduce the exact spread
-/// order — `id` first, the caller's fields next, then `createdAt`/`lastUsed`
+/// `account` arrives as an arbitrary JSON object (the renderer sends the typed
+/// `Account` shape with placeholder identity fields, e.g. `id: ""`), so the
+/// minted object is assembled at the JSON layer by [`mint_account_json`] —
+/// `id` first, the caller's fields next (a blank/`null` incoming `id` is
+/// skipped so it cannot clobber the minted one), then `createdAt`/`lastUsed`
 /// last so they always win — before being materialized into an [`Account`].
 /// A missing `nickname` (the renderer omits it) defaults to an empty string so
 /// the value round-trips; every other field the renderer always supplies.
@@ -873,23 +983,12 @@ pub fn accounts_add(app: AppHandle, account: Value) -> Result<Account, String> {
             device_key,
         } = crypto_context::resolve(&dir);
 
-        // Build `{ id, ...account, createdAt, lastUsed: null }` preserving spread order.
-        let mut obj = Map::new();
-        obj.insert("id".to_string(), Value::String(now_millis().to_string()));
-        if let Value::Object(incoming) = account {
-            for (key, value) in incoming {
-                obj.insert(key, value);
-            }
-        }
-        obj.insert("createdAt".to_string(), Value::String(iso8601_utc_now()));
-        obj.insert("lastUsed".to_string(), Value::Null);
-        // The renderer omits `nickname` on add; default it so the typed model is
-        // complete (legacy JS runtime stored it as `undefined`, which is falsy just like "").
-        obj.entry("nickname".to_string())
-            .or_insert_with(|| Value::String(String::new()));
-
-        let minted: Account = serde_json::from_value(Value::Object(obj))
-            .map_err(|e| format!("invalid account payload: {e}"))?;
+        let minted: Account = serde_json::from_value(mint_account_json(
+            account,
+            &now_millis().to_string(),
+            &iso8601_utc_now(),
+        ))
+        .map_err(|e| format!("invalid account payload: {e}"))?;
 
         let mut accounts = load_from_dir(&dir, passphrase_mode, safe_storage_ready, device_key)
             .map_err(|e| e.to_string())?
@@ -1425,6 +1524,78 @@ mod write_tests {
         assert_eq!(store[0].nickname, "Original");
     }
 
+    // ── mint_account_json (add-payload assembly) ─────────────────────────────
+
+    #[test]
+    fn mint_ignores_blank_and_null_incoming_ids_so_the_minted_id_wins() {
+        // The redesigned renderer sends the full typed Account shape with
+        // placeholder identity fields; `id: ""` must NOT clobber the minted id.
+        for placeholder in [json!(""), json!("   "), json!(null)] {
+            let incoming = json!({
+                "id": placeholder,
+                "username": "GeneratedUser",
+                "userId": "123",
+                "cookie": "plain",
+                "createdAt": "",
+                "lastUsed": null,
+                "gameTarget": ""
+            });
+            let minted = mint_account_json(incoming, "1784000000000", "2026-07-19T00:00:00.000Z");
+            assert_eq!(minted["id"], json!("1784000000000"));
+            assert_eq!(minted["username"], json!("GeneratedUser"));
+            // The backend-stamped fields always win over the placeholders.
+            assert_eq!(minted["createdAt"], json!("2026-07-19T00:00:00.000Z"));
+            assert_eq!(minted["lastUsed"], json!(null));
+        }
+    }
+
+    #[test]
+    fn mint_lets_a_non_blank_incoming_id_override_like_the_legacy_spread() {
+        let incoming = json!({ "id": "caller-minted", "username": "U", "userId": "1", "cookie": "c" });
+        let minted = mint_account_json(incoming, "1784000000000", "2026-07-19T00:00:00.000Z");
+        assert_eq!(minted["id"], json!("caller-minted"));
+    }
+
+    #[test]
+    fn mint_defaults_nickname_and_materializes_into_a_valid_account() {
+        // The legacy renderer omitted id/nickname entirely; that payload must
+        // still mint cleanly and deserialize into the typed Account.
+        let incoming = json!({ "username": "U", "userId": "1", "cookie": "c", "gameTarget": "" });
+        let minted = mint_account_json(incoming, "42", "2026-07-19T00:00:00.000Z");
+        assert_eq!(minted["nickname"], json!(""));
+        let materialized: Account = serde_json::from_value(minted).expect("payload must deserialize");
+        assert_eq!(materialized.id, "42");
+        assert_eq!(materialized.created_at, "2026-07-19T00:00:00.000Z");
+    }
+
+    // ── backfill_blank_ids (blank-id store repair) ───────────────────────────
+
+    #[test]
+    fn backfill_re_mints_only_blank_ids_and_keeps_them_unique() {
+        // "1000" is already taken, so the first healed id must bump past it.
+        let mut store = vec![
+            account("1000", "Sound", "gs:aa:bb:cc"),
+            account("", "BrokenOne", ""),
+            account("  ", "BrokenTwo", ""),
+        ];
+        let healed = backfill_blank_ids(&mut store, 1000);
+        assert_eq!(healed, 2);
+        assert_eq!(store[0].id, "1000");
+        assert_eq!(store[1].id, "1001");
+        assert_eq!(store[2].id, "1002");
+        // Every id is now non-blank and unique.
+        let unique: std::collections::HashSet<_> = ids_of(&store).into_iter().collect();
+        assert_eq!(unique.len(), 3);
+    }
+
+    #[test]
+    fn backfill_is_a_noop_on_a_sound_store() {
+        let mut store = vec![account("a1", "One", ""), account("a2", "Two", "")];
+        let before = ids_of(&store);
+        assert_eq!(backfill_blank_ids(&mut store, 1000), 0);
+        assert_eq!(ids_of(&store), before);
+    }
+
     // ── update (Requirement 1.2) ──────────────────────────────────────────────
 
     #[test]
@@ -1894,6 +2065,8 @@ mod reorder_prop_tests {
             user_id: format!("uid-{id}"),
             nickname: format!("Nick {id}"),
             cookie: String::new(),
+            password: String::new(),
+            login_username: None,
             created_at: "2024-01-01T00:00:00.000Z".to_string(),
             last_used: None,
             donut_profile_id: None,

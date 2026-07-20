@@ -98,6 +98,13 @@ export interface TauriApi {
 
   // ── Login (CDP cookie-capture flow) ──
   openLogin: () => Promise<void>;
+  /**
+   * Open the login window pre-filled with `username` / `password` (typed with a
+   * humanized cadence) and resolve once the session cookie is captured and
+   * verified. Resolves to the same `{ success, cookie, username, userId }` /
+   * `{ success, error }` shape as {@link openLogin}; callers narrow it locally.
+   */
+  loginCredentials: (username: string, password: string) => Promise<unknown>;
   cancelLogin: () => Promise<void>;
 
   // ── Roblox launch / process control ──

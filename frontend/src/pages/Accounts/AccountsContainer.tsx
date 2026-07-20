@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { ipc } from '@/lib/ipc';
 import { createKeyedSessionCache } from '@/lib/sessionCache';
 import { useAccountStore } from '@/stores/accountStore';
+import { useToastStore } from '@/stores/toastStore';
 import type { Account } from '@/types/models';
+import { normalizeCredentialLogin, normalizeValidation } from './addAccount';
+import { reLoginAccount } from './reLogin';
 import { Accounts } from './index';
 import { AddAccountModal } from './AddAccountModal';
 import { EditAccountModal } from './EditAccountModal';
@@ -45,6 +48,8 @@ export function AccountsContainer(): JSX.Element {
   const accounts = useAccountStore((state) => state.accounts);
   const add = useAccountStore((state) => state.add);
   const update = useAccountStore((state) => state.update);
+  const showSuccess = useToastStore((state) => state.showSuccess);
+  const showError = useToastStore((state) => state.showError);
 
   // ── Avatar resolution (batched, cached by userId across mounts) ──
   const [avatarUrls, setAvatarUrls] = useState<Record<string, string>>(() =>
@@ -130,6 +135,25 @@ export function AccountsContainer(): JSX.Element {
     void ipc.openAccountBrowsers(selected.map((account) => account.id));
   }, []);
 
+  // Re-login: validate the cookie and, if it has expired, re-sign-in with the
+  // account's saved credentials (humanized auto-login), refreshing the cookie.
+  const handleReLogin = useCallback(
+    async (account: Account): Promise<void> => {
+      const result = await reLoginAccount(account, {
+        validate: async (cookie) => normalizeValidation(await ipc.validateCookie(cookie)),
+        login: async (username, password) =>
+          normalizeCredentialLogin(await ipc.loginCredentials(username, password)),
+        update,
+      });
+      if (result.status === 'still-valid' || result.status === 'refreshed') {
+        showSuccess(result.message);
+      } else {
+        showError(result.message);
+      }
+    },
+    [update, showSuccess, showError],
+  );
+
   return (
     <>
       <Accounts
@@ -138,6 +162,7 @@ export function AccountsContainer(): JSX.Element {
         onLaunch={(account) => useLaunchIntentStore.getState().open({ accountIds: [account.id] })}
         onEdit={(account) => setEditAccount(account)}
         onQuickLogin={(account) => setQuickLoginAccount(account)}
+        onReLogin={(account) => void handleReLogin(account)}
         onFriendRequest={(account) => setFriendAccounts([account])}
         onChangeDisplayName={(account) => setDisplayNameAccount(account)}
         onChangePassword={(account) => setPasswordAccount(account)}
@@ -149,7 +174,13 @@ export function AccountsContainer(): JSX.Element {
         onOpenBrowsersSelected={handleOpenBrowsers}
       />
 
-      <AddAccountModal open={addOpen} onClose={() => setAddOpen(false)} onAdd={add} />
+      <AddAccountModal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onAdd={add}
+        accounts={accounts}
+        onUpdate={update}
+      />
 
       <EditAccountModal
         open={editAccount !== null}

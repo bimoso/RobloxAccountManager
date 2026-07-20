@@ -35,7 +35,8 @@ describe('AccountCardMenu viewport anchor', () => {
     expect(menu).toHaveStyle({ left: '321px', top: '187px' });
     expect(menu).toHaveAttribute('aria-label', 'Actions for pointer-user');
     expect(within(menu).getByText('@pointer-user')).toBeInTheDocument();
-    expect(screen.getAllByRole('menuitem')).toHaveLength(10);
+    // 10 fixed rows + the "Re-login with credentials" action.
+    expect(screen.getAllByRole('menuitem')).toHaveLength(11);
     expect(screen.getByRole('menuitem', { name: 'Launch' })).toHaveClass('is-primary');
     expect(screen.getByRole('menuitem', { name: 'Copy cookie' })).toHaveClass(
       'command-menu__item--compact',

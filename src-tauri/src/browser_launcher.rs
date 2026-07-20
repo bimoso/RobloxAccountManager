@@ -1611,14 +1611,105 @@ async fn try_get_login_cookie(browser: &Browser) -> Option<String> {
         .map(|c| c.value.clone())
 }
 
+/// CSS selectors for the Roblox login form. These ids are long-lived on the
+/// `/login` page; if a future redesign changes them the auto-fill step simply
+/// fails softly (see [`autofill_login_form`]) and the flow falls back to a
+/// manual sign-in in the visible window.
+const LOGIN_USERNAME_SELECTOR: &str = "#login-username";
+const LOGIN_PASSWORD_SELECTOR: &str = "#login-password";
+const LOGIN_SUBMIT_SELECTOR: &str = "#login-button";
+
+/// How long to wait for the login form's username field to mount before giving
+/// up on auto-fill. The `/login` page is a SPA, so the input appears a beat
+/// after navigation resolves.
+const LOGIN_FIELD_WAIT_MS: u64 = 15_000;
+
+/// Poll `page` for `selector` until it resolves to an element or `timeout`
+/// elapses. chromiumoxide's `find_element` errors (rather than returning `None`)
+/// when the node is absent, so this retries on error instead of failing the
+/// whole flow the instant the SPA has not mounted the form yet.
+async fn wait_for_element(
+    page: &Page,
+    selector: &str,
+    timeout: Duration,
+) -> Option<chromiumoxide::element::Element> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let Ok(element) = page.find_element(selector).await {
+            return Some(element);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// Type `text` into `element` one character at a time, sleeping a humanized
+/// delay before each keystroke so the fill has a natural, jittery cadence
+/// instead of appearing all at once (see [`crate::humanize`]).
+async fn type_humanized(
+    element: &chromiumoxide::element::Element,
+    text: &str,
+    rhythm: &crate::humanize::TypingRhythm,
+    prng: &mut crate::humanize::Prng,
+) -> Result<(), String> {
+    element.click().await.map_err(|e| e.to_string())?;
+    for ch in text.chars() {
+        tokio::time::sleep(rhythm.next_delay(prng)).await;
+        // Per-char `type_str` dispatches keydown/keypress/keyup for that single
+        // character, so each keystroke is its own event at a human interval.
+        element
+            .type_str(ch.to_string())
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Auto-fill the Roblox login form with `username` / `password` using humanized
+/// typing, then click submit. Best-effort: any failure (form not found, a
+/// selector that changed) resolves to `Err` and is treated as "leave the visible
+/// window for the user to finish manually" by the caller — it never aborts the
+/// cookie poll, so a captcha / 2FA challenge the user then solves is still
+/// captured.
+async fn autofill_login_form(page: &Page, username: &str, password: &str) -> Result<(), String> {
+    let rhythm = crate::humanize::TypingRhythm::default();
+    let mut prng = crate::humanize::Prng::from_entropy();
+
+    let username_field = wait_for_element(page, LOGIN_USERNAME_SELECTOR, Duration::from_millis(LOGIN_FIELD_WAIT_MS))
+        .await
+        .ok_or_else(|| "login username field did not appear".to_string())?;
+    type_humanized(&username_field, username, &rhythm, &mut prng).await?;
+
+    // A human pause before moving to the password field.
+    tokio::time::sleep(rhythm.field_switch_delay(&mut prng)).await;
+
+    let password_field = page
+        .find_element(LOGIN_PASSWORD_SELECTOR)
+        .await
+        .map_err(|e| e.to_string())?;
+    type_humanized(&password_field, password, &rhythm, &mut prng).await?;
+
+    // A beat before submitting, then click the login button.
+    tokio::time::sleep(rhythm.field_switch_delay(&mut prng)).await;
+    if let Ok(button) = page.find_element(LOGIN_SUBMIT_SELECTOR).await {
+        let _ = button.click().await;
+    }
+    Ok(())
+}
+
 /// The launch + poll portion of the flow, split out so [`run_login_flow`] can run
 /// cleanup (close browser, abort the handler task) regardless of how it ends.
 /// `browser` is already launched; this sets up the stealth page, navigates to the
-/// login URL, and polls until one of the [`LoginOutcome`] conditions is met.
+/// login URL, optionally auto-fills the form with `credentials`
+/// (username, password) via humanized typing, and polls until one of the
+/// [`LoginOutcome`] conditions is met.
 async fn login_poll_loop(
     browser: &Browser,
     handler_task: &mut tokio::task::JoinHandle<()>,
     cancel_rx: &mut oneshot::Receiver<()>,
+    credentials: Option<(&str, &str)>,
 ) -> LoginOutcome {
     // Create a blank page, register the stealth init script BEFORE navigation so
     // it applies to the login document (legacy JS backend registered it on the context
@@ -1632,6 +1723,17 @@ async fn login_poll_loop(
     }
     if let Err(e) = page.goto(LOGIN_URL).await {
         return LoginOutcome::Error(e.to_string());
+    }
+
+    // Credential mode: humanized auto-fill + submit. A failure here is not fatal
+    // — the visible window stays open for the user to finish (and to solve any
+    // captcha / 2FA), and the cookie poll below still captures the session.
+    if let Some((username, password)) = credentials {
+        // `e` is a selector/CDP error (e.g. "node not found"), never the typed
+        // secret, so it is safe to surface directly.
+        if let Err(e) = autofill_login_form(&page, username, password).await {
+            eprintln!("[login] credential auto-fill did not complete: {e}");
+        }
     }
 
     let deadline = tokio::time::Instant::now() + Duration::from_millis(LOGIN_TIMEOUT_MS);
@@ -1680,6 +1782,33 @@ async fn login_poll_loop(
 /// sender to trip `cancel_rx`.
 pub async fn run_login_flow(
     chrome_path: &Path,
+    cancel_rx: oneshot::Receiver<()>,
+) -> LoginResult {
+    run_login_flow_inner(chrome_path, None, cancel_rx).await
+}
+
+/// Credential variant of [`run_login_flow`]: identical launch / cookie-capture /
+/// verify pipeline, but the login form is auto-filled with `username` /
+/// `password` using humanized typing before the poll begins. The window is still
+/// visible, so a captcha or 2FA challenge that follows is solved by the user and
+/// the same cookie poll captures the resulting session.
+pub async fn run_credential_login_flow(
+    chrome_path: &Path,
+    username: &str,
+    password: &str,
+    cancel_rx: oneshot::Receiver<()>,
+) -> LoginResult {
+    run_login_flow_inner(chrome_path, Some((username, password)), cancel_rx).await
+}
+
+/// Shared implementation behind [`run_login_flow`] (manual) and
+/// [`run_credential_login_flow`] (auto-filled). `credentials` selects the mode:
+/// `None` waits for the user to sign in by hand; `Some((user, pass))` humanized-
+/// types those into the form first. Launch, cleanup and cookie verification are
+/// identical in both modes.
+async fn run_login_flow_inner(
+    chrome_path: &Path,
+    credentials: Option<(&str, &str)>,
     mut cancel_rx: oneshot::Receiver<()>,
 ) -> LoginResult {
     let config = match BrowserConfig::builder()
@@ -1702,7 +1831,7 @@ pub async fn run_login_flow(
     // stream ends and this task completes, which `login_poll_loop` observes.
     let mut handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
 
-    let outcome = login_poll_loop(&browser, &mut handler_task, &mut cancel_rx).await;
+    let outcome = login_poll_loop(&browser, &mut handler_task, &mut cancel_rx, credentials).await;
 
     // cleanup(): close the browser and stop the handler task in every branch.
     let mut browser = browser;
@@ -3689,6 +3818,60 @@ pub async fn roblox_open_login(
     Ok(result)
 }
 
+/// `roblox:loginCredentials` — open the login window, auto-fill it with the given
+/// `username` / `password` using humanized typing, and return the captured /
+/// verified account (or a failure the Renderer_UI branches on). This backs the
+/// bulk `user:pass` add flow.
+///
+/// It shares every guard and the cancel wiring with [`roblox_open_login`]:
+/// Windows-gated, resolves a system Chromium via [`ensure_chrome`], and stores a
+/// cancel `Sender` in [`AppState`] so [`login_cancel`] can abort a stuck attempt
+/// (e.g. one waiting on a captcha the user chooses not to solve). The only
+/// difference is that [`run_credential_login_flow`] types the credentials into
+/// the form before polling; because the window is visible, a captcha or 2FA
+/// challenge that follows is still solved by the user and captured normally.
+///
+/// A blank username or password is rejected up front — there is nothing to type,
+/// and the cookie poll would just hang until the 5-minute timeout.
+#[tauri::command]
+pub async fn roblox_login_credentials(
+    _app: AppHandle,
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+) -> Result<LoginResult, String> {
+    if let Err(e) = crate::platform::ensure_windows() {
+        return Ok(LoginResult::fail(e));
+    }
+    if username.trim().is_empty() || password.is_empty() {
+        return Ok(LoginResult::fail("A username and password are required."));
+    }
+
+    let chrome_path = match ensure_chrome() {
+        Some(path) => path,
+        None => {
+            return Ok(LoginResult::fail(
+                "Browser login is not available in this build. Use \"Paste Cookie\" instead.",
+            ));
+        }
+    };
+
+    let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+    {
+        let mut guard = state.login_cancel_tx.lock().await;
+        *guard = Some(cancel_tx);
+    }
+
+    let result = run_credential_login_flow(&chrome_path, username.trim(), &password, cancel_rx).await;
+
+    {
+        let mut guard = state.login_cancel_tx.lock().await;
+        *guard = None;
+    }
+
+    Ok(result)
+}
+
 /// `login:cancel` — cancel an in-progress login window. Ports the legacy JS build's
 /// `legacy one-shot IPC listener('login:cancel', ...)` (Requirement 10.1); mapped to a command
 /// since preload calls `invoke('login_cancel')`. Takes the stored cancel `Sender`
@@ -4572,6 +4755,8 @@ mod tests {
             user_id: "42".to_string(),
             nickname: "Nick".to_string(),
             cookie: String::new(),
+            password: String::new(),
+            login_username: None,
             created_at: String::new(),
             last_used: None,
             donut_profile_id: None,

@@ -1,9 +1,18 @@
 import {
   useEffect,
   useId,
+  useRef,
   useState,
-  type CSSProperties,
 } from 'react';
+import {
+  AtSign,
+  Check,
+  CircleAlert,
+  Info,
+  KeyRound,
+  Layers,
+  LogIn,
+} from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { ipc } from '@/lib/ipc';
@@ -11,24 +20,33 @@ import type { Account } from '@/types/models';
 import type { ChromeDownloadProgress, UnlistenFn } from '@/types/window';
 import {
   buildAccountToAdd,
+  findAccountByUsername,
+  normalizeCredentialLogin,
   normalizeValidation,
   parseCookieLines,
+  parseCredentialLines,
   processBatchCookies,
+  processCredentials,
   type BatchProgressEvent,
   type BatchSummary,
+  type CredentialEntry,
+  type CredentialOutcome,
+  type CredentialProgressEvent,
+  type CredentialSummary,
 } from './addAccount';
+import './AddAccountModal.css';
 
 /**
- * The three add-account methods offered by the modal (Requirement 13.1):
- * signing in with Roblox, pasting a single cookie, or pasting many cookies.
+ * The four add-account methods offered by the modal: signing in with Roblox,
+ * pasting a single cookie, pasting many cookies, or bulk `user:pass` combos
+ * driven through a humanized auto-login.
  */
-type AddMode = 'login' | 'single' | 'batch';
+type AddMode = 'login' | 'single' | 'batch' | 'combo';
 
 /**
- * Shape the `roblox_open_login` command resolves with once the CDP cookie
- * capture completes. `ipc.openLogin()` is typed `Promise<void>` on the shared
- * IPC surface, so the modal narrows the resolved value locally to read the
- * captured cookie (mirroring the legacy renderer's `finishLogin`).
+ * Shape the `roblox_open_login` / `roblox_login_credentials` commands resolve
+ * with once the CDP cookie capture completes. The shared IPC surface types these
+ * loosely, so the modal narrows the resolved value locally.
  */
 interface LoginResult {
   success?: boolean;
@@ -53,11 +71,6 @@ type LoginPhase = 'idle' | 'downloading' | 'waiting';
 
 /**
  * Props for {@link AddAccountModal}.
- *
- * The modal owns the three add flows and their IPC orchestration; the only
- * effect it delegates is the actual insert, handed to {@link onAdd} so the
- * Account_Store (and its list/toast side effects) stays the single owner of the
- * account list. `onAdd` builds on `accountStore.add` in the Accounts page.
  */
 export interface AddAccountModalProps {
   /** Whether the modal is open. */
@@ -70,125 +83,52 @@ export interface AddAccountModalProps {
    * toast and the modal keeps the relevant flow's inline message).
    */
   onAdd: (account: Account) => Promise<void>;
+  /**
+   * The current accounts, used by the `user:pass` flow to upsert: an entry whose
+   * username matches an existing account attaches its credentials instead of
+   * adding a duplicate.
+   */
+  accounts?: Account[];
+  /**
+   * Updates an existing account (e.g. attaching credentials or refreshing a
+   * cookie during the `user:pass` upsert). Required for the upsert path; when
+   * omitted, matching entries fall back to adding a new account.
+   */
+  onUpdate?: (id: string, changed: Partial<Account>) => Promise<void>;
 }
 
-const bodyStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '14px',
-  minWidth: '360px',
-  maxWidth: '440px',
-};
+const TABS: ReadonlyArray<{ id: AddMode; label: string; Icon: typeof LogIn }> = [
+  { id: 'login', label: 'Iniciar sesión', Icon: LogIn },
+  { id: 'single', label: 'Una cookie', Icon: KeyRound },
+  { id: 'batch', label: 'Varias cookies', Icon: Layers },
+  { id: 'combo', label: 'User : Pass', Icon: AtSign },
+];
 
-const titleStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '17px',
-  color: 'var(--t1)',
-};
-
-const tabsStyle: CSSProperties = {
-  display: 'flex',
-  gap: '6px',
-};
-
-const tabStyle = (active: boolean): CSSProperties => ({
-  flex: 1,
-  padding: '8px 10px',
-  borderRadius: '8px',
-  border: '1px solid var(--border)',
-  background: active ? 'var(--accent, #5b8def)' : 'var(--bg2)',
-  color: active ? '#fff' : 'var(--t2)',
-  fontSize: '13px',
-  cursor: 'pointer',
-});
-
-const labelStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '4px',
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
-
-const inputStyle: CSSProperties = {
-  padding: '8px 10px',
-  borderRadius: '8px',
-  border: '1px solid var(--border)',
-  background: 'var(--bg2)',
-  color: 'var(--t1)',
-  fontSize: '14px',
-};
-
-const textareaStyle: CSSProperties = {
-  ...inputStyle,
-  minHeight: '120px',
-  resize: 'vertical',
-  fontFamily: 'monospace',
-};
-
-const footerStyle: CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: '8px',
-  marginTop: '4px',
-};
-
-const errorStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '13px',
-  color: 'var(--danger, #e5484d)',
-};
-
-const hintStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
-
-const progressTrackStyle: CSSProperties = {
-  height: '8px',
-  borderRadius: '999px',
-  background: 'var(--bg2)',
-  overflow: 'hidden',
-};
-
-const progressFillStyle = (percent: number): CSSProperties => ({
-  height: '100%',
-  width: `${Math.max(0, Math.min(100, percent))}%`,
-  background: 'var(--accent, #5b8def)',
-  transition: 'width 120ms linear',
-});
-
-const failureListStyle: CSSProperties = {
-  margin: 0,
-  paddingLeft: '18px',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '2px',
-  fontSize: '13px',
-  color: 'var(--danger, #e5484d)',
-  maxHeight: '160px',
-  overflowY: 'auto',
-};
+function batchTone(summary: BatchSummary | CredentialSummary): 'clean' | 'mixed' {
+  return summary.failures.length === 0 ? 'clean' : 'mixed';
+}
 
 /**
- * Modal for adding an account through one of three methods (Requirement 13):
+ * Modal for adding an account through one of four methods:
  *
  * - **Iniciar sesión con Roblox** — invokes `roblox_open_login`, shows the
- *   browser-download progress reported by `chrome://download-progress`
- *   (Requirement 13.2), and can be cancelled via `login_cancel`.
- * - **Pegar una cookie** — validates the cookie via the validation command
- *   before adding the account (Requirement 13.3).
- * - **Pegar múltiples cookies** — processes each pasted cookie sequentially,
- *   showing per-cookie progress (Requirement 13.4) and, for any invalid cookie,
- *   an error identifying which one failed without stopping the rest
- *   (Requirement 13.5). The sequential loop is delegated to the pure
- *   {@link processBatchCookies} (Property 25).
+ *   browser-download progress reported by `chrome://download-progress`, and can
+ *   be cancelled via `login_cancel`.
+ * - **Una cookie** — validates the cookie before adding the account.
+ * - **Varias cookies** — processes each pasted cookie sequentially, showing
+ *   per-cookie progress and, for any invalid cookie, an error identifying which
+ *   one failed without stopping the rest (delegated to {@link processBatchCookies}).
+ * - **User : Pass** — bulk `username:password` combos, each driven through the
+ *   humanized auto-login (`roblox_login_credentials`) sequentially, with per-combo
+ *   progress and a cancel that stops cleanly between combos (delegated to
+ *   {@link processCombos}).
  */
 export function AddAccountModal({
   open,
   onClose,
   onAdd,
+  accounts = [],
+  onUpdate,
 }: AddAccountModalProps): JSX.Element {
   const titleId = useId();
   const [mode, setMode] = useState<AddMode>('login');
@@ -207,10 +147,16 @@ export function AddAccountModal({
   // ── Batch tab state ──
   const [batchText, setBatchText] = useState('');
   const [batchRunning, setBatchRunning] = useState(false);
-  const [batchProgress, setBatchProgress] = useState<BatchProgressEvent | null>(
-    null,
-  );
+  const [batchProgress, setBatchProgress] = useState<BatchProgressEvent | null>(null);
   const [batchSummary, setBatchSummary] = useState<BatchSummary | null>(null);
+
+  // ── Combo (user:pass[:cookie]) tab state ──
+  const [comboText, setComboText] = useState('');
+  const [comboRunning, setComboRunning] = useState(false);
+  const [comboProgress, setComboProgress] = useState<CredentialProgressEvent | null>(null);
+  const [comboSummary, setComboSummary] = useState<CredentialSummary | null>(null);
+  // Set true by "Cancelar" so the sequential loop stops between entries.
+  const comboAbort = useRef(false);
 
   // Reset every flow's state each time the modal opens.
   useEffect(() => {
@@ -227,9 +173,14 @@ export function AddAccountModal({
     setBatchRunning(false);
     setBatchProgress(null);
     setBatchSummary(null);
+    setComboText('');
+    setComboRunning(false);
+    setComboProgress(null);
+    setComboSummary(null);
+    comboAbort.current = false;
   }, [open]);
 
-  // Subscribe to browser-download progress while the modal is open (Req 13.2).
+  // Subscribe to browser-download progress while the modal is open.
   useEffect(() => {
     if (!open) return;
     let active = true;
@@ -251,8 +202,7 @@ export function AddAccountModal({
         else fn();
       })
       .catch(() => {
-        // Subscription failures are non-fatal for the modal; the login flow can
-        // still complete without a live progress bar.
+        // Subscription failures are non-fatal; the login flow still completes.
       });
     return () => {
       active = false;
@@ -266,8 +216,6 @@ export function AddAccountModal({
     setLoginPhase('downloading');
     setProgressPercent(0);
     try {
-      // `ipc.openLogin()` resolves once the CDP flow captures a cookie; the
-      // shared surface types it as `void`, so narrow the resolved value here.
       const res = (await ipc.openLogin()) as unknown as LoginResult | undefined;
       if (!open) return;
       if (!res || !res.success || !res.cookie || !res.username) {
@@ -277,10 +225,7 @@ export function AddAccountModal({
         return;
       }
       await onAdd(
-        buildAccountToAdd(
-          { ok: true, username: res.username, userId: res.userId },
-          res.cookie,
-        ),
+        buildAccountToAdd({ ok: true, username: res.username, userId: res.userId }, res.cookie),
       );
       onClose();
     } catch {
@@ -316,7 +261,6 @@ export function AddAccountModal({
       setSingleBusy(false);
       onClose();
     } catch {
-      // The IPC layer already surfaced a toast; keep the modal open with a hint.
       setSingleError('No se pudo validar o añadir la cookie.');
       setSingleBusy(false);
     }
@@ -332,8 +276,7 @@ export function AddAccountModal({
     setBatchRunning(true);
     setBatchProgress({ index: 0, total: cookies.length, cookie: cookies[0], phase: 'validating' });
     const summary = await processBatchCookies(cookies, {
-      validate: async (cookie) =>
-        normalizeValidation(await ipc.validateCookie(cookie)),
+      validate: async (cookie) => normalizeValidation(await ipc.validateCookie(cookie)),
       add: async (validation, cookie) => {
         await onAdd(buildAccountToAdd(validation, cookie));
       },
@@ -344,63 +287,136 @@ export function AddAccountModal({
     setBatchRunning(false);
   };
 
+  // Resolve one entry to a valid session, branching on the entry and the current
+  // accounts: an inline cookie is validated directly; an entry matching an
+  // existing account reuses its session (no login — we only attach credentials);
+  // otherwise the humanized auto-login captures a fresh cookie.
+  const resolveCredential = async (entry: CredentialEntry): Promise<CredentialOutcome> => {
+    if (entry.cookie) {
+      const validation = normalizeValidation(await ipc.validateCookie(entry.cookie));
+      if (!validation.ok || !validation.username) {
+        return { ok: false, error: validation.reason?.trim() || 'La cookie no es válida.' };
+      }
+      return { ok: true, cookie: entry.cookie, username: validation.username, userId: validation.userId };
+    }
+    const existing = findAccountByUsername(accounts, entry.username);
+    if (existing && onUpdate) {
+      // Already saved by cookie — attach credentials without a new login.
+      return { ok: true, cookie: existing.cookie, username: existing.username, userId: existing.userId };
+    }
+    const login = normalizeCredentialLogin(await ipc.loginCredentials(entry.username, entry.password));
+    if (!login.success || !login.cookie || !login.username) {
+      return { ok: false, error: login.error };
+    }
+    return { ok: true, cookie: login.cookie, username: login.username, userId: login.userId };
+  };
+
+  // Persist a resolved entry: update the matching account (attach credentials /
+  // refresh cookie) or add a new one, upserting by the resolved username.
+  const saveCredential = async (entry: CredentialEntry, outcome: CredentialOutcome): Promise<void> => {
+    const existing = findAccountByUsername(accounts, outcome.username ?? entry.username);
+    if (existing && onUpdate) {
+      await onUpdate(existing.id, {
+        cookie: outcome.cookie,
+        userId: outcome.userId ?? existing.userId,
+        password: entry.password,
+        loginUsername: entry.username,
+      });
+      return;
+    }
+    await onAdd(
+      buildAccountToAdd(
+        { ok: true, username: outcome.username, userId: outcome.userId },
+        outcome.cookie ?? '',
+        { loginUsername: entry.username, password: entry.password },
+      ),
+    );
+  };
+
+  const submitCombo = async (): Promise<void> => {
+    const entries = parseCredentialLines(comboText);
+    setComboSummary(null);
+    if (entries.length === 0) {
+      setComboProgress(null);
+      return;
+    }
+    comboAbort.current = false;
+    setComboRunning(true);
+    setComboProgress({ index: 0, total: entries.length, username: entries[0].username, phase: 'resolving' });
+    const summary = await processCredentials(entries, {
+      resolve: resolveCredential,
+      save: saveCredential,
+      onProgress: (event) => setComboProgress(event),
+      shouldAbort: () => comboAbort.current,
+    });
+    setComboProgress(null);
+    setComboSummary(summary);
+    setComboRunning(false);
+  };
+
+  const cancelCombo = (): void => {
+    // Stop the loop between combos AND close the currently-open login window.
+    comboAbort.current = true;
+    void ipc.cancelLogin().catch(() => {
+      // Ignore: no window open, or it already ended.
+    });
+  };
+
   return (
     <Modal open={open} onClose={onClose} titleId={titleId}>
-      <div style={bodyStyle}>
-        <h2 id={titleId} style={titleStyle}>
-          Añadir cuenta
-        </h2>
+      <div className="addacc">
+        <div className="addacc__head">
+          <span className="addacc__eyebrow">Provisioning / Accounts</span>
+          <h2 id={titleId} className="addacc__title">
+            Añadir cuenta
+          </h2>
+          <p className="addacc__subtitle">
+            Elige cómo quieres importar la cuenta: sesión, cookie o credenciales.
+          </p>
+        </div>
 
-        <div style={tabsStyle} role="tablist" aria-label="Método para añadir cuenta">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'login'}
-            style={tabStyle(mode === 'login')}
-            onClick={() => setMode('login')}
-          >
-            Iniciar sesión
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'single'}
-            style={tabStyle(mode === 'single')}
-            onClick={() => setMode('single')}
-          >
-            Una cookie
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'batch'}
-            style={tabStyle(mode === 'batch')}
-            onClick={() => setMode('batch')}
-          >
-            Varias cookies
-          </button>
+        <div className="addacc__tabs" role="tablist" aria-label="Método para añadir cuenta">
+          {TABS.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={mode === id}
+              className="addacc__tab"
+              onClick={() => setMode(id)}
+            >
+              <Icon size={16} aria-hidden="true" />
+              <span>{label}</span>
+            </button>
+          ))}
         </div>
 
         {mode === 'login' && (
-          <div style={labelStyle}>
-            <p style={hintStyle}>
-              Inicia sesión con Roblox en una ventana de navegador; la cookie se
-              capturará automáticamente.
+          <div className="addacc__panel">
+            <p className="addacc__hint">
+              <Info size={15} aria-hidden="true" />
+              Inicia sesión con Roblox en una ventana de navegador; la cookie se captura
+              automáticamente.
             </p>
             {loginStarted && (
-              <>
-                <div style={progressTrackStyle} aria-hidden="true">
-                  <div style={progressFillStyle(progressPercent)} />
+              <div className="addacc__progress">
+                <div className="addacc__track" aria-hidden="true">
+                  <div className="addacc__fill" style={{ width: `${Math.max(0, Math.min(100, progressPercent))}%` }} />
                 </div>
-                <p style={hintStyle}>
+                <p className="addacc__progress-label">
                   {loginPhase === 'downloading'
                     ? `Descargando navegador… ${Math.round(progressPercent)}%`
                     : 'Esperando a que inicies sesión…'}
                 </p>
-              </>
+              </div>
             )}
-            {loginError && <p style={errorStyle}>{loginError}</p>}
-            <div style={footerStyle}>
+            {loginError && (
+              <p className="addacc__error">
+                <CircleAlert size={15} aria-hidden="true" />
+                {loginError}
+              </p>
+            )}
+            <div className="addacc__footer">
               {loginStarted ? (
                 <Button variant="secondary" onClick={cancelLogin}>
                   Cancelar
@@ -420,19 +436,24 @@ export function AddAccountModal({
         )}
 
         {mode === 'single' && (
-          <div style={labelStyle}>
-            <label style={labelStyle}>
+          <div className="addacc__panel">
+            <label className="addacc__field">
               Cookie (.ROBLOSECURITY)
               <input
-                style={inputStyle}
+                className="addacc__input"
                 type="password"
                 value={singleCookie}
                 placeholder="Pega la cookie aquí"
                 onChange={(event) => setSingleCookie(event.target.value)}
               />
             </label>
-            {singleError && <p style={errorStyle}>{singleError}</p>}
-            <div style={footerStyle}>
+            {singleError && (
+              <p className="addacc__error">
+                <CircleAlert size={15} aria-hidden="true" />
+                {singleError}
+              </p>
+            )}
+            <div className="addacc__footer">
               <Button variant="secondary" onClick={onClose} disabled={singleBusy}>
                 Cancelar
               </Button>
@@ -448,11 +469,11 @@ export function AddAccountModal({
         )}
 
         {mode === 'batch' && (
-          <div style={labelStyle}>
-            <label style={labelStyle}>
+          <div className="addacc__panel">
+            <label className="addacc__field">
               Cookies (una por línea)
               <textarea
-                style={textareaStyle}
+                className="addacc__textarea"
                 value={batchText}
                 placeholder={'Pega una cookie por línea…'}
                 onChange={(event) => setBatchText(event.target.value)}
@@ -461,31 +482,30 @@ export function AddAccountModal({
             </label>
 
             {batchRunning && batchProgress && (
-              <>
-                <div style={progressTrackStyle} aria-hidden="true">
+              <div className="addacc__progress">
+                <div className="addacc__track" aria-hidden="true">
                   <div
-                    style={progressFillStyle(
-                      batchProgress.total > 0
-                        ? (batchProgress.index / batchProgress.total) * 100
-                        : 0,
-                    )}
+                    className="addacc__fill"
+                    style={{
+                      width: `${batchProgress.total > 0 ? (batchProgress.index / batchProgress.total) * 100 : 0}%`,
+                    }}
                   />
                 </div>
-                <p style={hintStyle}>
-                  {`Procesando cookie ${batchProgress.index + 1} de ${batchProgress.total} (${
-                    batchProgress.phase === 'validating' ? 'validando' : 'añadiendo'
-                  })…`}
+                <p className="addacc__progress-label">
+                  Procesando cookie <strong>{batchProgress.index + 1}</strong> de {batchProgress.total} (
+                  {batchProgress.phase === 'validating' ? 'validando' : 'añadiendo'})…
                 </p>
-              </>
+              </div>
             )}
 
             {batchSummary && (
-              <div style={labelStyle}>
-                <p style={hintStyle}>
-                  {`Se añadieron ${batchSummary.added} de ${batchSummary.total} cuentas.`}
-                </p>
+              <div className="addacc__summary" data-tone={batchTone(batchSummary)}>
+                <div className="addacc__summary-head">
+                  {batchSummary.failures.length === 0 ? <Check size={16} /> : <CircleAlert size={16} />}
+                  Se añadieron {batchSummary.added} de {batchSummary.total} cuentas.
+                </div>
                 {batchSummary.failures.length > 0 && (
-                  <ul style={failureListStyle}>
+                  <ul className="addacc__failures">
                     {batchSummary.failures.map((failure) => (
                       <li key={failure.index}>{failure.reason}</li>
                     ))}
@@ -494,7 +514,7 @@ export function AddAccountModal({
               </div>
             )}
 
-            <div style={footerStyle}>
+            <div className="addacc__footer">
               <Button variant="secondary" onClick={onClose} disabled={batchRunning}>
                 {batchSummary ? 'Cerrar' : 'Cancelar'}
               </Button>
@@ -505,6 +525,90 @@ export function AddAccountModal({
               >
                 {batchRunning ? 'Procesando…' : 'Añadir cuentas'}
               </Button>
+            </div>
+          </div>
+        )}
+
+        {mode === 'combo' && (
+          <div className="addacc__panel">
+            <label className="addacc__field">
+              Credenciales (user:pass o user:pass:cookie, una por línea)
+              <textarea
+                className="addacc__textarea"
+                value={comboText}
+                placeholder={'usuario1:contraseña1\nusuario2:contraseña2:_|WARNING:-DO-NOT-SHARE…'}
+                onChange={(event) => setComboText(event.target.value)}
+                disabled={comboRunning}
+              />
+            </label>
+
+            <p className="addacc__hint">
+              <Info size={15} aria-hidden="true" />
+              Sin cookie: se abrirá una ventana por cuenta y las credenciales se escribirán con un
+              ritmo humanizado (resuelve el captcha/2FA si aparece). Si el usuario ya existe, solo se
+              le guardan las credenciales. Con cookie, se valida y se añade directo.
+            </p>
+
+            {!comboRunning && !comboSummary && parseCredentialLines(comboText).length > 0 && (
+              <p className="addacc__progress-label">
+                <span className="addacc__count">{parseCredentialLines(comboText).length}</span>{' '}
+                cuenta(s) detectada(s).
+              </p>
+            )}
+
+            {comboRunning && comboProgress && (
+              <div className="addacc__progress">
+                <div className="addacc__track" aria-hidden="true">
+                  <div
+                    className="addacc__fill"
+                    style={{
+                      width: `${comboProgress.total > 0 ? (comboProgress.index / comboProgress.total) * 100 : 0}%`,
+                    }}
+                  />
+                </div>
+                <p className="addacc__progress-label">
+                  Cuenta <strong>{comboProgress.index + 1}</strong> de {comboProgress.total} —{' '}
+                  <strong>{comboProgress.username}</strong> (
+                  {comboProgress.phase === 'resolving' ? 'verificando' : 'guardando'})…
+                </p>
+              </div>
+            )}
+
+            {comboSummary && (
+              <div className="addacc__summary" data-tone={batchTone(comboSummary)}>
+                <div className="addacc__summary-head">
+                  {comboSummary.failures.length === 0 ? <Check size={16} /> : <CircleAlert size={16} />}
+                  Se procesaron {comboSummary.saved} de {comboSummary.total} cuentas.
+                </div>
+                {comboSummary.failures.length > 0 && (
+                  <ul className="addacc__failures">
+                    {comboSummary.failures.map((failure) => (
+                      <li key={failure.index}>{failure.reason}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            <div className="addacc__footer">
+              {comboRunning ? (
+                <Button variant="secondary" onClick={cancelCombo}>
+                  Cancelar
+                </Button>
+              ) : (
+                <>
+                  <Button variant="secondary" onClick={onClose}>
+                    {comboSummary ? 'Cerrar' : 'Cancelar'}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={() => void submitCombo()}
+                    disabled={parseCredentialLines(comboText).length === 0}
+                  >
+                    Procesar credenciales
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         )}

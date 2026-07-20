@@ -80,6 +80,8 @@
 
     // ── Login (CDP cookie-capture flow) ──
     openLogin: () => invoke('roblox_open_login'),
+    loginCredentials: (username, password) =>
+        invoke('roblox_login_credentials', { username, password }),
     cancelLogin: () => invoke('login_cancel'),
 
     // ── Roblox launch / process control ──
