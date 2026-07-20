@@ -217,6 +217,36 @@
   transform: translateY(-50%);
 }
 
+.gen-moderated {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  border: 1px solid var(--bd);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--glass-card) 70%, transparent);
+  cursor: pointer;
+}
+
+.gen-moderated span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.gen-moderated strong {
+  color: var(--t1);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.gen-moderated small {
+  color: var(--t3);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .gen-command__action {
   display: flex;
   min-height: 43px;

@@ -7,7 +7,11 @@
 
 .addacc {
   display: flex;
+  /* The modal surface (.modal-content) has no padding of its own, so the body
+   * owns its inset — without this the header hugged the frame's top-left corner. */
   width: min(468px, 92vw);
+  box-sizing: border-box;
+  padding: 24px 26px 22px;
   flex-direction: column;
   gap: 16px;
 }
@@ -98,6 +102,37 @@
 .addacc__tab:focus-visible {
   outline: 2px solid var(--ac);
   outline-offset: 1px;
+}
+
+/* ── Accept-moderated toggle ── */
+.addacc__moderated {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 12px;
+  border: 1px solid var(--bd);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--s2, var(--bg)) 60%, transparent);
+  cursor: pointer;
+}
+
+.addacc__moderated span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.addacc__moderated strong {
+  color: var(--t1);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.addacc__moderated small {
+  color: var(--t3);
+  font-size: 10.5px;
+  line-height: 1.4;
 }
 
 /* ── Panel scaffolding ── */

@@ -18,6 +18,8 @@ export interface CookieValidation {
   reason?: string;
   username?: string;
   userId?: string;
+  /** `true` when the cookie is valid but the account is under moderation. */
+  moderated?: boolean;
 }
 
 export type GeneratorPhase =
@@ -32,6 +34,8 @@ export interface GeneratorPipelineSuccess {
   ok: true;
   generated: BloxGenGeneratedAccount;
   validation: CookieValidation & { ok: true; username: string };
+  /** `true` when the account was accepted despite being under moderation. */
+  moderated: boolean;
   historyEntry: SafeGenHistoryEntry;
 }
 
@@ -53,6 +57,13 @@ export interface GeneratorPipelineDeps {
   add: (account: Account) => Promise<void>;
   onPhase?: (phase: Exclude<GeneratorPhase, 'idle' | 'success' | 'error'>) => void;
   now?: () => Date;
+  /**
+   * When `true`, a generated cookie that is valid but MODERATED is accepted and
+   * added (using the generated username), instead of failing validation. The
+   * BloxGen-provided username is used since a moderated account resolves no
+   * username of its own.
+   */
+  acceptModerated?: boolean;
 }
 
 /** Treat malformed validation responses as invalid instead of guessing. */
@@ -70,6 +81,7 @@ export function normalizeGeneratorValidation(raw: unknown): CookieValidation {
     username: username || undefined,
     userId,
     reason: typeof record.reason === 'string' ? record.reason : undefined,
+    moderated: record.moderated === true,
   };
 }
 
@@ -77,6 +89,7 @@ export function normalizeGeneratorValidation(raw: unknown): CookieValidation {
 export function buildGeneratedAccountPayload(
   validation: CookieValidation & { ok: true; username: string },
   cookie: string,
+  moderated = false,
 ): Account {
   return {
     id: '',
@@ -89,6 +102,7 @@ export function buildGeneratedAccountPayload(
     donutProfileId: null,
     donutProfilePendingDelete: false,
     gameTarget: '',
+    ...(moderated ? { moderated: true } : {}),
   };
 }
 
@@ -283,7 +297,23 @@ export async function runGeneratorPipeline(
     };
   }
 
-  if (!validation.ok || !validation.username) {
+  // Accept a valid-but-moderated cookie when the toggle is on: a moderated
+  // account resolves no username of its own, so reuse BloxGen's generated
+  // username. Otherwise a non-ok validation is a genuine rejection.
+  const acceptedModerated =
+    !validation.ok &&
+    validation.moderated === true &&
+    deps.acceptModerated === true &&
+    generated.username.length > 0;
+
+  const effective: (CookieValidation & { ok: true; username: string }) | null =
+    validation.ok && validation.username
+      ? (validation as CookieValidation & { ok: true; username: string })
+      : acceptedModerated
+        ? { ok: true, username: generated.username, userId: validation.userId }
+        : null;
+
+  if (!effective) {
     const message = 'Roblox rechazó la cookie generada; no se añadió ninguna cuenta.';
     return {
       ok: false,
@@ -296,12 +326,7 @@ export async function runGeneratorPipeline(
 
   deps.onPhase?.('adding');
   try {
-    await deps.add(
-      buildGeneratedAccountPayload(
-        validation as CookieValidation & { ok: true; username: string },
-        generated.cookie,
-      ),
-    );
+    await deps.add(buildGeneratedAccountPayload(effective, generated.cookie, acceptedModerated));
   } catch {
     const message = 'La cookie era válida, pero no se pudo guardar la cuenta. Reintenta.';
     return {
@@ -313,18 +338,21 @@ export async function runGeneratorPipeline(
     };
   }
 
-  const valid = validation as CookieValidation & { ok: true; username: string };
+  const valid = effective;
   return {
     ok: true,
     generated,
     validation: valid,
+    moderated: acceptedModerated,
     historyEntry: {
       username: valid.username,
       password: generated.password,
       createdAt,
       result: 'added',
       step: 'add',
-      message: 'Cookie validada y cuenta añadida automáticamente.',
+      message: acceptedModerated
+        ? 'Cuenta moderada aceptada y añadida automáticamente.'
+        : 'Cookie validada y cuenta añadida automáticamente.',
       userId: valid.userId,
     },
   };

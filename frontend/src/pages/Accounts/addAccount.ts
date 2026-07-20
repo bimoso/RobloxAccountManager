@@ -29,6 +29,12 @@ export interface CookieValidation {
   username?: string;
   /** Roblox user id resolved from the cookie, when valid. */
   userId?: string;
+  /**
+   * `true` when the cookie authenticated but the account is under moderation
+   * (a valid cookie, not a rejected one). Callers may accept these when the
+   * "accept moderated accounts" toggle is on.
+   */
+  moderated?: boolean;
 }
 
 /**
@@ -101,6 +107,12 @@ export interface ProcessBatchDeps {
   ) => Promise<void> | void;
   /** Optional progress callback, invoked before each per-cookie step. */
   onProgress?: (event: BatchProgressEvent) => void;
+  /**
+   * When `true`, a cookie that is valid but MODERATED is added instead of being
+   * counted as a failure (the account resolves no username of its own, so `add`
+   * receives a validation whose `username` may be absent but `moderated` is set).
+   */
+  acceptModerated?: boolean;
 }
 
 /**
@@ -177,11 +189,20 @@ export function normalizeValidation(raw: unknown): CookieValidation {
         ? String(record.userId)
         : undefined;
   const reason = typeof record.reason === 'string' ? record.reason : undefined;
+  const moderated = record.moderated === true;
   // A cookie is considered valid when the backend says `ok` AND a username was
   // resolved (the field the add payload requires).
   const ok = record.ok === true && username !== undefined;
-  return { ok, reason, username, userId };
+  return { ok, reason, username, userId, moderated };
 }
+
+// Moderation helpers live in `@/lib/moderation` so the Generator can share them
+// without a cross-page import; re-exported here for the Accounts add flows.
+export {
+  moderationLabel,
+  normalizeModerationInfo,
+  type ModerationInfo,
+} from '@/lib/moderation';
 
 /**
  * Build the account payload sent to `accounts_add` from a validated cookie.
@@ -198,7 +219,7 @@ export function normalizeValidation(raw: unknown): CookieValidation {
 export function buildAccountToAdd(
   validation: CookieValidation,
   cookie: string,
-  credentials?: { loginUsername?: string; password?: string },
+  options?: { loginUsername?: string; password?: string; moderated?: boolean },
 ): Account {
   return {
     id: '',
@@ -208,13 +229,15 @@ export function buildAccountToAdd(
     cookie,
     // Attach saved login credentials when provided (from a user:pass[:cookie]
     // add); omitted for the plain cookie flows, which leave them blank.
-    password: credentials?.password ?? '',
-    loginUsername: credentials?.loginUsername,
+    password: options?.password ?? '',
+    loginUsername: options?.loginUsername,
     createdAt: '',
     lastUsed: null,
     donutProfileId: null,
     donutProfilePendingDelete: false,
     gameTarget: '',
+    // Flag accounts added despite Roblox moderation so the UI can mark them.
+    ...(options?.moderated ? { moderated: true } : {}),
   };
 }
 
@@ -244,7 +267,7 @@ export async function processBatchCookies(
   cookies: readonly string[],
   deps: ProcessBatchDeps,
 ): Promise<BatchSummary> {
-  const { validate, add, onProgress } = deps;
+  const { validate, add, onProgress, acceptModerated } = deps;
   const total = cookies.length;
   const failures: BatchFailure[] = [];
   let added = 0;
@@ -261,7 +284,10 @@ export async function processBatchCookies(
       continue;
     }
 
-    if (!validation.ok || !validation.username) {
+    // A moderated cookie is valid but resolves no username; accept it when the
+    // toggle is on, otherwise it (and any genuinely invalid cookie) is a failure.
+    const moderatedAccept = validation.moderated === true && acceptModerated === true;
+    if ((!validation.ok || !validation.username) && !moderatedAccept) {
       failures.push({
         index,
         cookie,
@@ -363,6 +389,8 @@ export interface CredentialOutcome {
   userId?: string;
   /** A user-facing failure reason, present only when not `ok`. */
   error?: string;
+  /** `true` when the resolved account is under moderation but accepted anyway. */
+  moderated?: boolean;
 }
 
 /** A single failed entry, identified by USERNAME only — never the password. */

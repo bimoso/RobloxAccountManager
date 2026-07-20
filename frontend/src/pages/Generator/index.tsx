@@ -16,7 +16,9 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { Button } from '@/components/Button';
+import { Switch } from '@/components/Switch';
 import { BLOXGEN_KEY_CHANGED_EVENT, isValidBloxGenApiKey, maskBloxGenApiKey } from '@/lib/bloxgen';
+import { moderationLabel, normalizeModerationInfo } from '@/lib/moderation';
 import {
   appendGenHistory,
   capGenHistory,
@@ -26,7 +28,7 @@ import {
   type SafeGenHistoryEntry,
 } from '@/lib/genHistory';
 import { ipc } from '@/lib/ipc';
-import { getPersisted, PERSISTENCE_KEYS } from '@/lib/persistence';
+import { getPersisted, PERSISTENCE_KEYS, setPersisted } from '@/lib/persistence';
 import { createSessionCache } from '@/lib/sessionCache';
 import { useAccountStore } from '@/stores/accountStore';
 import { useNavigationStore } from '@/stores/navigationStore';
@@ -124,6 +126,9 @@ export default function Generator(): JSX.Element {
   const [phase, setPhase] = useState<GeneratorPhase>('idle');
   const [failure, setFailure] = useState<GeneratorPipelineFailure | null>(null);
   const [clearing, setClearing] = useState(false);
+  const [acceptModerated, setAcceptModerated] = useState(
+    () => getPersisted<boolean>(PERSISTENCE_KEYS.acceptModerated) === true,
+  );
 
   const addAccount = useAccountStore((state) => state.add);
   const navigate = useNavigationStore((state) => state.navigate);
@@ -193,18 +198,34 @@ export default function Generator(): JSX.Element {
       validate: (cookie) => ipc.validateCookie(cookie),
       add: addAccount,
       onPhase: setPhase,
+      acceptModerated,
     });
     persistHistoryEntry(outcome.historyEntry);
 
     if (outcome.ok) {
       setPhase('success');
-      showSuccess(t('gen.addedToAccounts', { name: outcome.validation.username }));
+      if (outcome.moderated) {
+        // Resolve the moderation type (permanent vs temporary) for the toast.
+        const info = normalizeModerationInfo(
+          await ipc.moderationInfo(outcome.generated.username).catch(() => null),
+        );
+        showSuccess(
+          `${outcome.validation.username} añadida (moderada — ${moderationLabel(info)}).`,
+        );
+      } else {
+        showSuccess(t('gen.addedToAccounts', { name: outcome.validation.username }));
+      }
     } else {
       setFailure(outcome);
       setPhase('error');
       showError(outcome.message);
     }
-  }, [addAccount, navigate, persistHistoryEntry, showError, showSuccess, t]);
+  }, [acceptModerated, addAccount, navigate, persistHistoryEntry, showError, showSuccess, t]);
+
+  const handleToggleModerated = useCallback((next: boolean) => {
+    setAcceptModerated(next);
+    setPersisted(PERSISTENCE_KEYS.acceptModerated, next);
+  }, []);
 
   const handleClear = useCallback(async () => {
     if (history.length === 0) return;
@@ -288,6 +309,18 @@ export default function Generator(): JSX.Element {
             );
           })}
         </ol>
+
+        <label className="gen-moderated">
+          <Switch
+            checked={acceptModerated}
+            onChange={handleToggleModerated}
+            aria-label="Aceptar cuentas moderadas"
+          />
+          <span>
+            <strong>Aceptar cuentas moderadas</strong>
+            <small>Añade la cuenta aunque Roblox la marque como moderada; se indica el tipo de baneo.</small>
+          </span>
+        </label>
 
         <div className="gen-command__action">
           <AnimatePresence mode="wait" initial={false}>

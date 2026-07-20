@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   findAccountByUsername,
+  moderationLabel,
   normalizeCredentialLogin,
+  normalizeModerationInfo,
+  normalizeValidation,
   parseCredentialLines,
+  processBatchCookies,
   processCredentials,
   type CredentialEntry,
   type CredentialOutcome,
@@ -77,6 +81,39 @@ describe('normalizeCredentialLogin', () => {
     expect(normalizeCredentialLogin({ success: true, username: 'u' }).success).toBe(false);
     expect(normalizeCredentialLogin(null).success).toBe(false);
     expect(normalizeCredentialLogin('nope').success).toBe(false);
+  });
+});
+
+describe('moderation handling', () => {
+  it('normalizeValidation carries the moderated flag', () => {
+    expect(normalizeValidation({ ok: false, moderated: true, reason: 'x' }).moderated).toBe(true);
+    expect(normalizeValidation({ ok: true, username: 'u' }).moderated).toBe(false);
+  });
+
+  it('normalizeModerationInfo + moderationLabel classify permanent vs temporary', () => {
+    expect(moderationLabel(normalizeModerationInfo({ found: true, terminated: true }))).toBe(
+      'baneo permanente',
+    );
+    expect(moderationLabel(normalizeModerationInfo({ found: true, terminated: false }))).toBe(
+      'moderación temporal',
+    );
+    expect(moderationLabel(normalizeModerationInfo({ found: false }))).toBe(
+      'moderada (tipo desconocido)',
+    );
+  });
+
+  it('processBatchCookies adds a moderated cookie only when acceptModerated is on', async () => {
+    const validate = vi.fn(async () => ({ ok: false, moderated: true, reason: 'User is moderated' }));
+
+    const off = await processBatchCookies(['ck'], { validate, add: vi.fn() });
+    expect(off.added).toBe(0);
+    expect(off.failures).toHaveLength(1);
+
+    const add = vi.fn(async () => {});
+    const on = await processBatchCookies(['ck'], { validate, add, acceptModerated: true });
+    expect(on.added).toBe(1);
+    expect(on.failures).toHaveLength(0);
+    expect(add).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -109,6 +109,12 @@ export interface TauriApi {
 
   // ── Roblox launch / process control ──
   validateCookie: (cookie: string) => Promise<unknown>;
+  /**
+   * Resolve moderation details for an account by username via public endpoints.
+   * Resolves `{ found, userId?, displayName?, terminated }` — `terminated: true`
+   * is a permanent ban; `false` on a moderated account means temporary.
+   */
+  moderationInfo: (username: string) => Promise<unknown>;
   refreshCookie: (cookie: string) => Promise<string>;
   setRobloxVolume: (percent: number) => Promise<void>;
   killAllRoblox: () => Promise<void>;

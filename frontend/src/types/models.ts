@@ -46,6 +46,13 @@ export interface Account {
   donutProfileId: string | null;
   donutProfilePendingDelete: boolean;
 
+  /**
+   * `true` when the account was added despite being under Roblox moderation
+   * (via the "accept moderated accounts" toggle). Round-trips through the
+   * backend's catch-all; used by the UI to flag the account.
+   */
+  moderated?: boolean;
+
   // ── Client-derived state (not persisted by the backend) ──
   /** Cookie marked expired by the client-side re-check (Requirement 8.5). */
   cookieExpired?: boolean;

@@ -407,6 +407,7 @@ pub fn run() {
             commands::fps_write,
             roblox_api::roblox_get_version,
             roblox_api::roblox_validate_cookie,
+            roblox_api::roblox_moderation_info,
             roblox_api::roblox_get_game_name,
             roblox_api::roblox_get_avatar_thumbnails,
             roblox_api::roblox_refresh_cookie,

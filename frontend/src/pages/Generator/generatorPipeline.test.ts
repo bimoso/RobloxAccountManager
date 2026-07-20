@@ -115,6 +115,44 @@ describe('BloxGen generation pipeline', () => {
     expect(outcome.historyEntry).not.toHaveProperty('cookie');
   });
 
+  it('rejects a moderated cookie by default but accepts it when the toggle is on', async () => {
+    const moderatedBody = JSON.stringify({ errors: [{ code: 0, message: 'User is moderated' }] });
+    const makeFetcher = () =>
+      vi.fn().mockResolvedValue(
+        response({
+          success: true,
+          data: { username: 'ModUser', password: 'p', cookie: 'mod-cookie' },
+        }),
+      );
+    // Backend flags a moderated cookie: ok:false, moderated:true, no username.
+    const validate = vi.fn().mockResolvedValue({ ok: false, moderated: true, reason: moderatedBody });
+
+    // Toggle OFF → validation failure, nothing added.
+    const addOff = vi.fn();
+    const off = await runGeneratorPipeline('BLOX-test', {
+      fetcher: makeFetcher(),
+      validate,
+      add: addOff,
+      now: () => new Date('2026-07-13T00:00:00.000Z'),
+    });
+    expect(off).toMatchObject({ ok: false, failedAt: 'validate' });
+    expect(addOff).not.toHaveBeenCalled();
+
+    // Toggle ON → accepted, added with the BloxGen username and moderated flag.
+    const addOn = vi.fn();
+    const on = await runGeneratorPipeline('BLOX-test', {
+      fetcher: makeFetcher(),
+      validate,
+      add: addOn,
+      acceptModerated: true,
+      now: () => new Date('2026-07-13T00:00:00.000Z'),
+    });
+    expect(on).toMatchObject({ ok: true, moderated: true });
+    expect(addOn).toHaveBeenCalledWith(
+      expect.objectContaining({ username: 'ModUser', cookie: 'mod-cookie', moderated: true }),
+    );
+  });
+
   it('redacts an echoed API key before an API failure reaches history', async () => {
     const fetcher = vi.fn().mockResolvedValue(
       response(

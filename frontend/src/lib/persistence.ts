@@ -36,6 +36,8 @@ export const PERSISTENCE_KEYS = {
   filter: 'ui-filter',
   /** BloxGen API key (Requirement 27.1). */
   bloxgenApiKey: 'bloxgen-api-key',
+  /** Whether to accept moderated accounts when adding/generating (boolean). */
+  acceptModerated: 'accept-moderated',
   /** Selected click-sound profile id (Requirement 22.1, 22.2). */
   soundProfile: 'sound-profile',
   /** Click-sound volume, 0..1 (Requirement 22.3). */

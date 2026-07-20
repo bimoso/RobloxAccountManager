@@ -15,7 +15,9 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
+import { Switch } from '@/components/Switch';
 import { ipc } from '@/lib/ipc';
+import { getPersisted, PERSISTENCE_KEYS, setPersisted } from '@/lib/persistence';
 import type { Account } from '@/types/models';
 import type { ChromeDownloadProgress, UnlistenFn } from '@/types/window';
 import {
@@ -132,6 +134,13 @@ export function AddAccountModal({
 }: AddAccountModalProps): JSX.Element {
   const titleId = useId();
   const [mode, setMode] = useState<AddMode>('login');
+  const [acceptModerated, setAcceptModerated] = useState(
+    () => getPersisted<boolean>(PERSISTENCE_KEYS.acceptModerated) === true,
+  );
+  const toggleModerated = (next: boolean): void => {
+    setAcceptModerated(next);
+    setPersisted(PERSISTENCE_KEYS.acceptModerated, next);
+  };
 
   // ── Login tab state ──
   const [loginStarted, setLoginStarted] = useState(false);
@@ -251,12 +260,17 @@ export function AddAccountModal({
     setSingleError(null);
     try {
       const validation = normalizeValidation(await ipc.validateCookie(cookie));
-      if (!validation.ok || !validation.username) {
-        setSingleError(validation.reason?.trim() || 'La cookie no es válida.');
+      const moderatedAccept = validation.moderated && acceptModerated;
+      if ((!validation.ok || !validation.username) && !moderatedAccept) {
+        setSingleError(
+          validation.moderated
+            ? 'La cuenta está moderada. Activa "Aceptar cuentas moderadas" para añadirla.'
+            : validation.reason?.trim() || 'La cookie no es válida.',
+        );
         setSingleBusy(false);
         return;
       }
-      await onAdd(buildAccountToAdd(validation, cookie));
+      await onAdd(buildAccountToAdd(validation, cookie, { moderated: validation.moderated }));
       setSingleCookie('');
       setSingleBusy(false);
       onClose();
@@ -278,9 +292,10 @@ export function AddAccountModal({
     const summary = await processBatchCookies(cookies, {
       validate: async (cookie) => normalizeValidation(await ipc.validateCookie(cookie)),
       add: async (validation, cookie) => {
-        await onAdd(buildAccountToAdd(validation, cookie));
+        await onAdd(buildAccountToAdd(validation, cookie, { moderated: validation.moderated }));
       },
       onProgress: (event) => setBatchProgress(event),
+      acceptModerated,
     });
     setBatchProgress(null);
     setBatchSummary(summary);
@@ -294,10 +309,15 @@ export function AddAccountModal({
   const resolveCredential = async (entry: CredentialEntry): Promise<CredentialOutcome> => {
     if (entry.cookie) {
       const validation = normalizeValidation(await ipc.validateCookie(entry.cookie));
-      if (!validation.ok || !validation.username) {
-        return { ok: false, error: validation.reason?.trim() || 'La cookie no es válida.' };
+      if (validation.ok && validation.username) {
+        return { ok: true, cookie: entry.cookie, username: validation.username, userId: validation.userId };
       }
-      return { ok: true, cookie: entry.cookie, username: validation.username, userId: validation.userId };
+      // Moderated cookie: valid but no username of its own — accept it (when the
+      // toggle is on) using the entry's typed username, and mark it moderated.
+      if (validation.moderated && acceptModerated) {
+        return { ok: true, cookie: entry.cookie, username: entry.username, moderated: true };
+      }
+      return { ok: false, error: validation.reason?.trim() || 'La cookie no es válida.' };
     }
     const existing = findAccountByUsername(accounts, entry.username);
     if (existing && onUpdate) {
@@ -321,6 +341,7 @@ export function AddAccountModal({
         userId: outcome.userId ?? existing.userId,
         password: entry.password,
         loginUsername: entry.username,
+        ...(outcome.moderated ? { moderated: true } : {}),
       });
       return;
     }
@@ -328,7 +349,7 @@ export function AddAccountModal({
       buildAccountToAdd(
         { ok: true, username: outcome.username, userId: outcome.userId },
         outcome.cookie ?? '',
-        { loginUsername: entry.username, password: entry.password },
+        { loginUsername: entry.username, password: entry.password, moderated: outcome.moderated },
       ),
     );
   };
@@ -390,6 +411,20 @@ export function AddAccountModal({
             </button>
           ))}
         </div>
+
+        {mode !== 'login' && (
+          <label className="addacc__moderated">
+            <Switch
+              checked={acceptModerated}
+              onChange={toggleModerated}
+              aria-label="Aceptar cuentas moderadas"
+            />
+            <span>
+              <strong>Aceptar cuentas moderadas</strong>
+              <small>Añade la cuenta aunque Roblox la marque como moderada.</small>
+            </span>
+          </label>
+        )}
 
         {mode === 'login' && (
           <div className="addacc__panel">

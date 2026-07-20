@@ -61,15 +61,42 @@ pub struct UserInfo {
     /// present only on failure — mirrors the legacy JS backend's `reason` field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// `true` when the cookie authenticated but the account is under moderation
+    /// (the `users/authenticated` call returned a "User is moderated" error
+    /// instead of an id). The cookie is still valid, so callers may choose to
+    /// accept the account. Omitted from the JSON when `false` to keep the
+    /// success shape unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub moderated: bool,
 }
 
 impl UserInfo {
     fn ok(username: String, user_id: String) -> Self {
-        Self { ok: true, username: Some(username), user_id: Some(user_id), reason: None }
+        Self { ok: true, username: Some(username), user_id: Some(user_id), reason: None, moderated: false }
     }
     fn fail(reason: impl Into<String>) -> Self {
-        Self { ok: false, username: None, user_id: None, reason: Some(reason.into()) }
+        Self { ok: false, username: None, user_id: None, reason: Some(reason.into()), moderated: false }
     }
+    fn fail_moderated(reason: impl Into<String>) -> Self {
+        Self { ok: false, username: None, user_id: None, reason: Some(reason.into()), moderated: true }
+    }
+}
+
+/// Detect Roblox's "User is moderated" response shape — a parsed body carrying an
+/// `errors` array whose message mentions moderation. Used to distinguish a valid-
+/// but-moderated cookie from a genuinely invalid one.
+fn body_indicates_moderation(body: &Value) -> bool {
+    body.get("errors")
+        .and_then(Value::as_array)
+        .map(|errors| {
+            errors.iter().any(|e| {
+                e.get("message")
+                    .and_then(Value::as_str)
+                    .map(|m| m.to_ascii_lowercase().contains("moderat"))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// A resolved share link: the place id and link code extracted from Roblox's
@@ -173,7 +200,12 @@ pub async fn fetch_user_info(cookie: &str) -> Result<UserInfo, String> {
                     Ok(UserInfo::ok(name, uid))
                 }
                 // Parsed JSON but no usable id: mirror `resolve({ ok:false,
-                // reason: body.slice(0,200) })`.
+                // reason: body.slice(0,200) })`. A moderation error means the
+                // cookie is valid but the account is moderated — flag it so
+                // callers can opt to accept the account.
+                None if body_indicates_moderation(&d) => {
+                    Ok(UserInfo::fail_moderated(truncate(&body, 200)))
+                }
                 None => Ok(UserInfo::fail(truncate(&body, 200))),
             }
         }
@@ -486,6 +518,95 @@ pub async fn roblox_get_version() -> Result<Option<String>, String> {
 #[tauri::command]
 pub async fn roblox_validate_cookie(cookie: Option<String>) -> Result<UserInfo, String> {
     fetch_user_info(&cookie.unwrap_or_default()).await
+}
+
+/// Resolve moderation details for an account by its username, using PUBLIC
+/// endpoints (no cookie needed, which matters because a moderated account's own
+/// authenticated calls are blocked):
+///
+///   1. `POST users.roblox.com/v1/usernames/users` with
+///      `excludeBannedUsers:false` → the account's `id` / `name` /
+///      `displayName` (this endpoint returns banned users too).
+///   2. `GET users.roblox.com/v1/users/{id}` → `isBanned`, which is `true` for a
+///      permanently terminated account and `false` for one under a temporary
+///      moderation.
+///
+/// Returns `{ found, userId?, displayName?, terminated }`. `terminated: true`
+/// means a permanent ban; `terminated: false` on a moderated account means the
+/// moderation is temporary. Roblox exposes no public endpoint for the exact
+/// remaining duration, so days are not reported. Never `Err` for a not-found
+/// username — it resolves to `{ found: false, terminated: false }`.
+#[tauri::command]
+pub async fn roblox_moderation_info(username: String) -> Result<Value, String> {
+    let client = build_client(false)?;
+    let name = username.trim();
+    if name.is_empty() {
+        return Ok(serde_json::json!({ "found": false, "terminated": false }));
+    }
+
+    // 1. username -> id (public; includes banned users).
+    let lookup_body =
+        serde_json::json!({ "usernames": [name], "excludeBannedUsers": false }).to_string();
+    let lookup = client
+        .post("https://users.roblox.com/v1/usernames/users")
+        .header("User-Agent", DESKTOP_UA)
+        .header("Content-Type", "application/json")
+        .body(lookup_body)
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|e| format!("username lookup failed: {e}"))?;
+
+    let lookup_text = lookup
+        .text()
+        .await
+        .map_err(|e| format!("username lookup read failed: {e}"))?;
+    let lookup_json: Value = serde_json::from_str(&lookup_text)
+        .map_err(|e| format!("username lookup parse failed: {e}"))?;
+
+    let first = lookup_json
+        .get("data")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first());
+    let Some(user) = first else {
+        return Ok(serde_json::json!({ "found": false, "terminated": false }));
+    };
+    let user_id = user.get("id").and_then(value_to_id_string);
+    let display_name = user
+        .get("displayName")
+        .and_then(Value::as_str)
+        .or_else(|| user.get("name").and_then(Value::as_str))
+        .map(str::to_string);
+
+    let Some(uid) = user_id else {
+        return Ok(serde_json::json!({ "found": false, "terminated": false }));
+    };
+
+    // 2. id -> isBanned (public). A terminated account is permanently banned; a
+    //    non-terminated account returned "moderated" above is a temporary ban.
+    let detail = client
+        .get(format!("https://users.roblox.com/v1/users/{uid}"))
+        .header("User-Agent", DESKTOP_UA)
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await;
+    let terminated = match detail {
+        Ok(resp) => match resp.text().await {
+            Ok(text) => serde_json::from_str::<Value>(&text)
+                .ok()
+                .and_then(|d| d.get("isBanned").and_then(Value::as_bool))
+                .unwrap_or(false),
+            Err(_) => false,
+        },
+        Err(_) => false,
+    };
+
+    Ok(serde_json::json!({
+        "found": true,
+        "userId": uid,
+        "displayName": display_name,
+        "terminated": terminated,
+    }))
 }
 
 /// `roblox:getGameName` — resolve a bare place id or a games/URL target to a
@@ -1279,6 +1400,34 @@ fn find_string_by_keys(v: &Value, keys: &[&str]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn moderation_detected_only_for_a_moderated_error_body() {
+        // The exact shape users/authenticated returns for a moderated account.
+        assert!(body_indicates_moderation(&json!({
+            "errors": [{ "code": 0, "message": "User is moderated" }]
+        })));
+        // Case-insensitive / substring match on "moderat".
+        assert!(body_indicates_moderation(&json!({
+            "errors": [{ "code": 0, "message": "Account Moderated." }]
+        })));
+        // An ordinary success body (an id, no errors) is not moderation.
+        assert!(!body_indicates_moderation(&json!({ "id": 123, "name": "u" })));
+        // A different error (e.g. token invalidation) is not moderation.
+        assert!(!body_indicates_moderation(&json!({
+            "errors": [{ "code": 0, "message": "Token Validation Failed" }]
+        })));
+    }
+
+    #[test]
+    fn fail_moderated_sets_the_flag_and_reason() {
+        let info = UserInfo::fail_moderated("User is moderated");
+        assert!(!info.ok);
+        assert!(info.moderated);
+        assert_eq!(info.reason.as_deref(), Some("User is moderated"));
+        assert!(info.username.is_none());
+    }
 
     #[test]
     fn extract_place_id_from_bare_numeric_id() {
