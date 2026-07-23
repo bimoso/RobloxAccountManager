@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import type { Account } from '@/types/models';
@@ -7,15 +7,16 @@ import {
   editFormInitialValues,
   type EditFormValues,
 } from './editAccount';
+import './EditAccountModal.css';
 
 /**
  * Props for {@link EditAccountModal}.
  *
- * The modal edits a single account's nickname, launch destination and notes
- * (Requirement 14). Preloading and the changed-field computation are delegated
- * to the pure helpers in `./editAccount` ({@link editFormInitialValues} /
- * {@link computeChangedFields}); persistence itself is the account store's
- * responsibility, invoked through {@link onSave}.
+ * The modal edits a single account's nickname, launch destination, notes, and
+ * saved login credentials (Requirement 14). Preloading and the changed-field
+ * computation are delegated to the pure helpers in `./editAccount`
+ * ({@link editFormInitialValues} / {@link computeChangedFields}); persistence
+ * itself is the account store's responsibility, invoked through {@link onSave}.
  */
 export interface EditAccountModalProps {
   /** Whether the modal is open. */
@@ -36,67 +37,17 @@ export interface EditAccountModalProps {
   onSave: (id: string, changedFields: Partial<EditFormValues>) => Promise<void>;
 }
 
-const bodyStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
-  minWidth: '320px',
-};
-
-const titleStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '17px',
-  color: 'var(--t1)',
-};
-
-const labelStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '4px',
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
-
-const inputStyle: CSSProperties = {
-  padding: '8px 10px',
-  borderRadius: '8px',
-  border: '1px solid var(--border)',
-  background: 'var(--bg2)',
-  color: 'var(--t1)',
-  fontSize: '14px',
-};
-
-const textareaStyle: CSSProperties = {
-  ...inputStyle,
-  minHeight: '72px',
-  resize: 'vertical',
-  fontFamily: 'inherit',
-};
-
-const footerStyle: CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: '8px',
-  marginTop: '4px',
-};
-
-const errorStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '13px',
-  color: 'var(--danger, #e5484d)',
-};
-
 /**
  * Edit modal for a saved account.
  *
- * On open it preloads the nickname, launch destination (`gameTarget`) and notes
- * from the account via {@link editFormInitialValues} (Requirement 14.1). On save
- * it trims the current inputs, derives the changed subset with
- * {@link computeChangedFields}, and — when at least one field changed — invokes
- * {@link EditAccountModalProps.onSave} with the account id and only those
- * changed fields (Requirement 14.2), which the page forwards to
- * `accounts_update`. Saving with no changes closes the modal without an IPC
- * call. The form resets to the given account every time the modal opens.
+ * On open it preloads the nickname, launch destination (`gameTarget`), notes and
+ * login credentials from the account via {@link editFormInitialValues}
+ * (Requirement 14.1). On save it trims the current inputs (except the password),
+ * derives the changed subset with {@link computeChangedFields}, and — when at
+ * least one field changed — invokes {@link EditAccountModalProps.onSave} with the
+ * account id and only those changed fields (Requirement 14.2), which the page
+ * forwards to `accounts_update`. Saving with no changes closes the modal without
+ * an IPC call. The form resets to the given account every time the modal opens.
  */
 export function EditAccountModal({
   open,
@@ -105,20 +56,15 @@ export function EditAccountModal({
   onSave,
 }: EditAccountModalProps): JSX.Element {
   const titleId = useId();
-  const [initial, setInitial] = useState<EditFormValues>({
+  const empty: EditFormValues = {
     nickname: '',
     gameTarget: '',
     notes: '',
     loginUsername: '',
     password: '',
-  });
-  const [values, setValues] = useState<EditFormValues>({
-    nickname: '',
-    gameTarget: '',
-    notes: '',
-    loginUsername: '',
-    password: '',
-  });
+  };
+  const [initial, setInitial] = useState<EditFormValues>(empty);
+  const [values, setValues] = useState<EditFormValues>(empty);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -139,14 +85,13 @@ export function EditAccountModal({
   const handleSave = async (): Promise<void> => {
     if (!account) return;
     // Trim before diffing so trailing whitespace never counts as a change,
-    // matching the legacy edit form.
+    // matching the legacy edit form. The password is left verbatim since
+    // surrounding whitespace could be significant.
     const finalValues: EditFormValues = {
       nickname: values.nickname.trim(),
       gameTarget: values.gameTarget.trim(),
       notes: values.notes.trim(),
       loginUsername: values.loginUsername.trim(),
-      // The password is stored verbatim — never trimmed — since surrounding
-      // whitespace could be significant.
       password: values.password,
     };
     const changedFields = computeChangedFields(initial, finalValues);
@@ -173,15 +118,18 @@ export function EditAccountModal({
 
   return (
     <Modal open={open && account !== null} onClose={onClose} titleId={titleId}>
-      <div style={bodyStyle}>
-        <h2 id={titleId} style={titleStyle}>
-          {label ? `Editar - ${label}` : 'Editar cuenta'}
-        </h2>
+      <div className="editacc">
+        <div className="editacc__head">
+          <span className="editacc__eyebrow">Cuenta</span>
+          <h2 id={titleId} className="editacc__title">
+            {label ? `Editar — ${label}` : 'Editar cuenta'}
+          </h2>
+        </div>
 
-        <label style={labelStyle}>
+        <label className="editacc__field">
           Apodo
           <input
-            style={inputStyle}
+            className="editacc__input"
             type="text"
             value={values.nickname}
             placeholder="Apodo"
@@ -189,10 +137,10 @@ export function EditAccountModal({
           />
         </label>
 
-        <label style={labelStyle}>
+        <label className="editacc__field">
           Destino
           <input
-            style={inputStyle}
+            className="editacc__input"
             type="text"
             value={values.gameTarget}
             placeholder="ID de juego o enlace de servidor privado"
@@ -200,20 +148,20 @@ export function EditAccountModal({
           />
         </label>
 
-        <label style={labelStyle}>
+        <label className="editacc__field">
           Notas
           <textarea
-            style={textareaStyle}
+            className="editacc__textarea"
             value={values.notes}
             placeholder="Notas"
             onChange={(event) => setField('notes', event.target.value)}
           />
         </label>
 
-        <label style={labelStyle}>
+        <label className="editacc__field">
           Usuario de inicio de sesión
           <input
-            style={inputStyle}
+            className="editacc__input"
             type="text"
             value={values.loginUsername}
             placeholder="Usuario o correo (para re-login)"
@@ -222,10 +170,10 @@ export function EditAccountModal({
           />
         </label>
 
-        <label style={labelStyle}>
+        <label className="editacc__field">
           Contraseña
           <input
-            style={inputStyle}
+            className="editacc__input"
             type="password"
             value={values.password}
             placeholder="Contraseña guardada (para re-login)"
@@ -234,9 +182,9 @@ export function EditAccountModal({
           />
         </label>
 
-        {error && <p style={errorStyle}>{error}</p>}
+        {error && <p className="editacc__error">{error}</p>}
 
-        <div style={footerStyle}>
+        <div className="editacc__footer">
           <Button variant="secondary" onClick={onClose} disabled={saving}>
             Cancelar
           </Button>

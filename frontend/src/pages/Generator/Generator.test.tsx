@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { PERSISTENCE_KEYS, setPersisted } from '@/lib/persistence';
 
 const mocks = vi.hoisted(() => ({
-  fetch: vi.fn(),
+  bloxgenGenerate: vi.fn(),
   validateCookie: vi.fn(),
   readGenHistory: vi.fn(),
   writeGenHistory: vi.fn(),
@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/ipc', () => ({
   ipc: {
+    bloxgenGenerate: mocks.bloxgenGenerate,
     validateCookie: mocks.validateCookie,
     readGenHistory: mocks.readGenHistory,
     writeGenHistory: mocks.writeGenHistory,
@@ -57,12 +58,9 @@ function createStorageMock(): Storage {
   } as Storage;
 }
 
-function response(body: unknown): Response {
-  return {
-    ok: true,
-    status: 200,
-    json: vi.fn().mockResolvedValue(body),
-  } as unknown as Response;
+/** A `{ status, body }` result as the backend `bloxgen_generate` command returns. */
+function response(body: unknown, status = 200): { status: number; body: unknown } {
+  return { status, body };
 }
 
 describe('Generator secure automatic add flow', () => {
@@ -73,7 +71,6 @@ describe('Generator secure automatic add flow', () => {
     mocks.writeGenHistory.mockResolvedValue(true);
     mocks.clearGenHistory.mockResolvedValue(true);
     mocks.add.mockResolvedValue(undefined);
-    vi.stubGlobal('fetch', mocks.fetch);
   });
 
   afterEach(() => vi.unstubAllGlobals());
@@ -85,12 +82,12 @@ describe('Generator secure automatic add flow', () => {
     await user.click(screen.getByRole('button', { name: /configure BloxGen$/i }));
 
     expect(mocks.navigate).toHaveBeenCalledWith('settings');
-    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.bloxgenGenerate).not.toHaveBeenCalled();
   });
 
   it('validates the generated cookie and never adds it when Roblox rejects it', async () => {
     setPersisted(PERSISTENCE_KEYS.bloxgenApiKey, 'BLOX-integration-test');
-    mocks.fetch.mockResolvedValue(
+    mocks.bloxgenGenerate.mockResolvedValue(
       response({
         success: true,
         data: { username: 'UnsafeResult', password: 'pass', cookie: 'invalid-cookie' },
@@ -114,7 +111,7 @@ describe('Generator secure automatic add flow', () => {
 
   it('calls the account store only after validateCookie succeeds', async () => {
     setPersisted(PERSISTENCE_KEYS.bloxgenApiKey, 'BLOX-integration-test');
-    mocks.fetch.mockResolvedValue(
+    mocks.bloxgenGenerate.mockResolvedValue(
       response({
         success: true,
         data: { username: 'BloxName', password: 'generated-pass', cookie: 'valid-cookie' },
@@ -139,6 +136,8 @@ describe('Generator secure automatic add flow', () => {
         username: 'VerifiedRobloxName',
         userId: '9012',
         cookie: 'valid-cookie',
+        loginUsername: 'BloxName',
+        password: 'generated-pass',
       }),
     );
     expect(await screen.findByText('Added')).toBeInTheDocument();

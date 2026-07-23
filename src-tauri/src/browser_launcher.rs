@@ -1458,6 +1458,29 @@ const LOGIN_CHROME_ARGS: [&str; 4] = [
     "--window-size=530,700",
 ];
 
+/// A unique, throwaway Chromium profile directory for a single login launch.
+///
+/// Each credential login runs in a CLEAN browser: no cookies, session, or
+/// fingerprint state leaks between accounts in a bulk `user:pass` run. This
+/// matters twice over — a leftover `.ROBLOSECURITY` from a previous account
+/// could otherwise be captured for the next one (a wrong/duplicate account), and
+/// reusing one profile across many logins is more detectable, not less.
+///
+/// Without an explicit `user_data_dir`, chromiumoxide reuses a single fixed
+/// `<temp>/chromiumoxide-runner` directory for EVERY launch, so this override is
+/// what actually makes the per-account isolation real. The directory is removed
+/// after the browser closes (see [`run_login_flow_inner`]).
+fn unique_login_profile_dir() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!("ram-login-{}-{}-{}", std::process::id(), ts, n))
+}
+
 /// Port of the legacy JS backend's `ensureChrome()` (Requirement 5.1): locate a system
 /// Chromium-family browser to drive the cookie-capture login window over CDP.
 ///
@@ -1590,6 +1613,25 @@ async fn resolve_active_page(browser: &Browser) -> Option<Page> {
         }
     }
     pages.into_iter().last()
+}
+
+/// The number of consecutive poll ticks with no open page after which the login
+/// window is treated as closed (→ [`LoginOutcome::Disconnected`]). At the
+/// 1500 ms poll cadence this is ~3 s — long enough to ignore a transient
+/// between-navigation blip, short enough that closing the window (or one that
+/// leaves the process lingering, so the CDP handler stream never ends) is
+/// detected promptly instead of hanging until the 5-minute timeout. This is the
+/// robust backstop for the "closed the browser mid-batch and it got stuck"
+/// case: the poll actively notices the missing window rather than relying solely
+/// on the handler task completing.
+const LOGIN_MAX_EMPTY_TICKS: u32 = 2;
+
+/// Whether the browser still has at least one open page. A closed login window
+/// leaves the browser with no pages (`Ok(empty)`); a fully-exited process makes
+/// `pages()` error. Both mean "the window is gone", distinct from a tick where a
+/// page exists but has not set the cookie yet.
+async fn browser_window_open(browser: &Browser) -> bool {
+    matches!(browser.pages().await, Ok(pages) if !pages.is_empty())
 }
 
 /// One cookie-capture attempt, mirroring the legacy JS backend's `tryGetCookie()`: resolve the
@@ -1741,6 +1783,7 @@ async fn login_poll_loop(
     // tokio's first `tick()` fires immediately; consume it so the actual polling
     // cadence is a true 1500 ms interval, matching `setInterval(..., 1500)`.
     interval.tick().await;
+    let mut empty_ticks: u32 = 0;
 
     loop {
         tokio::select! {
@@ -1752,10 +1795,21 @@ async fn login_poll_loop(
             _ = &mut *handler_task => return LoginOutcome::Disconnected,
             // Hard 5-minute cap.
             _ = tokio::time::sleep_until(deadline) => return LoginOutcome::Timeout,
-            // Every 1500 ms: poll for the .ROBLOSECURITY cookie.
+            // Every 1500 ms: poll for the .ROBLOSECURITY cookie — but first, if the
+            // window is gone (closed, possibly with the process lingering so the
+            // handler stream never ended), bail after a couple of empty ticks so a
+            // batch never hangs on a closed window.
             _ = interval.tick() => {
-                if let Some(value) = try_get_login_cookie(browser).await {
-                    return LoginOutcome::Cookie(value);
+                if browser_window_open(browser).await {
+                    empty_ticks = 0;
+                    if let Some(value) = try_get_login_cookie(browser).await {
+                        return LoginOutcome::Cookie(value);
+                    }
+                } else {
+                    empty_ticks += 1;
+                    if empty_ticks >= LOGIN_MAX_EMPTY_TICKS {
+                        return LoginOutcome::Disconnected;
+                    }
                 }
             }
         }
@@ -1811,9 +1865,13 @@ async fn run_login_flow_inner(
     credentials: Option<(&str, &str)>,
     mut cancel_rx: oneshot::Receiver<()>,
 ) -> LoginResult {
+    // A fresh, unique profile per launch so each account logs in from a clean
+    // browser (no cross-account cookie/session leakage in a bulk run).
+    let profile_dir = unique_login_profile_dir();
     let config = match BrowserConfig::builder()
         .chrome_executable(chrome_path)
         .with_head()
+        .user_data_dir(&profile_dir)
         .args(LOGIN_CHROME_ARGS.iter().map(|s| s.to_string()))
         .build()
     {
@@ -1829,14 +1887,25 @@ async fn run_login_flow_inner(
     // Drive the CDP message handler concurrently; without this, no page command
     // (goto, getAllCookies) ever resolves. When the browser disconnects the
     // stream ends and this task completes, which `login_poll_loop` observes.
-    let mut handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let mut handler_task = tokio::spawn(async move {
+        // chromiumoxide yields `Some(Err(_))` when the WebSocket disconnects.
+        // Polling again after that error can remain Pending forever, so the
+        // session owner would never observe that the browser was closed.
+        while let Some(event) = handler.next().await {
+            if event.is_err() {
+                break;
+            }
+        }
+    });
 
     let outcome = login_poll_loop(&browser, &mut handler_task, &mut cancel_rx, credentials).await;
 
-    // cleanup(): close the browser and stop the handler task in every branch.
+    // cleanup(): close the browser and stop the handler task in every branch,
+    // then delete the throwaway profile so it never leaks state to a later login.
     let mut browser = browser;
     let _ = browser.close().await;
     handler_task.abort();
+    let _ = std::fs::remove_dir_all(&profile_dir);
 
     match outcome {
         LoginOutcome::Cookie(value) => match roblox_api::fetch_user_info(&value).await {
@@ -2199,7 +2268,16 @@ async fn inject_cookie_and_navigate_inner(
 
     // Drive the CDP message handler concurrently; without this, no page command
     // (setCookie, goto) ever resolves. Mirrors the login flow's handler task.
-    let handler_task = tokio::spawn(async move { while handler.next().await.is_some() {} });
+    let handler_task = tokio::spawn(async move {
+        // A closed browser is reported as a stream error, not necessarily EOF.
+        // Stop on either so `mark_session_open` can clear the tracked account
+        // and a later click launches a fresh Wayfern process.
+        while let Some(event) = handler.next().await {
+            if event.is_err() {
+                break;
+            }
+        }
+    });
 
     match inject_on_connection(&browser, cookie, wayfern_fingerprint_path).await {
         Ok(page) => Ok(InjectedSession {
@@ -2298,7 +2376,7 @@ pub struct BrowserSession {
 }
 
 /// The result of [`focus_existing_session`] — the Rust form of the JS
-/// `{ ok, focused, error: null|'no_session'|'not_active'|string }`.
+/// `{ ok, focused, error: null|'no_session'|'not_active' }`.
 ///
 /// `ok` is `true` whenever the dedupe contract is satisfied (no second `/run`
 /// should be sent), regardless of whether a window was actually raised; `focused`
@@ -2330,6 +2408,16 @@ impl FocusResult {
         }
     }
 
+    /// The map still had an entry, but its browser has no live target anymore.
+    /// Callers must evict it and continue with a fresh launch.
+    fn not_active() -> Self {
+        FocusResult {
+            ok: false,
+            focused: false,
+            error: Some("not_active".to_string()),
+        }
+    }
+
     /// `{ ok:true, focused:true, error:null }` — a window was raised.
     fn focused() -> Self {
         FocusResult {
@@ -2339,14 +2427,6 @@ impl FocusResult {
         }
     }
 
-    /// `{ ok:false, focused:false, error:<msg> }` — a focus attempt threw.
-    fn error(message: impl Into<String>) -> Self {
-        FocusResult {
-            ok: false,
-            focused: false,
-            error: Some(message.into()),
-        }
-    }
 }
 
 /// Bring a page to the foreground via the CDP `Page.bringToFront` command — the
@@ -2450,7 +2530,7 @@ pub async fn mark_session_open(
     let monitor_sessions = Arc::clone(&sessions);
     tokio::spawn(async move {
         let _ = handler_task.await;
-        clear_session_on_disconnect(&monitor_sessions, &account_id).await;
+        clear_session_on_disconnect_if_current(&monitor_sessions, &account_id, cdp_port).await;
     });
 }
 
@@ -2466,8 +2546,8 @@ pub async fn mark_session_open(
 ///     [`bring_page_to_front`], falling back to the first open tab if the tracked
 ///     page cannot be raised; `{ ok:true, focused:true }` on success, or
 ///     `{ ok:true, focused:false }` when the instance has no raisable page. A
-///     thrown focus error resolves to `{ ok:false, focused:false, error:<msg> }`,
-///     never a panic and never a duplicate launch.
+///     focus errors on an otherwise-live browser stay deduped; a missing target
+///     or dead CDP connection reports `not_active` so the caller can relaunch.
 pub async fn focus_existing_session(
     sessions: &AsyncMutex<HashMap<String, BrowserSession>>,
     account_id: &str,
@@ -2488,18 +2568,20 @@ pub async fn focus_existing_session(
     // open tab (mirrors the legacy JS backend's `session.page` → `collectBrowserPages(...)[0]`).
     match bring_page_to_front(&live.page).await {
         Ok(()) => FocusResult::focused(),
-        Err(tracked_err) => match live.browser.pages().await {
+        Err(_) => match live.browser.pages().await {
             Ok(pages) => match pages.first() {
                 Some(page) => match bring_page_to_front(page).await {
                     Ok(()) => FocusResult::focused(),
-                    Err(e) => FocusResult::error(e),
+                    // The browser answered and still has a target. Do not spawn
+                    // a duplicate merely because Windows refused to raise it.
+                    Err(_) => FocusResult::deduped(),
                 },
-                // No open tabs at all: deduped, nothing raised (JS returns
-                // ok:true/focused:false when `pages.length === 0`).
-                None => FocusResult::deduped(),
+                // No open tabs means the tracked window is no longer usable.
+                // Treat it as stale so the caller can launch a fresh process.
+                None => FocusResult::not_active(),
             },
-            // Could not even enumerate tabs: surface the original focus error.
-            Err(_) => FocusResult::error(tracked_err),
+            // The CDP transport no longer answers: this is a stale session.
+            Err(_) => FocusResult::not_active(),
         },
     }
 }
@@ -2518,6 +2600,25 @@ pub async fn clear_session_on_disconnect(
 ) -> bool {
     let mut guard = sessions.lock().await;
     guard.remove(account_id).is_some()
+}
+
+/// Clear only the session whose CDP connection actually disconnected. A stale
+/// monitor may finish after the user has already launched the same account
+/// again; matching the port prevents that old monitor from deleting the fresh
+/// replacement entry.
+async fn clear_session_on_disconnect_if_current(
+    sessions: &AsyncMutex<HashMap<String, BrowserSession>>,
+    account_id: &str,
+    cdp_port: u32,
+) -> bool {
+    let mut guard = sessions.lock().await;
+    let is_current = guard
+        .get(account_id)
+        .is_some_and(|session| session.cdp_port == Some(cdp_port));
+    if is_current {
+        guard.remove(account_id);
+    }
+    is_current
 }
 
 /// Close a tracked Browser_Instance for an account and confirm it has gone away —
@@ -3020,7 +3121,13 @@ pub async fn open_account_browser(
     };
     if already_tracked {
         let focus = focus_existing_session(&sessions, account_id).await;
-        return OpenResult::deduped(focus.focused);
+        if focus.ok {
+            return OpenResult::deduped(focus.focused);
+        }
+        // A dead CDP connection used to remain in the map forever: every later
+        // click deduped against a browser that no longer existed. Evict the
+        // stale entry and continue through the normal fresh-launch path.
+        untrack_session(&sessions, account_id).await;
     }
 
     // 4a. Reachability + token/auth preflight, re-run every invocation. No
@@ -3504,8 +3611,11 @@ pub async fn open_account_browsers(
         };
         if already_tracked {
             let focus = focus_existing_session(&sessions, &account.id).await;
-            results.push(OpenBatchItemResult::deduped(account.id, focus.focused));
-            continue;
+            if focus.ok {
+                results.push(OpenBatchItemResult::deduped(account.id, focus.focused));
+                continue;
+            }
+            untrack_session(&sessions, &account.id).await;
         }
 
         launchable.push(account);
@@ -4852,6 +4962,29 @@ mod tests {
         assert!(sessions.lock().await.is_empty());
         // A second clear finds nothing to remove.
         assert!(!clear_session_on_disconnect(&sessions, "acc-1").await);
+    }
+
+    #[tokio::test]
+    async fn stale_disconnect_monitor_cannot_remove_replacement_session() {
+        let sessions = empty_sessions();
+        sessions.lock().await.insert(
+            "acc-1".to_string(),
+            BrowserSession {
+                state: SessionState::Open,
+                profile_id: "replacement".to_string(),
+                cdp_port: Some(9333),
+                live: None,
+            },
+        );
+
+        // An old monitor for port 9222 finishes after the replacement at 9333
+        // was already stored. It must leave the replacement untouched.
+        assert!(!clear_session_on_disconnect_if_current(&sessions, "acc-1", 9222).await);
+        assert_eq!(sessions.lock().await.get("acc-1").unwrap().cdp_port, Some(9333));
+
+        // The monitor belonging to the current connection still clears it.
+        assert!(clear_session_on_disconnect_if_current(&sessions, "acc-1", 9333).await);
+        assert!(sessions.lock().await.is_empty());
     }
 
     #[tokio::test]

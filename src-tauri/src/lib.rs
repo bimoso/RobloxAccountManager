@@ -112,6 +112,10 @@ pub mod browser_launcher;
 /// installation, per-account profiles and CDP launch/cookie injection.
 pub mod wayfern;
 
+/// BloxGen account-generation API client. Runs server-side because the webview
+/// blocks a direct `fetch` to `core.bloxgen.net` under CORS ("Failed to fetch").
+pub mod bloxgen;
+
 /// Humanized keystroke timing for the credential auto-login flow: a
 /// dependency-free, deterministic-given-a-seed delay model that jitters the
 /// per-character cadence when [`browser_launcher`] auto-fills the Roblox login
@@ -408,6 +412,7 @@ pub fn run() {
             roblox_api::roblox_get_version,
             roblox_api::roblox_validate_cookie,
             roblox_api::roblox_moderation_info,
+            bloxgen::bloxgen_generate,
             roblox_api::roblox_get_game_name,
             roblox_api::roblox_get_avatar_thumbnails,
             roblox_api::roblox_refresh_cookie,

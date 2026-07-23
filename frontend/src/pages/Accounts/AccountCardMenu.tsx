@@ -4,6 +4,7 @@ import { ContextMenu, type ContextMenuAnchor } from '@/components/ContextMenu';
 import { ipc } from '@/lib/ipc';
 import { displayName, isLaunched } from '@/lib/filters';
 import { useTranslation } from '@/i18n/useTranslation';
+import { useToastStore } from '@/stores/toastStore';
 import type { Account } from '@/types/models';
 import { AccountCard } from './AccountCard';
 import { buildContextMenuItems, type ContextMenuHandlers } from './contextMenu';
@@ -98,6 +99,8 @@ export function AccountCardMenu({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState<AccountMenuAnchor | null>(null);
   const { t } = useTranslation();
+  const showSuccess = useToastStore((state) => state.showSuccess);
+  const showError = useToastStore((state) => state.showError);
 
   const closeMenu = useCallback(() => setAnchor(null), []);
 
@@ -124,7 +127,20 @@ export function AccountCardMenu({
       kill: () => void ipc.killOneRoblox(account.id),
       launch: () => onLaunch?.(account),
       edit: () => onEdit?.(account),
-      openBrowser: () => void ipc.openAccountBrowser(account.id),
+      openBrowser: () => {
+        void (async () => {
+          try {
+            const result = await ipc.openAccountBrowser(account.id);
+            if (result?.ok === false) {
+              showError(result.error?.trim() || 'No se pudo abrir el navegador de la cuenta.');
+              return;
+            }
+            showSuccess(result?.focused ? 'Navegador enfocado.' : 'Navegador de cuenta abierto.');
+          } catch {
+            // Rejected IPC calls are already reported by the shared wrapper.
+          }
+        })();
+      },
       quickLogin: () => onQuickLogin?.(account),
       reLogin: () => onReLogin?.(account),
       friendRequest: () => onFriendRequest?.(account),
@@ -143,6 +159,8 @@ export function AccountCardMenu({
       onFriendRequest,
       onChangeDisplayName,
       onChangePassword,
+      showSuccess,
+      showError,
     ],
   );
 

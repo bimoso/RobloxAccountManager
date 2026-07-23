@@ -1,9 +1,11 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useState } from 'react';
+import { Check, CircleAlert } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { ipc } from '@/lib/ipc';
 import { displayName } from '@/lib/filters';
 import type { Account } from '@/types/models';
+import './accountModal.css';
 
 /**
  * Props for {@link ChangeDisplayNameModal}.
@@ -24,55 +26,6 @@ export interface ChangeDisplayNameModalProps {
   /** Called when the user dismisses the modal. */
   onClose: () => void;
 }
-
-const bodyStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
-  minWidth: '340px',
-};
-
-const titleStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '17px',
-  color: 'var(--t1)',
-};
-
-const labelStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '4px',
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
-
-const inputStyle: CSSProperties = {
-  padding: '8px 10px',
-  borderRadius: '8px',
-  border: '1px solid var(--border)',
-  background: 'var(--bg2)',
-  color: 'var(--t1)',
-  fontSize: '14px',
-};
-
-const footerStyle: CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: '8px',
-  marginTop: '4px',
-};
-
-const errorStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '13px',
-  color: 'var(--danger, #e5484d)',
-};
-
-const successStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
 
 /**
  * Extract the backend/thrown error message so it can be shown inside the modal
@@ -135,15 +88,18 @@ export function ChangeDisplayNameModal({
 
   return (
     <Modal open={open && account !== null} onClose={onClose} titleId={titleId}>
-      <div style={bodyStyle}>
-        <h2 id={titleId} style={titleStyle}>
-          {label ? `Cambiar nombre de display - ${label}` : 'Cambiar nombre de display'}
-        </h2>
+      <div className="acctmodal">
+        <div className="acctmodal__head">
+          <span className="acctmodal__eyebrow">Cuenta</span>
+          <h2 id={titleId} className="acctmodal__title">
+            {label ? `Nombre de display — ${label}` : 'Cambiar nombre de display'}
+          </h2>
+        </div>
 
-        <label style={labelStyle}>
+        <label className="acctmodal__field">
           Nuevo nombre de display
           <input
-            style={inputStyle}
+            className="acctmodal__input"
             type="text"
             value={newName}
             placeholder="Nuevo nombre de display"
@@ -152,10 +108,20 @@ export function ChangeDisplayNameModal({
           />
         </label>
 
-        {error && <p style={errorStyle}>{error}</p>}
-        {done && !error && <p style={successStyle}>Nombre de display cambiado.</p>}
+        {error && (
+          <p className="acctmodal__error">
+            <CircleAlert size={15} aria-hidden="true" />
+            {error}
+          </p>
+        )}
+        {done && !error && (
+          <p className="acctmodal__success">
+            <Check size={15} aria-hidden="true" />
+            Nombre de display cambiado.
+          </p>
+        )}
 
-        <div style={footerStyle}>
+        <div className="acctmodal__footer">
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancelar
           </Button>

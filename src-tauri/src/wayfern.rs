@@ -580,12 +580,17 @@ pub async fn open_account_browser(
     };
     if tracked {
         let focused = browser_launcher::focus_existing_session(&sessions, account_id).await;
-        return OpenResult::deduped(focused.focused);
+        if focused.ok {
+            return OpenResult::deduped(focused.focused);
+        }
+        // The window is gone but an old CDP entry survived. Remove that corpse
+        // and continue with a clean process launch for the same profile.
+        browser_launcher::untrack_session(&sessions, account_id).await;
     }
 
     let profile_id = format!("wayfern-local:{}", profile_key(account_id));
     browser_launcher::mark_session_opening(&sessions, account_id, &profile_id).await;
-    let executable = match ensure_installed(app, dir, install_lock, true).await {
+    let executable = match ensure_installed(app, dir, Arc::clone(&install_lock), true).await {
         Ok(path) => path,
         Err(error) => {
             browser_launcher::untrack_session(&sessions, account_id).await;
@@ -614,6 +619,12 @@ pub async fn open_account_browser(
     let _ = tokio::fs::remove_file(user_data_dir.join(DEVTOOLS_PORT_FILE)).await;
     let fingerprint_path = user_data_dir.join(WAYFERN_FINGERPRINT_FILE);
 
+    // Wayfern/Chromium performs process-singleton setup during startup. Starting
+    // four executables on the same tick made bulk-open races collapse into one
+    // surviving browser on Windows. Serialize only spawn -> DevTools port; as
+    // soon as this profile is independently reachable, release the lane so its
+    // cookie injection can overlap with the next profile's startup.
+    let startup_guard = install_lock.lock().await;
     let mut child = match tokio::process::Command::new(&executable)
         .arg(format!("--user-data-dir={}", user_data_dir.display()))
         .arg("--remote-debugging-port=0")
@@ -645,6 +656,7 @@ pub async fn open_account_browser(
             return OpenResult::err(error);
         }
     };
+    drop(startup_guard);
     let injected = match browser_launcher::inject_wayfern_cookie_and_navigate(
         cdp_port,
         &account.cookie,

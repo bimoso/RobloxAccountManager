@@ -36,6 +36,8 @@ import { useToastStore } from '@/stores/toastStore';
 import { useTranslation } from '@/i18n/useTranslation';
 import type { Translator } from '@/i18n';
 import {
+  normalizeBloxGenResponse,
+  normalizeCredentialLoginOutcome,
   runGeneratorPipeline,
   type GeneratorPhase,
   type GeneratorPipelineFailure,
@@ -129,6 +131,9 @@ export default function Generator(): JSX.Element {
   const [acceptModerated, setAcceptModerated] = useState(
     () => getPersisted<boolean>(PERSISTENCE_KEYS.acceptModerated) === true,
   );
+  const [retryCredentials, setRetryCredentials] = useState(
+    () => getPersisted<boolean>(PERSISTENCE_KEYS.generatorRetryCredentials) === true,
+  );
 
   const addAccount = useAccountStore((state) => state.add);
   const navigate = useNavigationStore((state) => state.navigate);
@@ -195,16 +200,28 @@ export default function Generator(): JSX.Element {
     setFailure(null);
     setPhase('generating');
     const outcome = await runGeneratorPipeline(currentKey, {
+      // Runs through the backend: a direct in-page fetch to core.bloxgen.net is
+      // blocked by the webview's CORS enforcement ("Failed to fetch").
+      generate: async (key, accountType) =>
+        normalizeBloxGenResponse(await ipc.bloxgenGenerate(key, accountType)),
       validate: (cookie) => ipc.validateCookie(cookie),
       add: addAccount,
       onPhase: setPhase,
       acceptModerated,
+      retryWithCredentials: retryCredentials,
+      loginWithCredentials: async (username, password) =>
+        normalizeCredentialLoginOutcome(await ipc.loginCredentials(username, password)),
     });
     persistHistoryEntry(outcome.historyEntry);
 
     if (outcome.ok) {
       setPhase('success');
-      if (outcome.moderated) {
+      if (outcome.usedCredentials) {
+        showSuccess(
+          t('gen.addedToAccounts', { name: outcome.validation.username }) +
+            ' (con user/contraseña)',
+        );
+      } else if (outcome.moderated) {
         // Resolve the moderation type (permanent vs temporary) for the toast.
         const info = normalizeModerationInfo(
           await ipc.moderationInfo(outcome.generated.username).catch(() => null),
@@ -220,11 +237,16 @@ export default function Generator(): JSX.Element {
       setPhase('error');
       showError(outcome.message);
     }
-  }, [acceptModerated, addAccount, navigate, persistHistoryEntry, showError, showSuccess, t]);
+  }, [acceptModerated, retryCredentials, addAccount, navigate, persistHistoryEntry, showError, showSuccess, t]);
 
   const handleToggleModerated = useCallback((next: boolean) => {
     setAcceptModerated(next);
     setPersisted(PERSISTENCE_KEYS.acceptModerated, next);
+  }, []);
+
+  const handleToggleRetryCredentials = useCallback((next: boolean) => {
+    setRetryCredentials(next);
+    setPersisted(PERSISTENCE_KEYS.generatorRetryCredentials, next);
   }, []);
 
   const handleClear = useCallback(async () => {
@@ -319,6 +341,18 @@ export default function Generator(): JSX.Element {
           <span>
             <strong>Aceptar cuentas moderadas</strong>
             <small>Añade la cuenta aunque Roblox la marque como moderada; se indica el tipo de baneo.</small>
+          </span>
+        </label>
+
+        <label className="gen-moderated">
+          <Switch
+            checked={retryCredentials}
+            onChange={handleToggleRetryCredentials}
+            aria-label="Reintentar con user y contraseña"
+          />
+          <span>
+            <strong>Reintentar con user y contraseña</strong>
+            <small>Si la cookie generada falla, inicia sesión con el user:pass de BloxGen para conseguir una cookie válida.</small>
           </span>
         </label>
 

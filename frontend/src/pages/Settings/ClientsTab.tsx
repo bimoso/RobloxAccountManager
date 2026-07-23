@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   Box,
@@ -61,8 +61,9 @@ function makeOperationId(): string {
  * a full refresh (installation scan, protocol state, latest-release network
  * check, deployment listing, settings), so without this every visit showed
  * the whole deck in its loading state. The tab hydrates from this snapshot
- * for an instant paint and still re-runs the refresh on mount — silently when
- * cached data is already on screen.
+ * for an instant paint. A fresh snapshot is reused for five minutes; an older
+ * one is silently revalidated on mount, while the explicit Refresh action
+ * always scans immediately.
  */
 interface ClientsSnapshot {
   installations: RobloxInstallation[];
@@ -73,6 +74,7 @@ interface ClientsSnapshot {
 }
 
 const clientsCache = createSessionCache<ClientsSnapshot>();
+const CLIENTS_CACHE_MAX_AGE_MS = 5 * 60 * 1000;
 
 /** Roblox client, protocol-routing and isolated deployment control deck. */
 export function ClientsTab(): JSX.Element {
@@ -82,12 +84,18 @@ export function ClientsTab(): JSX.Element {
   // Hydrate from the session snapshot so a revisit paints the last scan
   // immediately; the mount refresh below reconciles silently.
   const cached = clientsCache.get();
+  // Capture freshness before the mirror effect writes the initial state back
+  // into the cache. Otherwise a first-ever empty render would stamp itself as
+  // "fresh" and incorrectly suppress the real scan.
+  const refreshOnMount = useRef(!clientsCache.isFresh(CLIENTS_CACHE_MAX_AGE_MS));
+  const skipInitialCacheWrite = useRef(cached !== undefined);
   const [installations, setInstallations] = useState<RobloxInstallation[]>(cached?.installations ?? []);
   const [protocol, setProtocol] = useState<RobloxProtocolState | null>(cached?.protocol ?? null);
   const [release, setRelease] = useState<RobloxRelease | null>(cached?.release ?? null);
   const [deployments, setDeployments] = useState<RobloxDeployment[]>(cached?.deployments ?? []);
   const [settings, setSettings] = useState<Settings | null>(cached?.settings ?? null);
   const [loading, setLoading] = useState(cached === undefined);
+  const [cacheReady, setCacheReady] = useState(cached !== undefined);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [channel, setChannel] = useState('LIVE');
   const [versionGuid, setVersionGuid] = useState('');
@@ -99,8 +107,15 @@ export function ClientsTab(): JSX.Element {
   // Mirror every loaded/mutated slice back into the session snapshot so the
   // next mount hydrates from exactly what was last on screen.
   useEffect(() => {
+    // Do not refresh the timestamp merely because a cached component mounted;
+    // freshness must reflect a successful scan or a real state mutation.
+    if (skipInitialCacheWrite.current) {
+      skipInitialCacheWrite.current = false;
+      return;
+    }
+    if (!cacheReady) return;
     clientsCache.set({ installations, protocol, release, deployments, settings });
-  }, [installations, protocol, release, deployments, settings]);
+  }, [cacheReady, installations, protocol, release, deployments, settings]);
 
   const refresh = useCallback(async (requestedChannel = 'LIVE', options?: { silent?: boolean }): Promise<void> => {
     // A silent refresh revalidates behind the cached data already on screen
@@ -120,16 +135,19 @@ export function ClientsTab(): JSX.Element {
       setRelease(nextRelease);
       setDeployments(nextDeployments);
       setSettings(nextSettings);
+      setCacheReady(true);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    // Always silent: the initial `loading` state (set from the cache probe
-    // during render) already shows the spinner on a first-ever mount, and a
-    // hydrated revisit revalidates behind the cached deck without flashing.
-    void refresh('LIVE', { silent: true });
+    // A manual Refresh remains available, but normal tab hopping reuses a fresh
+    // snapshot instead of re-scanning the registry, disk and release endpoint
+    // every time the component mounts.
+    if (refreshOnMount.current) {
+      void refresh('LIVE', { silent: true });
+    }
   }, [refresh]);
 
   useEffect(() => {

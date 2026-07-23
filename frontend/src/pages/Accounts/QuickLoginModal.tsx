@@ -1,9 +1,11 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useState } from 'react';
+import { Check, CircleAlert, Info } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { ipc } from '@/lib/ipc';
 import { displayName } from '@/lib/filters';
 import type { Account } from '@/types/models';
+import './accountModal.css';
 
 /**
  * Props for {@link QuickLoginModal}.
@@ -24,61 +26,6 @@ export interface QuickLoginModalProps {
   onClose: () => void;
 }
 
-const bodyStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
-  minWidth: '340px',
-};
-
-const titleStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '17px',
-  color: 'var(--t1)',
-};
-
-const labelStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '4px',
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
-
-const inputStyle: CSSProperties = {
-  padding: '8px 10px',
-  borderRadius: '8px',
-  border: '1px solid var(--border)',
-  background: 'var(--bg2)',
-  color: 'var(--t1)',
-  fontSize: '14px',
-};
-
-const hintStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
-
-const footerStyle: CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: '8px',
-  marginTop: '4px',
-};
-
-const errorStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '13px',
-  color: 'var(--danger, #e5484d)',
-};
-
-const successStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
-
 /**
  * Extract the backend/thrown error message so it can be shown inside the modal
  * (Requirement 16.5), falling back to a generic message.
@@ -93,9 +40,10 @@ function describeError(err: unknown): string {
  * Quick-login modal for a single account (Requirement 16.4).
  *
  * Collects the quick-login code the user reads from the Roblox login screen and,
- * on submit, invokes `ipc.quickLogin(account.cookie, code)`. A successful
- * authorization closes the modal; a failure keeps it open and shows the backend
- * message inline (Requirement 16.5). The form resets each time the modal opens.
+ * on submit, invokes `ipc.quickLogin(account.cookie, code)`, which enters AND
+ * confirms the cross-device login code. A successful authorization closes the
+ * modal; a failure keeps it open and shows the backend message inline
+ * (Requirement 16.5). The form resets each time the modal opens.
  */
 export function QuickLoginModal({
   open,
@@ -139,20 +87,24 @@ export function QuickLoginModal({
 
   return (
     <Modal open={open && account !== null} onClose={onClose} titleId={titleId}>
-      <div style={bodyStyle}>
-        <h2 id={titleId} style={titleStyle}>
-          {label ? `Quick login - ${label}` : 'Quick login'}
-        </h2>
+      <div className="acctmodal">
+        <div className="acctmodal__head">
+          <span className="acctmodal__eyebrow">Cuenta</span>
+          <h2 id={titleId} className="acctmodal__title">
+            {label ? `Quick login — ${label}` : 'Quick login'}
+          </h2>
+        </div>
 
-        <p style={hintStyle}>
-          Introduce el código que aparece en la pantalla de inicio de sesión de
-          Roblox para autorizar esta cuenta.
+        <p className="acctmodal__hint">
+          <Info size={15} aria-hidden="true" style={{ verticalAlign: '-2px', marginRight: 6 }} />
+          Introduce el código que aparece en la pantalla de inicio de sesión de Roblox del otro
+          dispositivo; esta cuenta lo autorizará y ese dispositivo quedará dentro.
         </p>
 
-        <label style={labelStyle}>
+        <label className="acctmodal__field">
           Código de quick login
           <input
-            style={inputStyle}
+            className="acctmodal__input"
             type="text"
             value={code}
             placeholder="p. ej. ABC-DEF"
@@ -161,10 +113,20 @@ export function QuickLoginModal({
           />
         </label>
 
-        {error && <p style={errorStyle}>{error}</p>}
-        {done && !error && <p style={successStyle}>Quick login autorizado.</p>}
+        {error && (
+          <p className="acctmodal__error">
+            <CircleAlert size={15} aria-hidden="true" />
+            {error}
+          </p>
+        )}
+        {done && !error && (
+          <p className="acctmodal__success">
+            <Check size={15} aria-hidden="true" />
+            Quick login autorizado.
+          </p>
+        )}
 
-        <div style={footerStyle}>
+        <div className="acctmodal__footer">
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancelar
           </Button>

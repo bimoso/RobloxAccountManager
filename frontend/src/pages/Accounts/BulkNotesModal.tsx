@@ -1,7 +1,8 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import type { Account } from '@/types/models';
+import './accountModal.css';
 
 /**
  * Props for {@link BulkNotesModal}.
@@ -17,48 +18,6 @@ export interface BulkNotesModalProps {
   /** Persist the notes field for a single account. */
   onSave: (id: string, notes: string) => Promise<void>;
 }
-
-const bodyStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '12px',
-  minWidth: '360px',
-  maxWidth: '440px',
-};
-
-const titleStyle: CSSProperties = { margin: 0, fontSize: '17px', color: 'var(--t1)' };
-const hintStyle: CSSProperties = { margin: 0, fontSize: '13px', color: 'var(--t2)' };
-const labelStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '4px',
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
-const textareaStyle: CSSProperties = {
-  minHeight: '96px',
-  resize: 'vertical',
-  padding: '8px 10px',
-  borderRadius: '8px',
-  border: '1px solid var(--bd2)',
-  background: 'var(--s2)',
-  color: 'var(--t1)',
-  font: 'inherit',
-  fontSize: '14px',
-};
-const checkboxRowStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  fontSize: '13px',
-  color: 'var(--t2)',
-};
-const footerStyle: CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: '8px',
-  marginTop: '4px',
-};
 
 /** Read the existing notes (with legacy `note` fallback) as a plain string. */
 function existingNotes(account: Account): string {
@@ -113,18 +72,21 @@ export function BulkNotesModal({
 
   return (
     <Modal open={open && count > 0} onClose={onClose} titleId={titleId}>
-      <div style={bodyStyle}>
-        <h2 id={titleId} style={titleStyle}>
-          Notas en lote
-        </h2>
-        <p style={hintStyle}>
+      <div className="acctmodal">
+        <div className="acctmodal__head">
+          <span className="acctmodal__eyebrow">Cuentas</span>
+          <h2 id={titleId} className="acctmodal__title">
+            Notas en lote
+          </h2>
+        </div>
+        <p className="acctmodal__hint">
           {count === 1 ? '1 cuenta seleccionada.' : `${count} cuentas seleccionadas.`}
         </p>
 
-        <label style={labelStyle}>
+        <label className="acctmodal__field">
           Nota
           <textarea
-            style={textareaStyle}
+            className="acctmodal__textarea"
             value={text}
             placeholder="Escribe una nota…"
             onChange={(event) => setText(event.target.value)}
@@ -132,7 +94,7 @@ export function BulkNotesModal({
           />
         </label>
 
-        <label style={checkboxRowStyle}>
+        <label className="acctmodal__check">
           <input
             type="checkbox"
             checked={append}
@@ -142,9 +104,9 @@ export function BulkNotesModal({
           Añadir a las notas existentes (en lugar de reemplazarlas)
         </label>
 
-        {result && <p style={hintStyle}>{result}</p>}
+        {result && <p className="acctmodal__hint">{result}</p>}
 
-        <div style={footerStyle}>
+        <div className="acctmodal__footer">
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             {result ? 'Cerrar' : 'Cancelar'}
           </Button>

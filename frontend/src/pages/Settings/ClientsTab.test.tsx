@@ -137,6 +137,17 @@ beforeEach(() => {
 });
 
 describe('ClientsTab', () => {
+  it('reuses a fresh client scan when the tab is reopened', async () => {
+    const first = render(<ClientsTab />);
+    expect(await screen.findByText('Fishstrap client')).toBeInTheDocument();
+    expect(mocks.scanRobloxInstallations).toHaveBeenCalledTimes(1);
+
+    first.unmount();
+    render(<ClientsTab />);
+    expect(screen.getByText('Fishstrap client')).toBeInTheDocument();
+    await waitFor(() => expect(mocks.scanRobloxInstallations).toHaveBeenCalledTimes(1));
+  });
+
   it('separates detected installations from the active Windows handler', async () => {
     render(<ClientsTab />);
     expect(await screen.findByText('Fishstrap client')).toBeInTheDocument();

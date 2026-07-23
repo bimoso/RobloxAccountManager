@@ -10,7 +10,6 @@ import {
   CircleAlert,
   Info,
   KeyRound,
-  Layers,
   LogIn,
 } from 'lucide-react';
 import { Button } from '@/components/Button';
@@ -39,11 +38,11 @@ import {
 import './AddAccountModal.css';
 
 /**
- * The four add-account methods offered by the modal: signing in with Roblox,
- * pasting a single cookie, pasting many cookies, or bulk `user:pass` combos
- * driven through a humanized auto-login.
+ * The three add-account methods offered by the modal: signing in with Roblox,
+ * pasting one or many cookies, or bulk `user:pass` combos driven through a
+ * humanized auto-login.
  */
-type AddMode = 'login' | 'single' | 'batch' | 'combo';
+type AddMode = 'login' | 'cookies' | 'combo';
 
 /**
  * Shape the `roblox_open_login` / `roblox_login_credentials` commands resolve
@@ -101,8 +100,7 @@ export interface AddAccountModalProps {
 
 const TABS: ReadonlyArray<{ id: AddMode; label: string; Icon: typeof LogIn }> = [
   { id: 'login', label: 'Iniciar sesión', Icon: LogIn },
-  { id: 'single', label: 'Una cookie', Icon: KeyRound },
-  { id: 'batch', label: 'Varias cookies', Icon: Layers },
+  { id: 'cookies', label: 'Cookie(s)', Icon: KeyRound },
   { id: 'combo', label: 'User : Pass', Icon: AtSign },
 ];
 
@@ -111,15 +109,14 @@ function batchTone(summary: BatchSummary | CredentialSummary): 'clean' | 'mixed'
 }
 
 /**
- * Modal for adding an account through one of four methods:
+ * Modal for adding an account through one of three methods:
  *
  * - **Iniciar sesión con Roblox** — invokes `roblox_open_login`, shows the
  *   browser-download progress reported by `chrome://download-progress`, and can
  *   be cancelled via `login_cancel`.
- * - **Una cookie** — validates the cookie before adding the account.
- * - **Varias cookies** — processes each pasted cookie sequentially, showing
- *   per-cookie progress and, for any invalid cookie, an error identifying which
- *   one failed without stopping the rest (delegated to {@link processBatchCookies}).
+ * - **Cookie(s)** — accepts one or many lines through the same input and
+ *   processes each cookie sequentially. A failed line never stops the rest
+ *   (delegated to {@link processBatchCookies}).
  * - **User : Pass** — bulk `username:password` combos, each driven through the
  *   humanized auto-login (`roblox_login_credentials`) sequentially, with per-combo
  *   progress and a cancel that stops cleanly between combos (delegated to
@@ -148,16 +145,11 @@ export function AddAccountModal({
   const [progressPercent, setProgressPercent] = useState(0);
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  // ── Single-cookie tab state ──
-  const [singleCookie, setSingleCookie] = useState('');
-  const [singleBusy, setSingleBusy] = useState(false);
-  const [singleError, setSingleError] = useState<string | null>(null);
-
-  // ── Batch tab state ──
-  const [batchText, setBatchText] = useState('');
-  const [batchRunning, setBatchRunning] = useState(false);
-  const [batchProgress, setBatchProgress] = useState<BatchProgressEvent | null>(null);
-  const [batchSummary, setBatchSummary] = useState<BatchSummary | null>(null);
+  // ── Unified cookie tab state (one line or many) ──
+  const [cookieText, setCookieText] = useState('');
+  const [cookiesRunning, setCookiesRunning] = useState(false);
+  const [cookiesProgress, setCookiesProgress] = useState<BatchProgressEvent | null>(null);
+  const [cookiesSummary, setCookiesSummary] = useState<BatchSummary | null>(null);
 
   // ── Combo (user:pass[:cookie]) tab state ──
   const [comboText, setComboText] = useState('');
@@ -175,13 +167,10 @@ export function AddAccountModal({
     setLoginPhase('idle');
     setProgressPercent(0);
     setLoginError(null);
-    setSingleCookie('');
-    setSingleBusy(false);
-    setSingleError(null);
-    setBatchText('');
-    setBatchRunning(false);
-    setBatchProgress(null);
-    setBatchSummary(null);
+    setCookieText('');
+    setCookiesRunning(false);
+    setCookiesProgress(null);
+    setCookiesSummary(null);
     setComboText('');
     setComboRunning(false);
     setComboProgress(null);
@@ -253,53 +242,34 @@ export function AddAccountModal({
     onClose();
   };
 
-  const submitSingle = async (): Promise<void> => {
-    const cookie = singleCookie.trim();
-    if (!cookie) return;
-    setSingleBusy(true);
-    setSingleError(null);
-    try {
-      const validation = normalizeValidation(await ipc.validateCookie(cookie));
-      const moderatedAccept = validation.moderated && acceptModerated;
-      if ((!validation.ok || !validation.username) && !moderatedAccept) {
-        setSingleError(
-          validation.moderated
-            ? 'La cuenta está moderada. Activa "Aceptar cuentas moderadas" para añadirla.'
-            : validation.reason?.trim() || 'La cookie no es válida.',
-        );
-        setSingleBusy(false);
-        return;
-      }
-      await onAdd(buildAccountToAdd(validation, cookie, { moderated: validation.moderated }));
-      setSingleCookie('');
-      setSingleBusy(false);
-      onClose();
-    } catch {
-      setSingleError('No se pudo validar o añadir la cookie.');
-      setSingleBusy(false);
-    }
-  };
-
-  const submitBatch = async (): Promise<void> => {
-    const cookies = parseCookieLines(batchText);
-    setBatchSummary(null);
+  const submitCookies = async (): Promise<void> => {
+    const cookies = parseCookieLines(cookieText);
+    setCookiesSummary(null);
     if (cookies.length === 0) {
-      setBatchProgress(null);
+      setCookiesProgress(null);
       return;
     }
-    setBatchRunning(true);
-    setBatchProgress({ index: 0, total: cookies.length, cookie: cookies[0], phase: 'validating' });
+    setCookiesRunning(true);
+    setCookiesProgress({ index: 0, total: cookies.length, cookie: cookies[0], phase: 'validating' });
     const summary = await processBatchCookies(cookies, {
       validate: async (cookie) => normalizeValidation(await ipc.validateCookie(cookie)),
       add: async (validation, cookie) => {
         await onAdd(buildAccountToAdd(validation, cookie, { moderated: validation.moderated }));
       },
-      onProgress: (event) => setBatchProgress(event),
+      onProgress: (event) => setCookiesProgress(event),
       acceptModerated,
     });
-    setBatchProgress(null);
-    setBatchSummary(summary);
-    setBatchRunning(false);
+    setCookiesProgress(null);
+    setCookiesRunning(false);
+
+    // Preserve the fast one-cookie path: a single successful line closes the
+    // modal immediately. Multi-line and failed runs stay open with a summary.
+    if (cookies.length === 1 && summary.added === 1 && summary.failures.length === 0) {
+      setCookieText('');
+      onClose();
+      return;
+    }
+    setCookiesSummary(summary);
   };
 
   // Resolve one entry to a valid session, branching on the entry and the current
@@ -470,78 +440,52 @@ export function AddAccountModal({
           </div>
         )}
 
-        {mode === 'single' && (
+        {mode === 'cookies' && (
           <div className="addacc__panel">
             <label className="addacc__field">
-              Cookie (.ROBLOSECURITY)
-              <input
-                className="addacc__input"
-                type="password"
-                value={singleCookie}
-                placeholder="Pega la cookie aquí"
-                onChange={(event) => setSingleCookie(event.target.value)}
-              />
-            </label>
-            {singleError && (
-              <p className="addacc__error">
-                <CircleAlert size={15} aria-hidden="true" />
-                {singleError}
-              </p>
-            )}
-            <div className="addacc__footer">
-              <Button variant="secondary" onClick={onClose} disabled={singleBusy}>
-                Cancelar
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => void submitSingle()}
-                disabled={singleBusy || singleCookie.trim().length === 0}
-              >
-                {singleBusy ? 'Validando…' : 'Añadir cuenta'}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {mode === 'batch' && (
-          <div className="addacc__panel">
-            <label className="addacc__field">
-              Cookies (una por línea)
+              Cookie(s) de Roblox
               <textarea
                 className="addacc__textarea"
-                value={batchText}
-                placeholder={'Pega una cookie por línea…'}
-                onChange={(event) => setBatchText(event.target.value)}
-                disabled={batchRunning}
+                value={cookieText}
+                placeholder={'Pega una cookie, o varias separadas por línea…'}
+                onChange={(event) => setCookieText(event.target.value)}
+                disabled={cookiesRunning}
               />
             </label>
 
-            {batchRunning && batchProgress && (
+            {!cookiesRunning && !cookiesSummary && parseCookieLines(cookieText).length > 0 && (
+              <p className="addacc__progress-label">
+                <span className="addacc__count">{parseCookieLines(cookieText).length}</span>{' '}
+                {parseCookieLines(cookieText).length === 1 ? 'cookie detectada.' : 'cookies detectadas.'}
+              </p>
+            )}
+
+            {cookiesRunning && cookiesProgress && (
               <div className="addacc__progress">
                 <div className="addacc__track" aria-hidden="true">
                   <div
                     className="addacc__fill"
                     style={{
-                      width: `${batchProgress.total > 0 ? (batchProgress.index / batchProgress.total) * 100 : 0}%`,
+                      width: `${cookiesProgress.total > 0 ? (cookiesProgress.index / cookiesProgress.total) * 100 : 0}%`,
                     }}
                   />
                 </div>
                 <p className="addacc__progress-label">
-                  Procesando cookie <strong>{batchProgress.index + 1}</strong> de {batchProgress.total} (
-                  {batchProgress.phase === 'validating' ? 'validando' : 'añadiendo'})…
+                  Procesando cookie <strong>{cookiesProgress.index + 1}</strong> de {cookiesProgress.total} (
+                  {cookiesProgress.phase === 'validating' ? 'validando' : 'añadiendo'})…
                 </p>
               </div>
             )}
 
-            {batchSummary && (
-              <div className="addacc__summary" data-tone={batchTone(batchSummary)}>
+            {cookiesSummary && (
+              <div className="addacc__summary" data-tone={batchTone(cookiesSummary)}>
                 <div className="addacc__summary-head">
-                  {batchSummary.failures.length === 0 ? <Check size={16} /> : <CircleAlert size={16} />}
-                  Se añadieron {batchSummary.added} de {batchSummary.total} cuentas.
+                  {cookiesSummary.failures.length === 0 ? <Check size={16} /> : <CircleAlert size={16} />}
+                  Se añadieron {cookiesSummary.added} de {cookiesSummary.total} cuentas.
                 </div>
-                {batchSummary.failures.length > 0 && (
+                {cookiesSummary.failures.length > 0 && (
                   <ul className="addacc__failures">
-                    {batchSummary.failures.map((failure) => (
+                    {cookiesSummary.failures.map((failure) => (
                       <li key={failure.index}>{failure.reason}</li>
                     ))}
                   </ul>
@@ -550,15 +494,19 @@ export function AddAccountModal({
             )}
 
             <div className="addacc__footer">
-              <Button variant="secondary" onClick={onClose} disabled={batchRunning}>
-                {batchSummary ? 'Cerrar' : 'Cancelar'}
+              <Button variant="secondary" onClick={onClose} disabled={cookiesRunning}>
+                {cookiesSummary ? 'Cerrar' : 'Cancelar'}
               </Button>
               <Button
                 variant="primary"
-                onClick={() => void submitBatch()}
-                disabled={batchRunning || parseCookieLines(batchText).length === 0}
+                onClick={() => void submitCookies()}
+                disabled={cookiesRunning || parseCookieLines(cookieText).length === 0}
               >
-                {batchRunning ? 'Procesando…' : 'Añadir cuentas'}
+                {cookiesRunning
+                  ? 'Procesando…'
+                  : parseCookieLines(cookieText).length === 1
+                    ? 'Añadir cuenta'
+                    : 'Añadir cuentas'}
               </Button>
             </div>
           </div>

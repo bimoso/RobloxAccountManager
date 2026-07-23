@@ -97,6 +97,8 @@ export const ipc = {
   // ── Roblox launch / process control ──
   validateCookie: (cookie: string) => call('validateCookie', [cookie], true),
   moderationInfo: (username: string) => call('moderationInfo', [username], false),
+  bloxgenGenerate: (apiKey: string, accountType: string, region?: string) =>
+    call('bloxgenGenerate', [apiKey, accountType, region], true),
   refreshCookie: (cookie: string) => call('refreshCookie', [cookie], true),
   setRobloxVolume: (percent: number) => call('setRobloxVolume', [percent], true),
   killAllRoblox: () => call('killAllRoblox', [], true),

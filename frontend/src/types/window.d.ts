@@ -29,6 +29,23 @@ export type UnlistenFn = () => void;
 /** Payload of `chrome://download-progress`: browser-download progress reporting. */
 export type ChromeDownloadProgress = unknown;
 
+export interface BrowserOpenResult {
+  ok: boolean;
+  error?: string;
+  focused?: boolean;
+}
+
+export interface BrowserOpenBatchItemResult extends BrowserOpenResult {
+  accountId: string;
+}
+
+export interface BrowserOpenBatchResult {
+  ok: boolean;
+  opened: number;
+  total: number;
+  results: BrowserOpenBatchItemResult[];
+}
+
 /** Response of `roblox_get_avatar_thumbnails` (documented shape in preload.js). */
 export interface AvatarThumbnailsResponse {
   data: Array<{ targetId: number; state: string; imageUrl: string }>;
@@ -115,6 +132,17 @@ export interface TauriApi {
    * is a permanent ban; `false` on a moderated account means temporary.
    */
   moderationInfo: (username: string) => Promise<unknown>;
+  /**
+   * Generate an account via BloxGen, server-side (the webview blocks a direct
+   * `fetch` to `core.bloxgen.net` under CORS). Resolves
+   * `{ status, body }` — the HTTP status plus the parsed API response, so the
+   * caller can surface the API's own `message` on a rejection.
+   */
+  bloxgenGenerate: (
+    apiKey: string,
+    accountType: string,
+    region?: string,
+  ) => Promise<unknown>;
   refreshCookie: (cookie: string) => Promise<string>;
   setRobloxVolume: (percent: number) => Promise<void>;
   killAllRoblox: () => Promise<void>;
@@ -187,8 +215,8 @@ export interface TauriApi {
   quickLogin: (cookie: string, code: string) => Promise<unknown>;
 
   // ── Account_Browser_Launcher ──
-  openAccountBrowser: (id: string) => Promise<void>;
-  openAccountBrowsers: (ids: string[]) => Promise<void>;
+  openAccountBrowser: (id: string) => Promise<BrowserOpenResult>;
+  openAccountBrowsers: (ids: string[]) => Promise<BrowserOpenBatchResult>;
   copyAccountCookie: (id: string) => Promise<unknown>;
   getWayfernStatus: () => Promise<WayfernStatus>;
   installWayfern: () => Promise<WayfernStatus>;

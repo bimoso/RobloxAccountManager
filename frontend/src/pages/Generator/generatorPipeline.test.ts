@@ -5,12 +5,9 @@ import {
   runGeneratorPipeline,
 } from './generatorPipeline';
 
-function response(body: unknown, ok = true, status = 200): Response {
-  return {
-    ok,
-    status,
-    json: vi.fn().mockResolvedValue(body),
-  } as unknown as Response;
+/** A `{ status, body }` result as the backend `bloxgen_generate` command returns. */
+function generated(body: unknown, status = 200): { status: number; body: unknown } {
+  return { status, body };
 }
 
 describe('BloxGen generation pipeline', () => {
@@ -42,8 +39,8 @@ describe('BloxGen generation pipeline', () => {
   });
 
   it('never calls the account store when Roblox rejects the generated cookie', async () => {
-    const fetcher = vi.fn().mockResolvedValue(
-      response({
+    const generate = vi.fn().mockResolvedValue(
+      generated({
         success: true,
         data: { username: 'RejectedUser', password: 'pass', cookie: 'bad-cookie' },
       }),
@@ -52,19 +49,13 @@ describe('BloxGen generation pipeline', () => {
     const add = vi.fn();
 
     const outcome = await runGeneratorPipeline('BLOX-test', {
-      fetcher,
+      generate,
       validate,
       add,
       now: () => new Date('2026-07-13T00:00:00.000Z'),
     });
 
-    expect(fetcher).toHaveBeenCalledWith(
-      'https://core.bloxgen.net/api/generate',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ apiKey: 'BLOX-test', type: 'alt' }),
-      }),
-    );
+    expect(generate).toHaveBeenCalledWith('BLOX-test', 'alt');
     expect(validate).toHaveBeenCalledWith('bad-cookie');
     expect(add).not.toHaveBeenCalled();
     expect(outcome).toMatchObject({ ok: false, failedAt: 'validate' });
@@ -74,9 +65,9 @@ describe('BloxGen generation pipeline', () => {
 
   it('adds the normalized account automatically only after validation succeeds', async () => {
     const order: string[] = [];
-    const fetcher = vi.fn().mockImplementation(async () => {
+    const generate = vi.fn().mockImplementation(async () => {
       order.push('generate');
-      return response({
+      return generated({
         success: true,
         data: { username: 'ApiName', password: 'generated-pass', cookie: 'valid-cookie' },
       });
@@ -90,7 +81,7 @@ describe('BloxGen generation pipeline', () => {
     });
 
     const outcome = await runGeneratorPipeline('BLOX-test', {
-      fetcher,
+      generate,
       validate,
       add,
       now: () => new Date('2026-07-13T00:00:00.000Z'),
@@ -102,6 +93,8 @@ describe('BloxGen generation pipeline', () => {
         username: 'RobloxName',
         userId: '1234',
         cookie: 'valid-cookie',
+        loginUsername: 'ApiName',
+        password: 'generated-pass',
       }),
     );
     expect(outcome).toMatchObject({
@@ -117,9 +110,9 @@ describe('BloxGen generation pipeline', () => {
 
   it('rejects a moderated cookie by default but accepts it when the toggle is on', async () => {
     const moderatedBody = JSON.stringify({ errors: [{ code: 0, message: 'User is moderated' }] });
-    const makeFetcher = () =>
+    const makeGenerate = () =>
       vi.fn().mockResolvedValue(
-        response({
+        generated({
           success: true,
           data: { username: 'ModUser', password: 'p', cookie: 'mod-cookie' },
         }),
@@ -130,7 +123,7 @@ describe('BloxGen generation pipeline', () => {
     // Toggle OFF → validation failure, nothing added.
     const addOff = vi.fn();
     const off = await runGeneratorPipeline('BLOX-test', {
-      fetcher: makeFetcher(),
+      generate: makeGenerate(),
       validate,
       add: addOff,
       now: () => new Date('2026-07-13T00:00:00.000Z'),
@@ -141,7 +134,7 @@ describe('BloxGen generation pipeline', () => {
     // Toggle ON → accepted, added with the BloxGen username and moderated flag.
     const addOn = vi.fn();
     const on = await runGeneratorPipeline('BLOX-test', {
-      fetcher: makeFetcher(),
+      generate: makeGenerate(),
       validate,
       add: addOn,
       acceptModerated: true,
@@ -154,16 +147,12 @@ describe('BloxGen generation pipeline', () => {
   });
 
   it('redacts an echoed API key before an API failure reaches history', async () => {
-    const fetcher = vi.fn().mockResolvedValue(
-      response(
-        { success: false, message: 'Invalid key BLOX-ultra-secret' },
-        false,
-        401,
-      ),
+    const generate = vi.fn().mockResolvedValue(
+      generated({ success: false, message: 'Invalid key BLOX-ultra-secret' }, 401),
     );
 
     const outcome = await runGeneratorPipeline('BLOX-ultra-secret', {
-      fetcher,
+      generate,
       validate: vi.fn(),
       add: vi.fn(),
     });
@@ -171,5 +160,109 @@ describe('BloxGen generation pipeline', () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.historyEntry.message).toContain('[credencial oculta]');
     expect(JSON.stringify(outcome.historyEntry)).not.toContain('BLOX-ultra-secret');
+  });
+
+  it('surfaces the API message and the cooldown wait on a 429', async () => {
+    const generate = vi.fn().mockResolvedValue(
+      generated(
+        { success: false, message: 'Please wait before generating another account', timeRemaining: 4500 },
+        429,
+      ),
+    );
+
+    const outcome = await runGeneratorPipeline('BLOX-test', {
+      generate,
+      validate: vi.fn(),
+      add: vi.fn(),
+    });
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.historyEntry.message).toContain('Please wait before generating another account');
+    // 4500 ms of cooldown is reported to the user as 5s.
+    expect(outcome.historyEntry.message).toContain('5s');
+  });
+
+  it('falls back to user:pass login when the cookie is rejected and the toggle is on', async () => {
+    const generate = vi.fn().mockResolvedValue(
+      generated({
+        success: true,
+        data: { username: 'GenUser', password: 'gen-pass', cookie: 'dead-cookie' },
+      }),
+    );
+    // Roblox rejects the generated cookie.
+    const validate = vi.fn().mockResolvedValue({ ok: false, reason: 'expired' });
+    const add = vi.fn().mockResolvedValue(undefined);
+    const loginWithCredentials = vi.fn().mockResolvedValue({
+      success: true,
+      cookie: 'fresh-cookie',
+      username: 'RobloxUser',
+      userId: '77',
+    });
+
+    // OFF → no fallback, validate failure.
+    const off = await runGeneratorPipeline('BLOX-test', {
+      generate,
+      validate,
+      add,
+      loginWithCredentials,
+      now: () => new Date('2026-07-13T00:00:00.000Z'),
+    });
+    expect(off).toMatchObject({ ok: false, failedAt: 'validate' });
+    expect(loginWithCredentials).not.toHaveBeenCalled();
+
+    // ON → logs in with the generated user:pass and adds the fresh cookie.
+    const on = await runGeneratorPipeline('BLOX-test', {
+      generate,
+      validate,
+      add,
+      retryWithCredentials: true,
+      loginWithCredentials,
+      now: () => new Date('2026-07-13T00:00:00.000Z'),
+    });
+    expect(loginWithCredentials).toHaveBeenCalledWith('GenUser', 'gen-pass');
+    expect(on).toMatchObject({ ok: true, usedCredentials: true });
+    expect(add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        username: 'RobloxUser',
+        cookie: 'fresh-cookie',
+        loginUsername: 'GenUser',
+        password: 'gen-pass',
+      }),
+    );
+  });
+
+  it('reports a service outage when the host answers with a non-BloxGen body', async () => {
+    // Railway's edge fallback when no app is deployed at core.bloxgen.net: a 404
+    // whose body has no `success` field, so it never came from the API itself.
+    const generate = vi.fn().mockResolvedValue(
+      generated(
+        { status: 'error', code: 404, message: 'Application not found', request_id: 'abc' },
+        404,
+      ),
+    );
+
+    const outcome = await runGeneratorPipeline('BLOX-test', {
+      generate,
+      validate: vi.fn(),
+      add: vi.fn(),
+    });
+
+    expect(outcome).toMatchObject({ ok: false, failedAt: 'generate' });
+    expect(outcome.historyEntry.message).toContain('no está disponible');
+    // The cryptic infrastructure wording is never shown to the user.
+    expect(outcome.historyEntry.message).not.toContain('Application not found');
+  });
+
+  it('reports a transport failure instead of a blank error', async () => {
+    const generate = vi.fn().mockRejectedValue(new Error('Failed to fetch'));
+
+    const outcome = await runGeneratorPipeline('BLOX-test', {
+      generate,
+      validate: vi.fn(),
+      add: vi.fn(),
+    });
+
+    expect(outcome).toMatchObject({ ok: false, failedAt: 'generate' });
+    expect(outcome.historyEntry.message).toContain('Failed to fetch');
   });
 });

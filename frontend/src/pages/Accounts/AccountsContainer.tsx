@@ -132,8 +132,34 @@ export function AccountsContainer(): JSX.Element {
   }, []);
 
   const handleOpenBrowsers = useCallback((selected: Account[]): void => {
-    void ipc.openAccountBrowsers(selected.map((account) => account.id));
-  }, []);
+    void (async () => {
+      try {
+        const result = await ipc.openAccountBrowsers(selected.map((account) => account.id));
+        if (result.opened === result.total) {
+          showSuccess(
+            result.total === 1
+              ? 'Navegador de cuenta abierto.'
+              : `${result.opened} navegadores de cuenta abiertos.`,
+          );
+          return;
+        }
+
+        const firstFailure = result.results.find((item) => !item.ok);
+        const account = firstFailure
+          ? selected.find((candidate) => candidate.id === firstFailure.accountId)
+          : undefined;
+        const who = account?.nickname?.trim() || account?.username;
+        const detail = firstFailure?.error?.trim();
+        showError(
+          `${result.opened}/${result.total} navegadores abiertos${
+            detail ? ` · ${who ? `${who}: ` : ''}${detail}` : '.'
+          }`,
+        );
+      } catch {
+        // The centralized IPC layer already surfaced rejected commands.
+      }
+    })();
+  }, [showSuccess, showError]);
 
   // Re-login: validate the cookie and, if it has expired, re-sign-in with the
   // account's saved credentials (humanized auto-login), refreshing the cookie.

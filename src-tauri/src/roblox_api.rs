@@ -1128,11 +1128,22 @@ pub async fn roblox_change_display_name(
 /// account.
 ///
 /// This is the "log in with another device" flow from the authorizing side: the
-/// other device shows a code; this account (via its `cookie`) enters and confirms
-/// it, which signs that other device in. Two calls against
+/// other device shows a code; this account (via its `cookie`) enters and
+/// approves it, which signs that other device in. Two calls against
 /// `apis.roblox.com/auth-token-service/v1/login`:
-///   1. `POST /enterCode  { code }`  → validates the code, returns its status.
-///   2. `POST /confirm    { code, status }` → completes the authorization.
+///   1. `POST /enterCode     { code }` → registers the code, returns the
+///      requesting device's `deviceInfo` / `location` (metadata to review).
+///   2. `POST /validateCode  { code }` → APPROVES the code, completing the
+///      login on the other device.
+///
+/// The completion endpoint is `/validateCode`, NOT `/confirm` (which does not
+/// exist — it 404s), and its body is `{ code }` only, with NO `status` field.
+/// The `Created`/`UserLinked`/`Validated` status enum belongs to the DISPLAYING
+/// side's `/login/status` poll, not to this authorizing flow. (Verified against
+/// the canonical ic3w0lf22 Roblox-Account-Manager `QuickLogIn` implementation;
+/// the public swagger docs were taken down, so community clients are the
+/// authoritative source.)
+///
 /// Returns `{ ok:true }` on success, or `{ ok:false, error }` (e.g. bad/expired
 /// code, cookie invalid). Retries on 429 with backoff.
 #[tauri::command]
@@ -1167,31 +1178,29 @@ pub async fn roblox_quick_login(cookie: String, code: String) -> Result<Value, S
     if enter_status != 200 {
         return Ok(serde_json::json!({ "ok": false, "error": extract_api_error(&enter_text, enter_status) }));
     }
-    // The enterCode response carries the code's current status ("Validated" etc.)
-    // which /confirm expects echoed back.
-    let status_str = serde_json::from_str::<Value>(&enter_text)
-        .ok()
-        .and_then(|v| v.get("status").and_then(Value::as_str).map(String::from))
-        .unwrap_or_else(|| "Validated".to_string());
+    // `enterCode` only registers the code (the other device now shows "someone
+    // entered the code") — it does NOT grant access. Its body carries the
+    // requesting device's `deviceInfo` / `location`, not a status to echo back.
 
-    // Step 2: confirm, which signs the other device in.
-    let confirm_body = serde_json::json!({ "code": code, "status": status_str }).to_string();
-    let confirm_req = client
-        .post("https://apis.roblox.com/auth-token-service/v1/login/confirm")
+    // Step 2: approve the code via `validateCode`, which actually signs the other
+    // device in. Body is `{ code }` only — no `status` field.
+    let validate_body = serde_json::json!({ "code": code }).to_string();
+    let validate_req = client
+        .post("https://apis.roblox.com/auth-token-service/v1/login/validateCode")
         .header("Cookie", format!(".ROBLOSECURITY={cookie}"))
         .header("Content-Type", "application/json")
         .header("X-CSRF-TOKEN", &token)
         .header("User-Agent", DESKTOP_UA)
         .header("Referer", "https://www.roblox.com/")
         .header("Origin", "https://www.roblox.com")
-        .body(confirm_body);
-    let confirm_resp = send_retrying(confirm_req).await?;
-    let confirm_status = confirm_resp.status().as_u16();
-    let confirm_text = confirm_resp.text().await.unwrap_or_default();
-    if confirm_status == 200 {
+        .body(validate_body);
+    let validate_resp = send_retrying(validate_req).await?;
+    let validate_status = validate_resp.status().as_u16();
+    let validate_text = validate_resp.text().await.unwrap_or_default();
+    if validate_status == 200 {
         return Ok(serde_json::json!({ "ok": true }));
     }
-    Ok(serde_json::json!({ "ok": false, "error": extract_api_error(&confirm_text, confirm_status) }))
+    Ok(serde_json::json!({ "ok": false, "error": extract_api_error(&validate_text, validate_status) }))
 }
 
 /// Pull a human-readable message out of a Roblox API error response body

@@ -87,6 +87,9 @@
     // ── Roblox launch / process control ──
     validateCookie: (cookie) => invoke('roblox_validate_cookie', { cookie }),
     moderationInfo: (username) => invoke('roblox_moderation_info', { username }),
+    // Runs server-side: the webview blocks a direct fetch to core.bloxgen.net (CORS).
+    bloxgenGenerate: (apiKey, accountType, region) =>
+        invoke('bloxgen_generate', { apiKey, accountType, region: region ?? null }),
     // Refresh/rotate an account's .ROBLOSECURITY via the backend (no CORS).
     // Returns the new cookie, or the same one if it is still alive/unchanged.
     refreshCookie: (cookie) => invoke('roblox_refresh_cookie', { cookie }),
