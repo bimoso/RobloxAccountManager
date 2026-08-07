@@ -99,6 +99,10 @@ export const ipc = {
   moderationInfo: (username: string) => call('moderationInfo', [username], false),
   bloxgenGenerate: (apiKey: string, accountType: string, region?: string) =>
     call('bloxgenGenerate', [apiKey, accountType, region], true),
+  // Background lookup: the picker refreshes stock on its own schedule, and a
+  // failed poll leaves the last known availability on screen rather than
+  // flashing a toast.
+  bloxgenStock: (apiKey: string) => call('bloxgenStock', [apiKey], false),
   refreshCookie: (cookie: string) => call('refreshCookie', [cookie], true),
   setRobloxVolume: (percent: number) => call('setRobloxVolume', [percent], true),
   killAllRoblox: () => call('killAllRoblox', [], true),
@@ -113,6 +117,9 @@ export const ipc = {
   launchRoblox: (id: string, cookie: string, target: string) =>
     call('launchRoblox', [id, cookie, target], true),
   openExternal: (url: string) => call('openExternal', [url], true),
+  // The Clients deck's one-sweep read. User-initiated: the deck surfaces the
+  // failure inline, and a silent failure would leave it blank with no clue why.
+  getRobloxClientsSnapshot: () => call('getRobloxClientsSnapshot', [], true),
   scanRobloxInstallations: () => call('scanRobloxInstallations', [], false),
   addRobloxCustomPreset: (path: string, displayName?: string | null) =>
     call('addRobloxCustomPreset', [path, displayName], true),
@@ -134,6 +141,9 @@ export const ipc = {
     call('cancelRobloxDeployment', [operationId], true),
   onRobloxDeploymentProgress: (cb: (payload: RobloxDeploymentProgress) => void) =>
     call('onRobloxDeploymentProgress', [cb], false),
+  // Event subscription: registered during setup, not a user action.
+  onRobloxProtocolChanged: (cb: () => void) =>
+    call('onRobloxProtocolChanged', [cb], false),
 
   // ── Settings_Store ──
   loadSettings: () => call('loadSettings', [], true),

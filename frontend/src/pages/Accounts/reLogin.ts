@@ -96,7 +96,7 @@ export async function reLoginAccount(
   if (!password) {
     return {
       status: 'no-credentials',
-      message: 'La cookie expiró y no hay credenciales guardadas para reingresar.',
+      message: 'La cookie expiró y no hay contraseña guardada para reingresar. Añádela en «Editar cuenta».',
     };
   }
 

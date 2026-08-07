@@ -5,6 +5,7 @@ import { PERSISTENCE_KEYS, setPersisted } from '@/lib/persistence';
 
 const mocks = vi.hoisted(() => ({
   bloxgenGenerate: vi.fn(),
+  bloxgenStock: vi.fn(),
   validateCookie: vi.fn(),
   readGenHistory: vi.fn(),
   writeGenHistory: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/ipc', () => ({
   ipc: {
     bloxgenGenerate: mocks.bloxgenGenerate,
+    bloxgenStock: mocks.bloxgenStock,
     validateCookie: mocks.validateCookie,
     readGenHistory: mocks.readGenHistory,
     writeGenHistory: mocks.writeGenHistory,
@@ -67,6 +69,9 @@ describe('Generator secure automatic add flow', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal('localStorage', createStorageMock());
+    // Stock is advisory: the picker offers every type when the lookup yields
+    // nothing usable, so an empty envelope keeps these cases key-focused.
+    mocks.bloxgenStock.mockResolvedValue({ status: 200, body: { success: false } });
     mocks.readGenHistory.mockResolvedValue([]);
     mocks.writeGenHistory.mockResolvedValue(true);
     mocks.clearGenHistory.mockResolvedValue(true);

@@ -1,5 +1,6 @@
 import type { Account } from '@/types/models';
 import type { GenerationStep, SafeGenHistoryEntry } from '@/lib/genHistory';
+import type { BloxGenAccountType } from '@/lib/bloxgen';
 
 export { isValidBloxGenApiKey, maskBloxGenApiKey } from '@/lib/bloxgen';
 
@@ -100,6 +101,12 @@ export interface GeneratorPipelineDeps {
    * where CORS blocks it.
    */
   generate: BloxGenGenerate;
+  /**
+   * Which account type to request. The page resolves the picker's selection
+   * (including `'random'`, which the API has no equivalent for) to a concrete
+   * type before calling. Defaults to `alt`, the type every role can generate.
+   */
+  accountType?: BloxGenAccountType;
   validate: (cookie: string) => Promise<unknown>;
   add: (account: Account) => Promise<void>;
   onPhase?: (phase: Exclude<GeneratorPhase, 'idle' | 'success' | 'error'>) => void;
@@ -324,15 +331,22 @@ function generationFailureMessage(status: number, body: unknown, apiMessage: str
     : `BloxGen respondió con estado ${status}.`;
 }
 
-/** Calls the BloxGen endpoint and returns only the fields the pipeline needs. */
+/**
+ * Calls the BloxGen endpoint and returns only the fields the pipeline needs.
+ *
+ * @param accountType - The wire value for the API's required `type` field. The
+ *   caller resolves this from the picker (including `'random'`), so by the time
+ *   it arrives here it is always one concrete type.
+ */
 export async function requestBloxGenAccount(
   apiKey: string,
   generate: BloxGenGenerate,
+  accountType: BloxGenAccountType = 'alt',
 ): Promise<BloxGenGeneratedAccount> {
   let status: number;
   let raw: unknown;
   try {
-    ({ status, body: raw } = await generate(apiKey, 'alt'));
+    ({ status, body: raw } = await generate(apiKey, accountType));
   } catch (error) {
     const detail = error instanceof Error ? error.message.trim() : '';
     throw new Error(detail || 'No se pudo contactar con BloxGen.');
@@ -391,7 +405,7 @@ export async function runGeneratorPipeline(
 
   deps.onPhase?.('generating');
   try {
-    generated = await requestBloxGenAccount(apiKey, deps.generate);
+    generated = await requestBloxGenAccount(apiKey, deps.generate, deps.accountType);
   } catch (error) {
     const message = error instanceof Error && error.message.trim()
       ? error.message.trim()

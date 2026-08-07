@@ -61,6 +61,16 @@
     return Promise.resolve(function () {});
   }
 
+  // Collapse a `{ ok, error? }` command result to the boolean the renderer
+  // expects. A non-empty `error` is rethrown so the real cause (e.g. "decrypt
+  // failed") reaches the caller instead of a generic failure.
+  function unwrapOk(result) {
+    if (result && typeof result.error === 'string' && result.error.length > 0) {
+      throw new Error(result.error);
+    }
+    return !!(result && result.ok);
+  }
+
   window.api = {
     // ── Window controls ──
     minimize: () => invoke('window_minimize'),
@@ -90,6 +100,7 @@
     // Runs server-side: the webview blocks a direct fetch to core.bloxgen.net (CORS).
     bloxgenGenerate: (apiKey, accountType, region) =>
         invoke('bloxgen_generate', { apiKey, accountType, region: region ?? null }),
+    bloxgenStock: (apiKey) => invoke('bloxgen_stock', { apiKey }),
     // Refresh/rotate an account's .ROBLOSECURITY via the backend (no CORS).
     // Returns the new cookie, or the same one if it is still alive/unchanged.
     refreshCookie: (cookie) => invoke('roblox_refresh_cookie', { cookie }),
@@ -103,6 +114,7 @@
     launchRoblox: (id, cookie, target) =>
       invoke('roblox_launch', { accountId: id, cookie, target }),
     openExternal: (url) => invoke('open_external', { url }),
+    getRobloxClientsSnapshot: () => invoke('roblox_clients_snapshot'),
     scanRobloxInstallations: () => invoke('roblox_installations_scan'),
     addRobloxCustomPreset: (path, displayName) =>
       invoke('roblox_custom_preset_add', {
@@ -128,6 +140,8 @@
       invoke('roblox_deployment_cancel', { operationId }),
     onRobloxDeploymentProgress: (cb) =>
       on('roblox://deployment-progress', (e) => cb(e.payload)),
+    // Fires when something outside this app rewrites the roblox:// handlers.
+    onRobloxProtocolChanged: (cb) => on('roblox://protocol-changed', () => cb()),
 
     // ── Settings_Store ──
     loadSettings: () => invoke('settings_load'),
@@ -135,9 +149,15 @@
     saveDonutToken: (t) => invoke('settings_save_donut_token', { token: t }),
 
     // ── Encryption_Scheme ──
+    // `enc_unlock` / `enc_set_key` resolve with an `{ ok, error? }` record, but
+    // the renderer contract is a plain boolean. The record MUST be unwrapped
+    // here: the rejection shape `{ ok: false }` is a truthy JS object, so
+    // forwarding it verbatim makes a wrong passphrase read as a successful
+    // unlock. The gate then opens while the backend key session stays locked and
+    // every later write fails with `encrypt_field`'s "locked".
     encStatus: () => invoke('enc_status'),
-    encUnlock: (pass) => invoke('enc_unlock', { pass }),
-    encSetKey: (pass) => invoke('enc_set_key', { pass }),
+    encUnlock: (pass) => invoke('enc_unlock', { pass }).then(unwrapOk),
+    encSetKey: (pass) => invoke('enc_set_key', { pass }).then(unwrapOk),
 
     // ── Native_Helper status ──
     multiInstanceStatus: () => invoke('multiinstance_status'),

@@ -5,6 +5,7 @@ import {
   reduceSubmit,
   isSetupModalOpen,
   isUnlockModalOpen,
+  isSubmitSuccess,
   ENC_GATE_GENERIC_ERROR,
   type EncStatusOutcome,
   type EncSubmitOutcome,
@@ -328,5 +329,66 @@ describe('useEncryptionGateStore invokes accounts_load exactly once on access', 
     expect(s.unlockModalOpen).toBe(true);
     expect(s.errorMessage).toBe(ENC_GATE_GENERIC_ERROR);
     expect(loadAccounts).not.toHaveBeenCalled();
+  });
+
+  // Regression: `enc_unlock` / `enc_set_key` answer with an `{ ok, error? }`
+  // record even though the bridge declares a boolean. The store used to test
+  // the resolved value for truthiness, so the rejection shape `{ ok: false }` —
+  // a truthy object — passed as a successful unlock. The gate opened over a key
+  // session that was still locked, and every later account write failed with
+  // `encrypt_field`'s "locked". The casts below are deliberate: they reproduce
+  // the real runtime shape that the declared type does not describe.
+  it('7.5: a rejected unlock answering { ok: false } keeps the gate closed', async () => {
+    encStatus.mockResolvedValue({ mode: 'locked' });
+    await useEncryptionGateStore.getState().init();
+
+    encUnlock.mockResolvedValue({ ok: false } as unknown as boolean);
+    await useEncryptionGateStore.getState().submitUnlock('wrong');
+
+    const s = useEncryptionGateStore.getState();
+    expect(s.accessGranted).toBe(false);
+    expect(s.unlockModalOpen).toBe(true);
+    expect(loadAccounts).not.toHaveBeenCalled();
+  });
+
+  it('7.6: an accepted unlock answering { ok: true } grants access', async () => {
+    encStatus.mockResolvedValue({ mode: 'locked' });
+    await useEncryptionGateStore.getState().init();
+
+    encUnlock.mockResolvedValue({ ok: true } as unknown as boolean);
+    await useEncryptionGateStore.getState().submitUnlock('right');
+
+    const s = useEncryptionGateStore.getState();
+    expect(s.accessGranted).toBe(true);
+    expect(s.unlockModalOpen).toBe(false);
+    expect(loadAccounts).toHaveBeenCalledTimes(1);
+  });
+
+  it('7.5: a rejected setup answering { ok: false } keeps the gate closed', async () => {
+    encStatus.mockResolvedValue({ mode: 'setup' });
+    await useEncryptionGateStore.getState().init();
+
+    encSetKey.mockResolvedValue({ ok: false } as unknown as boolean);
+    await useEncryptionGateStore.getState().submitSetup('hunter2');
+
+    const s = useEncryptionGateStore.getState();
+    expect(s.accessGranted).toBe(false);
+    expect(s.setupModalOpen).toBe(true);
+    expect(loadAccounts).not.toHaveBeenCalled();
+  });
+});
+
+describe('isSubmitSuccess', () => {
+  it('reads the `ok` field of a record result', () => {
+    expect(isSubmitSuccess({ ok: true })).toBe(true);
+    expect(isSubmitSuccess({ ok: false })).toBe(false);
+    expect(isSubmitSuccess({ ok: false, error: 'decrypt failed' })).toBe(false);
+  });
+
+  it('falls back to truthiness for a plain boolean result', () => {
+    expect(isSubmitSuccess(true)).toBe(true);
+    expect(isSubmitSuccess(false)).toBe(false);
+    expect(isSubmitSuccess(undefined)).toBe(false);
+    expect(isSubmitSuccess(null)).toBe(false);
   });
 });

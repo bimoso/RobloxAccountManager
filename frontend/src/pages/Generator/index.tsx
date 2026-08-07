@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   ArrowRight,
@@ -9,15 +9,29 @@ import {
   History,
   KeyRound,
   LoaderCircle,
+  PackageSearch,
   Settings2,
   ShieldCheck,
+  Shuffle,
   Sparkles,
   Trash2,
   UserPlus,
 } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Switch } from '@/components/Switch';
-import { BLOXGEN_KEY_CHANGED_EVENT, isValidBloxGenApiKey, maskBloxGenApiKey } from '@/lib/bloxgen';
+import {
+  BLOXGEN_ACCOUNT_TYPES,
+  BLOXGEN_KEY_CHANGED_EVENT,
+  BLOXGEN_TYPE_LABEL_KEYS,
+  defaultAccountType,
+  isSelectionOutOfStock,
+  isValidBloxGenApiKey,
+  maskBloxGenApiKey,
+  normalizeBloxGenStock,
+  resolveAccountType,
+  type BloxGenStockEntry,
+  type BloxGenTypeSelection,
+} from '@/lib/bloxgen';
 import { moderationLabel, normalizeModerationInfo } from '@/lib/moderation';
 import {
   appendGenHistory,
@@ -66,6 +80,30 @@ function readApiKey(): string {
  * load silently re-reads the on-disk history.
  */
 const historyCache = createSessionCache<SafeGenHistoryEntry[]>();
+
+/**
+ * Last known BloxGen stock, kept across unmounts so re-entering the page paints
+ * the type picker immediately instead of flashing placeholders. Availability
+ * moves on the order of minutes, so a short revalidation window is enough.
+ */
+const stockCache = createSessionCache<BloxGenStockEntry[]>();
+const STOCK_CACHE_MAX_AGE_MS = 60 * 1000;
+
+/**
+ * The persisted type selection, or `null` when the user has never picked one.
+ *
+ * `null` is meaningful: it means "follow stock", so the picker preselects
+ * whatever is actually available instead of pinning a type that would fail with
+ * "No accounts available". An explicit pick is honoured even if it later goes
+ * out of stock — the UI warns rather than silently changing it.
+ */
+function readTypeSelection(): BloxGenTypeSelection | null {
+  const value = getPersisted<string>(PERSISTENCE_KEYS.generatorAccountType);
+  if (value === 'random') return 'random';
+  return (BLOXGEN_ACCOUNT_TYPES as readonly string[]).includes(value ?? '')
+    ? (value as BloxGenTypeSelection)
+    : null;
+}
 
 function phaseStepIndex(phase: GeneratorPhase): number {
   if (phase === 'generating') return 0;
@@ -134,6 +172,9 @@ export default function Generator(): JSX.Element {
   const [retryCredentials, setRetryCredentials] = useState(
     () => getPersisted<boolean>(PERSISTENCE_KEYS.generatorRetryCredentials) === true,
   );
+  const [stock, setStock] = useState<BloxGenStockEntry[] | null>(() => stockCache.get() ?? null);
+  const [stockLoading, setStockLoading] = useState(stockCache.get() === undefined);
+  const [typeSelection, setTypeSelection] = useState<BloxGenTypeSelection | null>(readTypeSelection);
 
   const addAccount = useAccountStore((state) => state.add);
   const navigate = useNavigationStore((state) => state.navigate);
@@ -177,7 +218,56 @@ export default function Generator(): JSX.Element {
     historyCache.set(history);
   }, [history]);
 
+  // Stock decides which types the picker offers and which one it preselects, so
+  // it is re-read whenever the key changes: availability is per-role, and a
+  // different key can unlock (or lose) types.
+  const refreshStock = useCallback(async (key: string): Promise<void> => {
+    if (!isValidBloxGenApiKey(key)) {
+      setStock(null);
+      setStockLoading(false);
+      return;
+    }
+    setStockLoading(true);
+    try {
+      const entries = normalizeBloxGenStock(await ipc.bloxgenStock(key));
+      // A failed lookup keeps the last known availability rather than blanking
+      // the picker; generation still works, and the API reports the
+      // authoritative reason if the type turns out to be depleted.
+      if (entries) {
+        stockCache.set(entries);
+        setStock(entries);
+      }
+    } catch {
+      // Availability is advisory only.
+    } finally {
+      setStockLoading(false);
+    }
+  }, []);
+
+  const lastStockKey = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (lastStockKey.current === apiKey && stockCache.isFresh(STOCK_CACHE_MAX_AGE_MS)) return;
+    lastStockKey.current = apiKey;
+    void refreshStock(apiKey);
+  }, [apiKey, refreshStock]);
+
   const newestHistory = useMemo(() => [...history].reverse(), [history]);
+
+  // `null` means "follow stock": preselect whatever is actually available rather
+  // than pinning a type that would fail immediately.
+  const effectiveSelection: BloxGenTypeSelection = typeSelection ?? defaultAccountType(stock);
+  const selectionOutOfStock = isSelectionOutOfStock(effectiveSelection, stock);
+  // Before stock is known every type is listed, so the picker is never empty;
+  // once it is known, only the types this role may generate are offered.
+  const offeredTypes = stock ? stock.map((entry) => entry.type) : [...BLOXGEN_ACCOUNT_TYPES];
+  const stockPending = stockLoading && stock === null;
+  const availableCount = stock?.filter((entry) => entry.available).length ?? 0;
+
+  const handleSelectType = useCallback((next: BloxGenTypeSelection) => {
+    setTypeSelection(next);
+    setPersisted(PERSISTENCE_KEYS.generatorAccountType, next);
+  }, []);
 
   const persistHistoryEntry = useCallback((entry: SafeGenHistoryEntry) => {
     setHistory((current) => {
@@ -204,6 +294,9 @@ export default function Generator(): JSX.Element {
       // blocked by the webview's CORS enforcement ("Failed to fetch").
       generate: async (key, accountType) =>
         normalizeBloxGenResponse(await ipc.bloxgenGenerate(key, accountType)),
+      // 'random' resolves here, against current stock, so it can only ever pick
+      // a type that is actually available.
+      accountType: resolveAccountType(effectiveSelection, stock),
       validate: (cookie) => ipc.validateCookie(cookie),
       add: addAccount,
       onPhase: setPhase,
@@ -213,6 +306,9 @@ export default function Generator(): JSX.Element {
         normalizeCredentialLoginOutcome(await ipc.loginCredentials(username, password)),
     });
     persistHistoryEntry(outcome.historyEntry);
+    // A generation consumes stock and can deplete a type, so re-read it rather
+    // than leaving the picker advertising availability that is now gone.
+    void refreshStock(currentKey);
 
     if (outcome.ok) {
       setPhase('success');
@@ -237,7 +333,7 @@ export default function Generator(): JSX.Element {
       setPhase('error');
       showError(outcome.message);
     }
-  }, [acceptModerated, retryCredentials, addAccount, navigate, persistHistoryEntry, showError, showSuccess, t]);
+  }, [acceptModerated, retryCredentials, addAccount, effectiveSelection, stock, refreshStock, navigate, persistHistoryEntry, showError, showSuccess, t]);
 
   const handleToggleModerated = useCallback((next: boolean) => {
     setAcceptModerated(next);
@@ -331,6 +427,85 @@ export default function Generator(): JSX.Element {
             );
           })}
         </ol>
+
+        <div className="gen-types">
+          <div className="gen-types__head">
+            <span className="gen-types__icon" aria-hidden="true"><PackageSearch size={16} /></span>
+            <div>
+              <span className="gen-command__kicker" id="gen-types-title">{t('gen.type.eyebrow')}</span>
+              <strong>{t('gen.type.title')}</strong>
+            </div>
+            <span
+              className="gen-types__stock"
+              data-state={stockPending ? 'loading' : !stock ? 'unknown' : availableCount > 0 ? 'ok' : 'empty'}
+            >
+              {stockPending
+                ? t('gen.type.checkingStock')
+                : stock
+                  ? t('gen.type.inStockCount', { count: availableCount })
+                  : t('gen.type.stockUnknown')}
+            </span>
+          </div>
+
+          {stockPending ? (
+            <div className="gen-types__grid" aria-hidden="true">
+              {[0, 1, 2, 3].map((slot) => <span key={slot} className="gen-type-skeleton" />)}
+            </div>
+          ) : (
+            <div className="gen-types__grid" role="radiogroup" aria-labelledby="gen-types-title">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={effectiveSelection === 'random'}
+                className="gen-type"
+                data-selected={effectiveSelection === 'random' || undefined}
+                disabled={running}
+                onClick={() => handleSelectType('random')}
+              >
+                <Shuffle size={14} aria-hidden="true" />
+                <span>
+                  <strong>{t('gen.type.random')}</strong>
+                  <small>{t('gen.type.randomHint')}</small>
+                </span>
+              </button>
+              {offeredTypes.map((type) => {
+                const entry = stock?.find((candidate) => candidate.type === type);
+                const outOfStock = entry !== undefined && !entry.available;
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    role="radio"
+                    aria-checked={effectiveSelection === type}
+                    className="gen-type"
+                    data-selected={effectiveSelection === type || undefined}
+                    data-out-of-stock={outOfStock || undefined}
+                    disabled={running || outOfStock}
+                    onClick={() => handleSelectType(type)}
+                  >
+                    <span className="gen-type__dot" aria-hidden="true" />
+                    <span>
+                      <strong>{t(BLOXGEN_TYPE_LABEL_KEYS[type])}</strong>
+                      <small>
+                        {entry === undefined
+                          ? t('gen.type.stockUnknown')
+                          : outOfStock
+                            ? t('gen.type.outOfStock')
+                            : t('gen.type.inStock')}
+                      </small>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {selectionOutOfStock ? (
+            <p className="gen-types__warn" role="status">
+              <CircleAlert size={13} /> {t('gen.type.selectionDepleted')}
+            </p>
+          ) : null}
+        </div>
 
         <label className="gen-moderated">
           <Switch

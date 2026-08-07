@@ -10,6 +10,7 @@ import type {
 } from '@/types/models';
 
 const mocks = vi.hoisted(() => ({
+  getRobloxClientsSnapshot: vi.fn(),
   scanRobloxInstallations: vi.fn(),
   addRobloxCustomPreset: vi.fn(),
   removeRobloxCustomPreset: vi.fn(),
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   installRobloxDeployment: vi.fn(),
   cancelRobloxDeployment: vi.fn(),
   onRobloxDeploymentProgress: vi.fn(),
+  onRobloxProtocolChanged: vi.fn(),
 }));
 
 vi.mock('@/lib/ipc', () => ({ ipc: mocks }));
@@ -117,6 +119,14 @@ const SETTINGS = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The deck's own refresh reads installations, protocol handlers and
+  // deployments from one command; `scanRobloxInstallations` remains for the
+  // rescans that follow a preset or deployment mutation.
+  mocks.getRobloxClientsSnapshot.mockResolvedValue({
+    installations: [OFFICIAL, FISHSTRAP],
+    protocol: PROTOCOL,
+    deployments: [],
+  });
   mocks.scanRobloxInstallations.mockResolvedValue([OFFICIAL, FISHSTRAP]);
   mocks.addRobloxCustomPreset.mockResolvedValue(USER_PRESET);
   mocks.removeRobloxCustomPreset.mockResolvedValue(true);
@@ -133,6 +143,7 @@ beforeEach(() => {
   });
   mocks.restoreRobloxProtocol.mockResolvedValue(PROTOCOL);
   mocks.onRobloxDeploymentProgress.mockResolvedValue(() => undefined);
+  mocks.onRobloxProtocolChanged.mockResolvedValue(() => undefined);
   mocks.cancelRobloxDeployment.mockResolvedValue(true);
 });
 
@@ -140,12 +151,12 @@ describe('ClientsTab', () => {
   it('reuses a fresh client scan when the tab is reopened', async () => {
     const first = render(<ClientsTab />);
     expect(await screen.findByText('Fishstrap client')).toBeInTheDocument();
-    expect(mocks.scanRobloxInstallations).toHaveBeenCalledTimes(1);
+    expect(mocks.getRobloxClientsSnapshot).toHaveBeenCalledTimes(1);
 
     first.unmount();
     render(<ClientsTab />);
     expect(screen.getByText('Fishstrap client')).toBeInTheDocument();
-    await waitFor(() => expect(mocks.scanRobloxInstallations).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mocks.getRobloxClientsSnapshot).toHaveBeenCalledTimes(1));
   });
 
   it('separates detected installations from the active Windows handler', async () => {
@@ -184,7 +195,9 @@ describe('ClientsTab', () => {
     await waitFor(() => {
       expect(mocks.addRobloxCustomPreset).toHaveBeenCalledWith(USER_PRESET.executable!, 'QA client');
     });
-    expect(mocks.scanRobloxInstallations).toHaveBeenCalledTimes(2);
+    // The mount refresh goes through the snapshot command; only the post-add
+    // rescan hits `scanRobloxInstallations`.
+    expect(mocks.scanRobloxInstallations).toHaveBeenCalledTimes(1);
   });
 
   it('activates both Windows schemes atomically in the native command', async () => {

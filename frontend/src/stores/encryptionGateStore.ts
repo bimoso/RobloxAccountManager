@@ -175,6 +175,26 @@ export function isUnlockModalOpen(snapshot: {
   return !snapshot.accessGranted && snapshot.mode === 'locked';
 }
 
+/**
+ * Whether a key-submission result counts as a success.
+ *
+ * The bridge contract declares a boolean, but the underlying `enc_unlock` /
+ * `enc_set_key` commands answer with an `{ ok }` record. Testing truthiness
+ * alone would accept the rejection shape `{ ok: false }` — a truthy JS object —
+ * as a successful unlock, opening the gate while the backend key session stays
+ * locked, which makes every later account write fail with "locked". Records are
+ * therefore read through their `ok` field; anything else keeps plain truthiness.
+ *
+ * @param result - The value the IPC call resolved with.
+ * @returns `true` only when the submission actually verified.
+ */
+export function isSubmitSuccess(result: unknown): boolean {
+  if (typeof result === 'object' && result !== null && 'ok' in result) {
+    return Boolean((result as { ok: unknown }).ok);
+  }
+  return Boolean(result);
+}
+
 /** Encryption_Gate store state and actions. */
 export interface EncryptionGateState {
   /** Current gate mode; starts as `'checking'` before `enc_status` resolves. */
@@ -251,8 +271,7 @@ export const useEncryptionGateStore = create<EncryptionGateState>((set, get) => 
     let outcome: EncSubmitOutcome;
     try {
       const result = await call(key);
-      // Success is defined as a truthy result.
-      outcome = result ? { ok: true } : { ok: false };
+      outcome = isSubmitSuccess(result) ? { ok: true } : { ok: false };
     } catch (err) {
       outcome = { ok: false, message: normalizeErrorMessage(err) };
     }

@@ -1497,13 +1497,22 @@ fn protocol_handler_state(
     }
 }
 
-fn protocol_state_in(dir: &Path) -> RobloxProtocolState {
-    let installations = scan_installations_in(dir);
+/// Protocol state derived from an installation sweep the caller already ran.
+///
+/// Split out of [`protocol_state_in`] so callers holding a fresh sweep can reuse
+/// it. The sweep walks three uninstall registry hives, the AppX package
+/// repository and several install trees, so running it twice for one refresh is
+/// the single largest cost in the Clients deck.
+fn protocol_state_from(dir: &Path, installations: &[RobloxInstallation]) -> RobloxProtocolState {
     RobloxProtocolState {
-        roblox: protocol_handler_state("roblox", &installations),
-        roblox_player: protocol_handler_state("roblox-player", &installations),
+        roblox: protocol_handler_state("roblox", installations),
+        roblox_player: protocol_handler_state("roblox-player", installations),
         snapshot_available: protocol_snapshot_path(dir).is_file(),
     }
+}
+
+fn protocol_state_in(dir: &Path) -> RobloxProtocolState {
+    protocol_state_from(dir, &scan_installations_in(dir))
 }
 
 fn save_launch_selection(
@@ -2223,28 +2232,126 @@ pub fn roblox_custom_preset_remove(
     Ok(true)
 }
 
+/// Event emitted when the Windows `roblox://` / `roblox-player:` handlers are
+/// rewritten by something other than this application.
+pub const PROTOCOL_CHANGED_EVENT: &str = "roblox://protocol-changed";
+
+/// How often the handler registration is re-read. This is two small registry
+/// value reads — deliberately NOT the full installation sweep — so it is cheap
+/// enough to run for the lifetime of the app.
+const PROTOCOL_WATCH_INTERVAL_SECS: u64 = 5;
+
+/// Watch the Windows protocol registration and emit [`PROTOCOL_CHANGED_EVENT`]
+/// whenever it stops matching what was last observed.
+///
+/// Roblox's own bootstrapper — and every *strap fork — reclaims these keys on
+/// launch and on update, so the Clients deck's picture of "who handles
+/// roblox://" goes stale with no action from this app and no way to notice.
+/// Emitting on change lets the UI re-read instead of showing a binding that is
+/// no longer real.
+///
+/// The first observation only establishes the baseline; it never emits.
+pub fn spawn_protocol_watcher(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut last: Option<(Option<String>, Option<String>)> = None;
+        loop {
+            tokio::time::sleep(Duration::from_secs(PROTOCOL_WATCH_INTERVAL_SECS)).await;
+            // Registry reads are blocking, so they stay off the async worker.
+            let observed = tokio::task::spawn_blocking(|| {
+                (
+                    protocol_key_snapshot("roblox")
+                        .ok()
+                        .and_then(|snapshot| snapshot.command),
+                    protocol_key_snapshot("roblox-player")
+                        .ok()
+                        .and_then(|snapshot| snapshot.command),
+                )
+            })
+            .await;
+            let Ok(current) = observed else { continue };
+            if last.as_ref().is_some_and(|previous| previous != &current) {
+                let _ = app.emit(PROTOCOL_CHANGED_EVENT, ());
+            }
+            last = Some(current);
+        }
+    });
+}
+
+/// Everything the Clients deck reads, produced by a single installation sweep.
+///
+/// The deck needs the installation list, the protocol handlers derived from it,
+/// and the managed deployment library. Serving all three from one command keeps
+/// the sweep to a single run per refresh; requesting them as separate commands
+/// ran it twice, because protocol state derives from a sweep of its own.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RobloxClientsSnapshot {
+    pub installations: Vec<RobloxInstallation>,
+    pub protocol: RobloxProtocolState,
+    pub deployments: Vec<RobloxDeployment>,
+}
+
+/// `roblox_clients_snapshot` — one sweep serving the whole Clients deck.
 #[tauri::command]
-pub fn roblox_installations_scan(app: AppHandle) -> Result<Vec<RobloxInstallation>, String> {
+pub async fn roblox_clients_snapshot(app: AppHandle) -> Result<RobloxClientsSnapshot, String> {
     let dir = accounts::store_dir(&app)?;
-    Ok(scan_installations_in(&dir))
+    // Off the main thread: the sweep is hundreds of milliseconds of blocking
+    // registry and disk I/O, and a plain `fn` command runs on Tauri's main
+    // thread, freezing the window for its whole duration.
+    tokio::task::spawn_blocking(move || {
+        let installations = scan_installations_in(&dir);
+        let protocol = protocol_state_from(&dir, &installations);
+        let deployments = list_deployments_in(&dir);
+        RobloxClientsSnapshot {
+            installations,
+            protocol,
+            deployments,
+        }
+    })
+    .await
+    .map_err(|error| format!("The Roblox client scan could not complete: {error}"))
 }
 
 #[tauri::command]
-pub fn roblox_protocol_state(app: AppHandle) -> Result<RobloxProtocolState, String> {
+pub async fn roblox_installations_scan(app: AppHandle) -> Result<Vec<RobloxInstallation>, String> {
     let dir = accounts::store_dir(&app)?;
-    Ok(protocol_state_in(&dir))
+    tokio::task::spawn_blocking(move || scan_installations_in(&dir))
+        .await
+        .map_err(|error| format!("The Roblox client scan could not complete: {error}"))
 }
 
 #[tauri::command]
-pub fn roblox_protocol_activate(
+pub async fn roblox_protocol_state(app: AppHandle) -> Result<RobloxProtocolState, String> {
+    let dir = accounts::store_dir(&app)?;
+    tokio::task::spawn_blocking(move || protocol_state_in(&dir))
+        .await
+        .map_err(|error| format!("The Roblox protocol state could not be read: {error}"))
+}
+
+#[tauri::command]
+pub async fn roblox_protocol_activate(
     app: AppHandle,
     installation_id: String,
 ) -> Result<RobloxProtocolState, String> {
     crate::platform::ensure_windows()?;
     let dir = accounts::store_dir(&app)?;
-    let installation = scan_installations_in(&dir)
-        .into_iter()
+    tokio::task::spawn_blocking(move || activate_protocol_in(&dir, &installation_id))
+        .await
+        .map_err(|error| format!("The Roblox protocol change could not complete: {error}"))?
+}
+
+/// The blocking body of [`roblox_protocol_activate`]: registry snapshot, handler
+/// rewrite, and rollback on any failure.
+fn activate_protocol_in(
+    dir: &Path,
+    installation_id: &str,
+) -> Result<RobloxProtocolState, String> {
+    // Kept as a list so the closing protocol read can reuse this sweep.
+    let installations = scan_installations_in(dir);
+    let installation = installations
+        .iter()
         .find(|installation| installation.id == installation_id)
+        .cloned()
         .ok_or_else(|| "The selected Roblox installation was not found.".to_string())?;
     if !installation.protocol_capable {
         return Err("The selected Roblox client cannot handle roblox:// links.".to_string());
@@ -2303,13 +2410,22 @@ pub fn roblox_protocol_activate(
             "Protocol changed but settings could not be saved: {error}"
         ));
     }
-    Ok(protocol_state_in(&dir))
+    // The registry changed but the installed clients did not, so the sweep taken
+    // at the top of this function still describes them.
+    Ok(protocol_state_from(dir, &installations))
 }
 
 #[tauri::command]
-pub fn roblox_protocol_restore(app: AppHandle) -> Result<RobloxProtocolState, String> {
+pub async fn roblox_protocol_restore(app: AppHandle) -> Result<RobloxProtocolState, String> {
     crate::platform::ensure_windows()?;
     let dir = accounts::store_dir(&app)?;
+    tokio::task::spawn_blocking(move || restore_protocol_in(&dir))
+        .await
+        .map_err(|error| format!("The Roblox protocol restore could not complete: {error}"))?
+}
+
+/// The blocking body of [`roblox_protocol_restore`].
+fn restore_protocol_in(dir: &Path) -> Result<RobloxProtocolState, String> {
     let snapshot = load_protocol_snapshot(&dir)?
         .ok_or_else(|| "No Roblox protocol snapshot is available.".to_string())?;
     let current_roblox = protocol_key_snapshot("roblox")?;
@@ -2351,9 +2467,11 @@ pub async fn roblox_release_latest(channel: Option<String>) -> Result<RobloxRele
 }
 
 #[tauri::command]
-pub fn roblox_deployments_list(app: AppHandle) -> Result<Vec<RobloxDeployment>, String> {
+pub async fn roblox_deployments_list(app: AppHandle) -> Result<Vec<RobloxDeployment>, String> {
     let dir = accounts::store_dir(&app)?;
-    Ok(list_deployments_in(&dir))
+    tokio::task::spawn_blocking(move || list_deployments_in(&dir))
+        .await
+        .map_err(|error| format!("The deployment library could not be read: {error}"))
 }
 
 #[tauri::command]

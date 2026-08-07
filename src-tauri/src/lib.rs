@@ -388,6 +388,10 @@ pub fn run() {
                     tauri::async_runtime::block_on(native_helper::shutdown_native_helpers(&state));
                 }
             });
+            // Roblox and every *strap fork reclaim the roblox:// handlers on
+            // launch and update. Watching for that keeps the Clients deck from
+            // advertising a protocol binding that no longer exists.
+            roblox_installations::spawn_protocol_watcher(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -413,6 +417,7 @@ pub fn run() {
             roblox_api::roblox_validate_cookie,
             roblox_api::roblox_moderation_info,
             bloxgen::bloxgen_generate,
+            bloxgen::bloxgen_stock,
             roblox_api::roblox_get_game_name,
             roblox_api::roblox_get_avatar_thumbnails,
             roblox_api::roblox_refresh_cookie,
@@ -437,6 +442,7 @@ pub fn run() {
             browser_launcher::browser_copy_cookie,
             wayfern::browser_wayfern_status,
             wayfern::browser_wayfern_install,
+            roblox_installations::roblox_clients_snapshot,
             roblox_installations::roblox_installations_scan,
             roblox_installations::roblox_custom_preset_add,
             roblox_installations::roblox_custom_preset_remove,

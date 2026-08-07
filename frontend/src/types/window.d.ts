@@ -21,6 +21,7 @@ import type {
   RobloxRelease,
   RobloxDeployment,
   RobloxDeploymentProgress,
+  RobloxClientsSnapshot,
 } from './models';
 
 /** Handle returned by an event subscription; call it to unsubscribe (Tauri's `UnlistenFn`). */
@@ -143,6 +144,8 @@ export interface TauriApi {
     accountType: string,
     region?: string,
   ) => Promise<unknown>;
+  /** `{ status, body }` from BloxGen's `/api/stock`; body shape parsed by `normalizeBloxGenStock`. */
+  bloxgenStock: (apiKey: string) => Promise<unknown>;
   refreshCookie: (cookie: string) => Promise<string>;
   setRobloxVolume: (percent: number) => Promise<void>;
   killAllRoblox: () => Promise<void>;
@@ -153,6 +156,7 @@ export interface TauriApi {
   onAllRobloxClosed: (cb: () => void) => Promise<UnlistenFn>;
   launchRoblox: (id: string, cookie: string, target: string) => Promise<LaunchResult>;
   openExternal: (url: string) => Promise<void>;
+  getRobloxClientsSnapshot: () => Promise<RobloxClientsSnapshot>;
   scanRobloxInstallations: () => Promise<RobloxInstallation[]>;
   addRobloxCustomPreset: (path: string, displayName?: string | null) => Promise<RobloxInstallation>;
   removeRobloxCustomPreset: (installationId: string) => Promise<boolean>;
@@ -170,6 +174,8 @@ export interface TauriApi {
   onRobloxDeploymentProgress: (
     cb: (payload: RobloxDeploymentProgress) => void,
   ) => Promise<UnlistenFn>;
+  /** Fires when the roblox:// handlers are rewritten outside this app. */
+  onRobloxProtocolChanged: (cb: () => void) => Promise<UnlistenFn>;
 
   // ── Settings_Store ──
   loadSettings: () => Promise<Settings>;

@@ -73,8 +73,11 @@ export function editFormInitialValues(account: Account): EditFormValues {
     gameTarget: toFieldString(account.gameTarget),
     notes: toFieldString(account.notes),
     // Login credentials for re-login: preloaded so an untouched field diffs as
-    // "unchanged" and the stored value is preserved on save.
-    loginUsername: toFieldString(account.loginUsername),
+    // "unchanged" and the stored value is preserved on save. Accounts added by
+    // cookie paste or browser login carry no explicit `loginUsername`, so fall
+    // back to the Roblox `username` — the identifier `reLoginIdentifier` already
+    // re-logins with — instead of showing a blank field the user must retype.
+    loginUsername: toFieldString(account.loginUsername) || toFieldString(account.username),
     password: toFieldString(account.password),
   };
 }

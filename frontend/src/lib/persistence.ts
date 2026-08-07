@@ -40,6 +40,8 @@ export const PERSISTENCE_KEYS = {
   acceptModerated: 'accept-moderated',
   /** Whether the generator retries with user:pass when the cookie is rejected (boolean). */
   generatorRetryCredentials: 'generator-retry-credentials',
+  /** Generator account type to request: a BloxGen wire type, or 'random'. */
+  generatorAccountType: 'generator-account-type',
   /** Selected click-sound profile id (Requirement 22.1, 22.2). */
   soundProfile: 'sound-profile',
   /** Click-sound volume, 0..1 (Requirement 22.3). */

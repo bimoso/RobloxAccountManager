@@ -213,6 +213,18 @@ export interface RobloxDeployment {
   source: 'setup-aws.rbxcdn.com';
 }
 
+/**
+ * Everything the Clients deck reads, produced by a single backend sweep
+ * (`roblox_clients_snapshot`). Protocol state is derived from the same
+ * installation scan as `installations`, so requesting the three pieces together
+ * costs one registry + disk walk instead of two.
+ */
+export interface RobloxClientsSnapshot {
+  installations: RobloxInstallation[];
+  protocol: RobloxProtocolState;
+  deployments: RobloxDeployment[];
+}
+
 export type RobloxDeploymentStage =
   | 'resolving_manifest'
   | 'downloading'

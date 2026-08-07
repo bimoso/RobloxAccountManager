@@ -19,7 +19,7 @@ import {
 import { Button } from '@/components/Button';
 import { ipc } from '@/lib/ipc';
 import { createSessionCache } from '@/lib/sessionCache';
-import { useToastStore } from '@/stores/toastStore';
+import { normalizeErrorMessage, useToastStore } from '@/stores/toastStore';
 import { useTranslation } from '@/i18n/useTranslation';
 import type {
   RobloxDeployment,
@@ -95,6 +95,7 @@ export function ClientsTab(): JSX.Element {
   const [deployments, setDeployments] = useState<RobloxDeployment[]>(cached?.deployments ?? []);
   const [settings, setSettings] = useState<Settings | null>(cached?.settings ?? null);
   const [loading, setLoading] = useState(cached === undefined);
+  const [error, setError] = useState<string | null>(null);
   const [cacheReady, setCacheReady] = useState(cached !== undefined);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [channel, setChannel] = useState('LIVE');
@@ -117,29 +118,45 @@ export function ClientsTab(): JSX.Element {
     clientsCache.set({ installations, protocol, release, deployments, settings });
   }, [cacheReady, installations, protocol, release, deployments, settings]);
 
+  // The LIVE-release lookup is a network round trip that the backend caps at 30
+  // seconds. It is deliberately kept off the scan path so a slow or unreachable
+  // endpoint cannot hold the client list — and the loading state — hostage.
+  const refreshRelease = useCallback(async (requestedChannel: string): Promise<void> => {
+    try {
+      setRelease(await ipc.getLatestRobloxRelease(requestedChannel));
+    } catch {
+      // Nothing else on the deck depends on it; the card falls back to
+      // "version unavailable".
+    }
+  }, []);
+
   const refresh = useCallback(async (requestedChannel = 'LIVE', options?: { silent?: boolean }): Promise<void> => {
     // A silent refresh revalidates behind the cached data already on screen
     // without flipping the deck into its loading state.
     if (!options?.silent) setLoading(true);
+    setError(null);
+    void refreshRelease(requestedChannel);
     try {
-      const [nextInstallations, nextProtocol, nextRelease, nextDeployments, nextSettings] =
-        await Promise.all([
-          ipc.scanRobloxInstallations(),
-          ipc.getRobloxProtocolState(),
-          ipc.getLatestRobloxRelease(requestedChannel),
-          ipc.listRobloxDeployments(),
-          ipc.loadSettings(),
-        ]);
-      setInstallations(nextInstallations);
-      setProtocol(nextProtocol);
-      setRelease(nextRelease);
-      setDeployments(nextDeployments);
+      // One command for installations, protocol handlers and deployments: they
+      // all derive from the same registry + disk sweep, which the backend now
+      // runs once, off the main thread.
+      const [snapshot, nextSettings] = await Promise.all([
+        ipc.getRobloxClientsSnapshot(),
+        ipc.loadSettings(),
+      ]);
+      setInstallations(snapshot.installations);
+      setProtocol(snapshot.protocol);
+      setDeployments(snapshot.deployments);
       setSettings(nextSettings);
       setCacheReady(true);
+    } catch (cause) {
+      // Without this the rejection was unhandled and the deck sat blank with no
+      // explanation of why nothing had loaded.
+      setError(normalizeErrorMessage(cause));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [refreshRelease]);
 
   useEffect(() => {
     // A manual Refresh remains available, but normal tab hopping reuses a fresh
@@ -165,6 +182,31 @@ export function ClientsTab(): JSX.Element {
     };
   }, []);
 
+  // Held in a ref so the subscription below is not torn down and rebuilt on
+  // every keystroke in the channel field.
+  const channelRef = useRef(channel);
+  useEffect(() => {
+    channelRef.current = channel;
+  }, [channel]);
+
+  // Roblox and the *strap forks reclaim the roblox:// handlers on launch and
+  // update. Re-reading on that signal keeps the routing rail honest instead of
+  // showing a binding this app no longer owns.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void ipc.onRobloxProtocolChanged(() => {
+      if (!cancelled) void refresh(channelRef.current.trim() || 'LIVE', { silent: true });
+    }).then((stop) => {
+      if (cancelled) stop();
+      else unlisten = stop;
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [refresh]);
+
   const protocolIds = useMemo(
     () => new Set([
       protocol?.roblox.installationId,
@@ -175,6 +217,9 @@ export function ClientsTab(): JSX.Element {
 
   const directPresetId = settings?.robloxLaunchPresetId ?? null;
   const launchMode = settings?.robloxLaunchMode ?? 'direct';
+  // A first scan with nothing cached to paint behind it: the deck shows
+  // placeholder rows rather than an empty container and a "0 found" badge.
+  const scanning = loading && installations.length === 0;
 
   const selectManagerClient = async (installation: RobloxInstallation): Promise<void> => {
     if (!installation.executable) return;
@@ -347,8 +392,17 @@ export function ClientsTab(): JSX.Element {
       <section className="clients-installations">
         <div className="clients-section-head">
           <div><span>{t('clients.detected')}</span><h3>{t('clients.installationsTitle')}</h3></div>
-          <span>{t('clients.found', { count: installations.length })}</span>
+          <span>{scanning ? t('clients.scanning') : t('clients.found', { count: installations.length })}</span>
         </div>
+        {error ? (
+          <p className="clients-error" role="alert">
+            <ShieldAlert size={15} />
+            <span>{t('clients.scanFailed', { reason: error })}</span>
+            <button type="button" onClick={() => void refresh(channel.trim() || 'LIVE')}>
+              <RefreshCw size={12} /> {t('clients.retry')}
+            </button>
+          </p>
+        ) : null}
         <form className="clients-path-preset" onSubmit={(event) => {
           event.preventDefault();
           void addPathPreset();
@@ -445,7 +499,12 @@ export function ClientsTab(): JSX.Element {
               );
             })}
           </AnimatePresence>
-          {!loading && installations.length === 0 ? (
+          {scanning ? (
+            <div className="clients-skeleton" aria-hidden="true">
+              <span /><span /><span />
+            </div>
+          ) : null}
+          {!loading && !error && installations.length === 0 ? (
             <p className="clients-empty">{t('clients.noInstallations')}</p>
           ) : null}
         </div>
@@ -508,7 +567,10 @@ export function ClientsTab(): JSX.Element {
               }}>{t('clients.use')}</button>
             </article>
           ))}
-          {!loading && deployments.length === 0 ? <p className="clients-empty">{t('clients.noDeployments')}</p> : null}
+          {scanning ? (
+            <div className="clients-skeleton" aria-hidden="true"><span /><span /></div>
+          ) : null}
+          {!loading && !error && deployments.length === 0 ? <p className="clients-empty">{t('clients.noDeployments')}</p> : null}
         </div>
       </section>
     </div>
