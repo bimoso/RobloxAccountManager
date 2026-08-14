@@ -188,6 +188,10 @@ export const ipc = {
   getAvatarThumbnails: (userIds: Array<string | number>) =>
     call('getAvatarThumbnails', [userIds], true),
   robloxApiGet: (url: string) => call('robloxApiGet', [url], true),
+  // WEAO is an optional third-party feed: the page owns its own inline error
+  // and freshness pill, so a toast stacked on top would just be noise.
+  weaoVersions: (force: boolean) => call('weaoVersions', [force], false),
+  weaoExploits: (force: boolean) => call('weaoExploits', [force], false),
   // Background polling: presence is refreshed on a timer.
   getPresence: (userIds: Array<string | number>, cookie: string) =>
     call('getPresence', [userIds, cookie], false),

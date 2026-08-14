@@ -18,9 +18,11 @@ import { Switch } from '@/components/Switch';
 import { ipc } from '@/lib/ipc';
 import { getPersisted, PERSISTENCE_KEYS, setPersisted } from '@/lib/persistence';
 import type { Account } from '@/types/models';
+import type { WayfernProgress } from '@/types/models';
 import type { ChromeDownloadProgress, UnlistenFn } from '@/types/window';
 import {
   buildAccountToAdd,
+  findAccountByIdentity,
   findAccountByUsername,
   normalizeCredentialLogin,
   normalizeValidation,
@@ -183,6 +185,7 @@ export function AddAccountModal({
     if (!open) return;
     let active = true;
     let unlisten: UnlistenFn | undefined;
+    let unlistenWayfern: UnlistenFn | undefined;
     void ipc
       .onChromeProgress((payload: ChromeDownloadProgress) => {
         const data = payload as DownloadProgress;
@@ -202,9 +205,28 @@ export function AddAccountModal({
       .catch(() => {
         // Subscription failures are non-fatal; the login flow still completes.
       });
+    void ipc
+      .onWayfernProgress((payload: WayfernProgress) => {
+        if (!active) return;
+        if (payload.stage === 'ready') {
+          setProgressPercent(100);
+          setLoginPhase('waiting');
+          return;
+        }
+        setLoginPhase('downloading');
+        if (typeof payload.percent === 'number') setProgressPercent(payload.percent);
+      })
+      .then((fn) => {
+        if (active) unlistenWayfern = fn;
+        else fn();
+      })
+      .catch(() => {
+        // Wayfern may already be installed; login can proceed without progress.
+      });
     return () => {
       active = false;
       unlisten?.();
+      unlistenWayfern?.();
     };
   }, [open]);
 
@@ -272,10 +294,10 @@ export function AddAccountModal({
     setCookiesSummary(summary);
   };
 
-  // Resolve one entry to a valid session, branching on the entry and the current
-  // accounts: an inline cookie is validated directly; an entry matching an
-  // existing account reuses its session (no login — we only attach credentials);
-  // otherwise the humanized auto-login captures a fresh cookie.
+  // Resolve one entry to a valid session. Inline cookies are validated directly;
+  // every plain user:pass entry opens the visible credential-login browser.
+  // Reusing an existing cookie here made the UI look successful without ever
+  // proving the supplied password or exercising the requested login flow.
   const resolveCredential = async (entry: CredentialEntry): Promise<CredentialOutcome> => {
     if (entry.cookie) {
       const validation = normalizeValidation(await ipc.validateCookie(entry.cookie));
@@ -289,11 +311,6 @@ export function AddAccountModal({
       }
       return { ok: false, error: validation.reason?.trim() || 'La cookie no es válida.' };
     }
-    const existing = findAccountByUsername(accounts, entry.username);
-    if (existing && onUpdate) {
-      // Already saved by cookie — attach credentials without a new login.
-      return { ok: true, cookie: existing.cookie, username: existing.username, userId: existing.userId };
-    }
     const login = normalizeCredentialLogin(await ipc.loginCredentials(entry.username, entry.password));
     if (!login.success || !login.cookie || !login.username) {
       return { ok: false, error: login.error };
@@ -304,7 +321,11 @@ export function AddAccountModal({
   // Persist a resolved entry: update the matching account (attach credentials /
   // refresh cookie) or add a new one, upserting by the resolved username.
   const saveCredential = async (entry: CredentialEntry, outcome: CredentialOutcome): Promise<void> => {
-    const existing = findAccountByUsername(accounts, outcome.username ?? entry.username);
+    const existing =
+      findAccountByIdentity(accounts, {
+        userId: outcome.userId,
+        username: outcome.username ?? entry.username,
+      }) ?? findAccountByUsername(accounts, entry.username);
     if (existing && onUpdate) {
       await onUpdate(existing.id, {
         cookie: outcome.cookie,
@@ -528,8 +549,8 @@ export function AddAccountModal({
             <p className="addacc__hint">
               <Info size={15} aria-hidden="true" />
               Sin cookie: se abrirá una ventana por cuenta y las credenciales se escribirán con un
-              ritmo humanizado (resuelve el captcha/2FA si aparece). Si el usuario ya existe, solo se
-              le guardan las credenciales. Con cookie, se valida y se añade directo.
+              ritmo humanizado (resuelve el captcha/2FA si aparece), aunque la cuenta ya exista.
+              Con cookie, se valida y se actualiza o añade directo.
             </p>
 
             {!comboRunning && !comboSummary && parseCredentialLines(comboText).length > 0 && (

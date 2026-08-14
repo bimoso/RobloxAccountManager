@@ -149,4 +149,56 @@ describe('Settings session automation card', () => {
     await user.click(arrangeButton);
     await waitFor(() => expect(mocks.arrangeWindows).toHaveBeenCalledTimes(1));
   });
+
+  it('restores the stored spawn gap and persists a new one', async () => {
+    const user = userEvent.setup();
+    arrange({ launchSpawnGapMs: 1500 });
+    render(<SessionAutomationCard />);
+
+    const gap = await screen.findByLabelText(
+      'Milliseconds between successive account launches',
+    );
+    await waitFor(() => expect(gap).toHaveValue(1500));
+
+    await user.clear(gap);
+    await user.type(gap, '2000');
+    await user.tab();
+
+    await waitFor(() =>
+      expect(mocks.saveSettings).toHaveBeenCalledWith({ launchSpawnGapMs: 2000 }),
+    );
+  });
+
+  it('clamps a spawn gap below the safe floor instead of persisting it', async () => {
+    const user = userEvent.setup();
+    arrange({});
+    render(<SessionAutomationCard />);
+
+    const gap = await screen.findByLabelText(
+      'Milliseconds between successive account launches',
+    );
+    // Defaults to the backend's 4000 when the setting is absent.
+    await waitFor(() => expect(gap).toHaveValue(4000));
+
+    await user.clear(gap);
+    await user.type(gap, '10');
+    await user.tab();
+
+    // 10ms would let two clients collapse into one instance; the field clamps
+    // to the same floor the backend enforces rather than sending it through.
+    await waitFor(() => expect(gap).toHaveValue(250));
+    expect(mocks.saveSettings).toHaveBeenCalledWith({ launchSpawnGapMs: 250 });
+  });
+
+  it('stays editable while window layout is disabled', async () => {
+    arrange({ windowLayoutEnabled: false });
+    render(<SessionAutomationCard />);
+
+    // The gap governs launching, not the window grid, so it must not be gated
+    // behind the layout toggle the way the size/per-row fields are.
+    const gap = await screen.findByLabelText(
+      'Milliseconds between successive account launches',
+    );
+    expect(gap).toBeEnabled();
+  });
 });

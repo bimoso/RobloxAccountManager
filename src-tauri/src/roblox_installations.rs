@@ -23,7 +23,7 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
-use crate::models::RobloxLaunchMode;
+use crate::models::{RobloxLaunchMode, Settings};
 use crate::{accounts, settings, AppState};
 
 const CLIENT_SETTINGS_BASE: &str =
@@ -138,7 +138,7 @@ pub struct RobloxDeploymentProgress {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RobloxLaunchPlan {
     /// Delegate the already-authenticated URI to Windows' active handler.
     Protocol,
@@ -149,6 +149,51 @@ pub enum RobloxLaunchPlan {
         arguments: Vec<String>,
         tracks_player: bool,
     },
+}
+
+/// A [`RobloxLaunchPlan`] with the authenticated URI not yet substituted.
+///
+/// Selecting the client is a sweep of the registry and several install trees;
+/// the URI, by contrast, must be minted at the moment of spawn because
+/// `build_roblox_uri` embeds `launchtime:{now_ms()}`. Splitting the two lets the
+/// expensive half be resolved from a cache — and be resolved *purely*, which is
+/// what makes the client-selection matrix testable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RobloxLaunchTemplate {
+    /// Delegate to Windows' active handler; nothing to substitute.
+    Protocol,
+    /// Spawn `executable`, substituting the URI for every `%1` in `arguments`.
+    Command {
+        executable: PathBuf,
+        arguments: Vec<String>,
+        tracks_player: bool,
+    },
+}
+
+impl RobloxLaunchTemplate {
+    /// Substitute `uri` for the `%1` placeholder, yielding the plan to spawn.
+    ///
+    /// `%1` is the placeholder Windows itself uses in a registered protocol
+    /// command, so a bootstrapper's stored command line needs no rewriting to
+    /// fit this shape; the direct-client arms adopt it so one substitution rule
+    /// covers every arm.
+    pub fn with_uri(self, uri: &str) -> RobloxLaunchPlan {
+        match self {
+            Self::Protocol => RobloxLaunchPlan::Protocol,
+            Self::Command {
+                executable,
+                arguments,
+                tracks_player,
+            } => RobloxLaunchPlan::Command {
+                executable,
+                arguments: arguments
+                    .into_iter()
+                    .map(|argument| argument.replace("%1", uri))
+                    .collect(),
+                tracks_player,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1540,39 +1585,140 @@ fn save_launch_selection(
         .map_err(|error| error.to_string())
 }
 
-pub fn resolve_launch_plan(dir: &Path, uri: &str) -> RobloxLaunchPlan {
-    let loaded = settings::load_from_dir(dir).unwrap_or_else(|_| settings::default_settings());
-    if loaded.roblox_launch_mode == RobloxLaunchMode::Protocol {
-        return RobloxLaunchPlan::Protocol;
+// ── Cached installation sweep ───────────────────────────────────────────────
+//
+// Every launch used to run a full `scan_installations_in` just to map the
+// selected preset id onto an executable. The sweep is the same one
+// `roblox_clients_snapshot` already routes through `spawn_blocking` because it
+// is "hundreds of milliseconds of blocking registry and disk I/O", and it was
+// being paid once per account in a batch launch, on an async worker, under the
+// global launch lock.
+
+/// How long a cached sweep is served before it is re-run regardless of
+/// invalidation. Purely a safety net: clients can also appear because the user
+/// installed one outside this app, which nothing here can observe.
+pub const INSTALL_SCAN_TTL_MS: u64 = 60_000;
+
+/// An installation sweep held in [`AppState`], tagged with the invalidation
+/// epoch it was taken under.
+#[derive(Debug, Clone)]
+pub struct CachedInstallScan {
+    installations: Arc<Vec<RobloxInstallation>>,
+    captured_at: u64,
+    epoch: u64,
+}
+
+/// Mark the cached sweep stale. Cheap and synchronous, so the `pub fn` preset
+/// commands can call it without an async context.
+pub fn invalidate_install_scan(state: &AppState) {
+    state.install_scan_epoch.fetch_add(1, Ordering::Release);
+}
+
+/// Same as [`invalidate_install_scan`], for callers that only hold an
+/// [`AppHandle`] (the state is registered before any command can run, so a
+/// missing state simply means there is no cache to invalidate).
+pub fn invalidate_install_scan_for(app: &AppHandle) {
+    use tauri::Manager;
+    if let Some(state) = app.try_state::<AppState>() {
+        invalidate_install_scan(&state);
     }
-    if let Some(preset_id) = loaded.roblox_launch_preset_id.as_deref() {
-        if let Some(installation) = scan_installations_in(dir)
-            .into_iter()
+}
+
+/// Adopt a sweep the caller just ran as the cached one.
+///
+/// The scan commands already pay for a full sweep on the user's behalf, so
+/// warming from their result means the first launch after opening the Clients
+/// deck never re-runs it.
+pub async fn warm_install_scan(state: &AppState, installations: &[RobloxInstallation]) {
+    let epoch = state.install_scan_epoch.load(Ordering::Acquire);
+    *state.install_scan.lock().await = Some(CachedInstallScan {
+        installations: Arc::new(installations.to_vec()),
+        captured_at: now_ms(),
+        epoch,
+    });
+}
+
+/// The cached installation sweep, re-running it on a blocking worker when the
+/// cache is empty, stale by epoch, or older than [`INSTALL_SCAN_TTL_MS`].
+///
+/// The guard is never held across the `spawn_blocking`: doing so would make one
+/// slow sweep block every other reader, which is the exact cost this cache
+/// exists to remove.
+pub async fn cached_installations(
+    state: &AppState,
+    dir: &Path,
+) -> Result<Arc<Vec<RobloxInstallation>>, String> {
+    let epoch = state.install_scan_epoch.load(Ordering::Acquire);
+    {
+        let cache = state.install_scan.lock().await;
+        if let Some(cached) = cache.as_ref() {
+            if cached.epoch == epoch
+                && now_ms().saturating_sub(cached.captured_at) < INSTALL_SCAN_TTL_MS
+            {
+                return Ok(cached.installations.clone());
+            }
+        }
+    }
+
+    let owned = dir.to_path_buf();
+    let installations = Arc::new(
+        tokio::task::spawn_blocking(move || scan_installations_in(&owned))
+            .await
+            .map_err(|error| format!("The Roblox client scan could not complete: {error}"))?,
+    );
+    // An invalidation that landed while the sweep ran wins: storing the result
+    // under its now-superseded epoch would leave a cache no reader accepts,
+    // which is correct but wasteful, so drop it instead.
+    if state.install_scan_epoch.load(Ordering::Acquire) == epoch {
+        *state.install_scan.lock().await = Some(CachedInstallScan {
+            installations: installations.clone(),
+            captured_at: now_ms(),
+            epoch,
+        });
+    }
+    Ok(installations)
+}
+
+/// Pick the client a launch should use, given an installation sweep and the
+/// stored settings.
+///
+/// Deliberately pure — no registry, no disk, no clock — so the whole selection
+/// matrix (protocol mode, official/custom preset, bootstrapper preset, and the
+/// fallback) is exercisable in tests. That is also why `fallback_player` is a
+/// parameter: the real fallback is "the newest folder under
+/// `%LOCALAPPDATA%\Roblox\Versions` that still holds a player", which the caller
+/// resolves and hands in.
+pub fn resolve_launch_template_from(
+    installations: &[RobloxInstallation],
+    settings: &Settings,
+    fallback_player: Option<&Path>,
+) -> RobloxLaunchTemplate {
+    if settings.roblox_launch_mode == RobloxLaunchMode::Protocol {
+        return RobloxLaunchTemplate::Protocol;
+    }
+    if let Some(preset_id) = settings.roblox_launch_preset_id.as_deref() {
+        if let Some(installation) = installations
+            .iter()
             .find(|installation| installation.id == preset_id && installation.protocol_capable)
         {
             if matches!(
                 installation.kind,
                 RobloxLauncherKind::Official | RobloxLauncherKind::Custom
             ) {
-                if let Some(executable) = installation.executable {
-                    return RobloxLaunchPlan::Command {
+                if let Some(executable) = installation.executable.as_deref() {
+                    return RobloxLaunchTemplate::Command {
                         executable: PathBuf::from(executable),
-                        arguments: vec![uri.to_string()],
+                        arguments: vec!["%1".to_string()],
                         tracks_player: true,
                     };
                 }
             } else if is_bootstrapper_kind(installation.kind) {
-                if let Some(command) = handler_command_for(&installation) {
+                if let Some(command) = handler_command_for(installation) {
                     let mut parts = parse_windows_command_line(&command);
                     if !parts.is_empty() {
-                        let executable = PathBuf::from(parts.remove(0));
-                        let arguments = parts
-                            .into_iter()
-                            .map(|part| part.replace("%1", uri))
-                            .collect();
-                        return RobloxLaunchPlan::Command {
-                            executable,
-                            arguments,
+                        return RobloxLaunchTemplate::Command {
+                            executable: PathBuf::from(parts.remove(0)),
+                            arguments: parts,
                             tracks_player: false,
                         };
                     }
@@ -1581,18 +1727,60 @@ pub fn resolve_launch_plan(dir: &Path, uri: &str) -> RobloxLaunchPlan {
         }
     }
 
-    if let Some(executable) = settings::latest_roblox_version_dir()
+    match fallback_player {
+        Some(executable) => RobloxLaunchTemplate::Command {
+            executable: executable.to_path_buf(),
+            arguments: vec!["%1".to_string()],
+            tracks_player: true,
+        },
+        None => RobloxLaunchTemplate::Protocol,
+    }
+}
+
+/// The newest installed official player, used when no preset resolves.
+fn fallback_player_executable() -> Option<PathBuf> {
+    settings::latest_roblox_version_dir()
         .map(|path| path.join("RobloxPlayerBeta.exe"))
         .filter(|path| path.is_file())
-    {
-        RobloxLaunchPlan::Command {
-            executable,
-            arguments: vec![uri.to_string()],
-            tracks_player: true,
-        }
+}
+
+/// Resolve the launch template the blocking way: load settings, run a full
+/// installation sweep, then select. Callers on an async worker should prefer
+/// [`resolve_launch_plan_cached`], which serves the sweep from [`AppState`].
+pub fn resolve_launch_template_in(dir: &Path) -> RobloxLaunchTemplate {
+    let loaded = settings::load_from_dir(dir).unwrap_or_else(|_| settings::default_settings());
+    let installations = if loaded.roblox_launch_mode == RobloxLaunchMode::Protocol {
+        // The sweep cannot change a protocol-mode answer, so skip its cost.
+        Vec::new()
     } else {
-        RobloxLaunchPlan::Protocol
+        scan_installations_in(dir)
+    };
+    resolve_launch_template_from(&installations, &loaded, fallback_player_executable().as_deref())
+}
+
+pub fn resolve_launch_plan(dir: &Path, uri: &str) -> RobloxLaunchPlan {
+    resolve_launch_template_in(dir).with_uri(uri)
+}
+
+/// The launch-path entry point: same selection as [`resolve_launch_plan`], but
+/// the installation sweep comes from the shared cache and runs on a blocking
+/// worker instead of stalling the async worker that drives the launch.
+pub async fn resolve_launch_plan_cached(
+    state: &AppState,
+    dir: &Path,
+    uri: &str,
+) -> RobloxLaunchPlan {
+    let loaded = settings::load_from_dir(dir).unwrap_or_else(|_| settings::default_settings());
+    if loaded.roblox_launch_mode == RobloxLaunchMode::Protocol {
+        return RobloxLaunchTemplate::Protocol.with_uri(uri);
     }
+    let installations = cached_installations(state, dir).await.unwrap_or_default();
+    resolve_launch_template_from(
+        &installations,
+        &loaded,
+        fallback_player_executable().as_deref(),
+    )
+    .with_uri(uri)
 }
 
 async fn latest_release(channel: Option<&str>) -> Result<RobloxRelease, String> {
@@ -1979,6 +2167,29 @@ fn directory_size(path: &Path) -> u64 {
     total
 }
 
+/// Reclaim assembled-but-never-activated deployment trees.
+///
+/// Same convention and same failure mode as the Wayfern staging store: the name
+/// carries the PID that created it, and anything left by an earlier run of the
+/// app has a PID that will never match the current one again, so a per-PID
+/// filter alone never reclaimed it. A directory belonging to a live process is
+/// another instance's in-flight install and is left alone.
+async fn cleanup_stale_staging(root: &Path) {
+    let Ok(mut entries) = tokio::fs::read_dir(root).await else {
+        return;
+    };
+    let live_pids = crate::roblox_process::enumerate_live_pids().await;
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let name = entry.file_name();
+        if crate::roblox_process::staging_dir_is_abandoned(
+            &name.to_string_lossy(),
+            live_pids.as_ref(),
+        ) {
+            let _ = tokio::fs::remove_dir_all(entry.path()).await;
+        }
+    }
+}
+
 async fn install_deployment_inner(
     app: &AppHandle,
     dir: &Path,
@@ -2026,6 +2237,9 @@ async fn install_deployment_inner(
     }
 
     let root = deployments_root(dir);
+    // A multi-gigabyte download should not start on top of the wreckage of the
+    // previous attempt.
+    cleanup_stale_staging(&root).await;
     let work_dir = root.join("work").join(operation_id);
     let staging_dir = root.join(format!(
         "staging-{}-{}-{}-{}",
@@ -2204,6 +2418,7 @@ pub fn roblox_custom_preset_add(
     presets.push(preset.clone());
     presets.sort_by(|left, right| right.added_at.cmp(&left.added_at));
     save_custom_presets(&dir, &presets)?;
+    invalidate_install_scan_for(&app);
     custom_preset_installation(&preset)
         .ok_or_else(|| "The saved Roblox preset could not be resolved.".to_string())
 }
@@ -2221,6 +2436,7 @@ pub fn roblox_custom_preset_remove(
         return Ok(false);
     }
     save_custom_presets(&dir, &presets)?;
+    invalidate_install_scan_for(&app);
     if settings::load_from_dir(&dir)
         .ok()
         .and_then(|loaded| loaded.roblox_launch_preset_id)
@@ -2293,12 +2509,15 @@ pub struct RobloxClientsSnapshot {
 
 /// `roblox_clients_snapshot` — one sweep serving the whole Clients deck.
 #[tauri::command]
-pub async fn roblox_clients_snapshot(app: AppHandle) -> Result<RobloxClientsSnapshot, String> {
+pub async fn roblox_clients_snapshot(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<RobloxClientsSnapshot, String> {
     let dir = accounts::store_dir(&app)?;
     // Off the main thread: the sweep is hundreds of milliseconds of blocking
     // registry and disk I/O, and a plain `fn` command runs on Tauri's main
     // thread, freezing the window for its whole duration.
-    tokio::task::spawn_blocking(move || {
+    let snapshot = tokio::task::spawn_blocking(move || {
         let installations = scan_installations_in(&dir);
         let protocol = protocol_state_from(&dir, &installations);
         let deployments = list_deployments_in(&dir);
@@ -2309,15 +2528,23 @@ pub async fn roblox_clients_snapshot(app: AppHandle) -> Result<RobloxClientsSnap
         }
     })
     .await
-    .map_err(|error| format!("The Roblox client scan could not complete: {error}"))
+    .map_err(|error| format!("The Roblox client scan could not complete: {error}"))?;
+    // Warmed rather than invalidated: this sweep is as fresh as one taken now.
+    warm_install_scan(&state, &snapshot.installations).await;
+    Ok(snapshot)
 }
 
 #[tauri::command]
-pub async fn roblox_installations_scan(app: AppHandle) -> Result<Vec<RobloxInstallation>, String> {
+pub async fn roblox_installations_scan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<RobloxInstallation>, String> {
     let dir = accounts::store_dir(&app)?;
-    tokio::task::spawn_blocking(move || scan_installations_in(&dir))
+    let installations = tokio::task::spawn_blocking(move || scan_installations_in(&dir))
         .await
-        .map_err(|error| format!("The Roblox client scan could not complete: {error}"))
+        .map_err(|error| format!("The Roblox client scan could not complete: {error}"))?;
+    warm_install_scan(&state, &installations).await;
+    Ok(installations)
 }
 
 #[tauri::command]
@@ -2331,13 +2558,18 @@ pub async fn roblox_protocol_state(app: AppHandle) -> Result<RobloxProtocolState
 #[tauri::command]
 pub async fn roblox_protocol_activate(
     app: AppHandle,
+    state: State<'_, AppState>,
     installation_id: String,
 ) -> Result<RobloxProtocolState, String> {
     crate::platform::ensure_windows()?;
     let dir = accounts::store_dir(&app)?;
-    tokio::task::spawn_blocking(move || activate_protocol_in(&dir, &installation_id))
+    let activated = tokio::task::spawn_blocking(move || activate_protocol_in(&dir, &installation_id))
         .await
-        .map_err(|error| format!("The Roblox protocol change could not complete: {error}"))?
+        .map_err(|error| format!("The Roblox protocol change could not complete: {error}"))?;
+    // A sweep records each installation's `active_schemes`, so rewriting the
+    // handlers changes what a sweep would return even though no client moved.
+    invalidate_install_scan(&state);
+    activated
 }
 
 /// The blocking body of [`roblox_protocol_activate`]: registry snapshot, handler
@@ -2416,12 +2648,17 @@ fn activate_protocol_in(
 }
 
 #[tauri::command]
-pub async fn roblox_protocol_restore(app: AppHandle) -> Result<RobloxProtocolState, String> {
+pub async fn roblox_protocol_restore(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<RobloxProtocolState, String> {
     crate::platform::ensure_windows()?;
     let dir = accounts::store_dir(&app)?;
-    tokio::task::spawn_blocking(move || restore_protocol_in(&dir))
+    let restored = tokio::task::spawn_blocking(move || restore_protocol_in(&dir))
         .await
-        .map_err(|error| format!("The Roblox protocol restore could not complete: {error}"))?
+        .map_err(|error| format!("The Roblox protocol restore could not complete: {error}"))?;
+    invalidate_install_scan(&state);
+    restored
 }
 
 /// The blocking body of [`roblox_protocol_restore`].
@@ -2547,6 +2784,10 @@ pub async fn roblox_deployment_install(
                 Some(deployment.size_bytes),
                 None,
             );
+            // `scan_installations_in` publishes every managed deployment as a
+            // launchable `custom:{channel}:{guid}` installation, so the new build
+            // must be visible to the next launch without a Clients-deck visit.
+            invalidate_install_scan(&state);
             Ok(deployment)
         }
         Err(error) => {
@@ -2566,17 +2807,7 @@ pub async fn roblox_deployment_install(
             // Only application-owned paths are cleaned, never Roblox's install.
             let root = deployments_root(&dir);
             let _ = tokio::fs::remove_dir_all(root.join("work").join(&operation_id)).await;
-            if let Ok(mut entries) = tokio::fs::read_dir(&root).await {
-                let prefix = format!("staging-{channel}-");
-                let process_marker = format!("-{}-", std::process::id());
-                while let Ok(Some(entry)) = entries.next_entry().await {
-                    let name = entry.file_name();
-                    let name = name.to_string_lossy();
-                    if name.starts_with(&prefix) && name.contains(&process_marker) {
-                        let _ = tokio::fs::remove_dir_all(entry.path()).await;
-                    }
-                }
-            }
+            cleanup_stale_staging(&root).await;
             Err(error)
         }
     }
@@ -2752,6 +2983,160 @@ mod tests {
         assert_eq!(installations[0].display_name, "My stable Voidstrap");
         assert_eq!(installations[0].detected_by, DetectionSource::UserPreset);
         assert_eq!(installations[0].display_version.as_deref(), Some("1.0.6.9"));
+    }
+
+    // ── Launch-client selection matrix ──────────────────────────────────────
+    //
+    // `resolve_launch_template_from` is pure, so every branch that used to be
+    // reachable only through a real registry sweep and a real settings file is
+    // exercised directly here.
+
+    /// A protocol-capable installation of `kind` with a stable id.
+    fn installation(id: &str, kind: RobloxLauncherKind, executable: &str) -> RobloxInstallation {
+        RobloxInstallation {
+            id: id.to_string(),
+            kind,
+            display_name: id.to_string(),
+            executable: Some(executable.to_string()),
+            install_location: None,
+            display_version: None,
+            version_guid: None,
+            channel: None,
+            detected_by: DetectionSource::KnownPath,
+            protocol_capable: true,
+            active_schemes: Vec::new(),
+            handler_command: None,
+        }
+    }
+
+    fn settings_for(preset_id: Option<&str>, mode: RobloxLaunchMode) -> Settings {
+        Settings {
+            roblox_launch_preset_id: preset_id.map(str::to_string),
+            roblox_launch_mode: mode,
+            ..Settings::default()
+        }
+    }
+
+    const URI: &str = "roblox-player:1+launchmode:play+gameinfo:TICKET";
+
+    #[test]
+    fn protocol_mode_delegates_regardless_of_the_selected_preset() {
+        let installations = vec![installation(
+            "official",
+            RobloxLauncherKind::Official,
+            r"C:\Roblox\Versions\version-a\RobloxPlayerBeta.exe",
+        )];
+        let settings = settings_for(Some("official"), RobloxLaunchMode::Protocol);
+        let fallback = PathBuf::from(r"C:\Roblox\Versions\version-b\RobloxPlayerBeta.exe");
+        assert_eq!(
+            resolve_launch_template_from(&installations, &settings, Some(&fallback)),
+            RobloxLaunchTemplate::Protocol
+        );
+    }
+
+    #[test]
+    fn official_and_custom_presets_spawn_the_player_directly_and_are_tracked() {
+        let exe = r"C:\Roblox\Versions\version-a\RobloxPlayerBeta.exe";
+        for kind in [RobloxLauncherKind::Official, RobloxLauncherKind::Custom] {
+            let installations = vec![installation("chosen", kind, exe)];
+            let settings = settings_for(Some("chosen"), RobloxLaunchMode::Direct);
+            let plan = resolve_launch_template_from(&installations, &settings, None).with_uri(URI);
+            assert_eq!(
+                plan,
+                RobloxLaunchPlan::Command {
+                    executable: PathBuf::from(exe),
+                    arguments: vec![URI.to_string()],
+                    tracks_player: true,
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn bootstrapper_presets_keep_their_command_line_and_are_not_tracked() {
+        // A bootstrapper's PID is not RobloxPlayerBeta's, so `tracks_player` is
+        // false and the `%1` placeholder in its registered command carries the URI.
+        let mut fishstrap = installation(
+            "fishstrap",
+            RobloxLauncherKind::Fishstrap,
+            r"C:\Fishstrap\Fishstrap.exe",
+        );
+        fishstrap.handler_command =
+            Some(r#""C:\Fishstrap\Fishstrap.exe" --fork-player "%1""#.to_string());
+        let settings = settings_for(Some("fishstrap"), RobloxLaunchMode::Direct);
+        let plan = resolve_launch_template_from(&[fishstrap], &settings, None).with_uri(URI);
+        assert_eq!(
+            plan,
+            RobloxLaunchPlan::Command {
+                executable: PathBuf::from(r"C:\Fishstrap\Fishstrap.exe"),
+                arguments: vec!["--fork-player".to_string(), URI.to_string()],
+                tracks_player: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_preset_that_no_longer_exists_falls_back_to_the_newest_player() {
+        let fallback = PathBuf::from(r"C:\Roblox\Versions\version-b\RobloxPlayerBeta.exe");
+        let settings = settings_for(Some("removed-preset"), RobloxLaunchMode::Direct);
+        let plan =
+            resolve_launch_template_from(&[], &settings, Some(&fallback)).with_uri(URI);
+        assert_eq!(
+            plan,
+            RobloxLaunchPlan::Command {
+                executable: fallback,
+                arguments: vec![URI.to_string()],
+                tracks_player: true,
+            }
+        );
+    }
+
+    #[test]
+    fn nothing_selected_and_nothing_installed_falls_all_the_way_back_to_protocol() {
+        let settings = settings_for(None, RobloxLaunchMode::Direct);
+        assert_eq!(
+            resolve_launch_template_from(&[], &settings, None),
+            RobloxLaunchTemplate::Protocol
+        );
+    }
+
+    #[test]
+    fn a_preset_that_cannot_handle_the_protocol_is_skipped() {
+        let mut installation = installation(
+            "store",
+            RobloxLauncherKind::MicrosoftStore,
+            r"C:\Store\Roblox.exe",
+        );
+        installation.protocol_capable = false;
+        let settings = settings_for(Some("store"), RobloxLaunchMode::Direct);
+        assert_eq!(
+            resolve_launch_template_from(&[installation], &settings, None),
+            RobloxLaunchTemplate::Protocol
+        );
+    }
+
+    #[test]
+    fn the_blocking_wrapper_still_matches_the_template_pipeline() {
+        // `resolve_launch_plan` is now a wrapper; this pins that it keeps
+        // wiring settings, the sweep and the fallback together the same way.
+        let dir = std::env::temp_dir().join(format!(
+            "multiroblox-launchplan-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("settings.json"),
+            br#"{"robloxLaunchMode":"protocol"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(resolve_launch_plan(&dir, URI), RobloxLaunchPlan::Protocol);
+        assert_eq!(
+            resolve_launch_plan(&dir, URI),
+            resolve_launch_template_in(&dir).with_uri(URI)
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

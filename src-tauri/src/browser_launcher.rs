@@ -56,10 +56,17 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use chromiumoxide::browser::{Browser, BrowserConfig};
+use chromiumoxide::browser::Browser;
+use chromiumoxide::cdp::browser_protocol::dom::{
+    FocusParams, GetDocumentParams, NodeId, QuerySelectorParams,
+};
+use chromiumoxide::cdp::browser_protocol::input::{
+    DispatchKeyEventParams, DispatchKeyEventType, InsertTextParams,
+};
 use chromiumoxide::cdp::browser_protocol::network::{CookieSameSite, SetCookieParams};
 use chromiumoxide::cdp::browser_protocol::page::BringToFrontParams;
 use chromiumoxide::cdp::browser_protocol::storage::GetCookiesParams;
+use chromiumoxide::cdp::browser_protocol::target::TargetId;
 use chromiumoxide::{Command, Method};
 use chromiumoxide::Page;
 use futures_util::StreamExt;
@@ -1420,8 +1427,8 @@ fn persist_pending_deletions(dir: &Path, queue: &[String]) -> Result<(), String>
 // window. Where the legacy JS build launched a non-headless Chromium via
 // the CDP helper (`chromium.launch({ headless:false, args:[...] })`) and polled
 // `Network.getAllCookies` for the `.ROBLOSECURITY` cookie, this uses
-// `chromiumoxide`'s `Browser::launch(... .with_head() ...)` and the same
-// `Network.getAllCookies` CDP call, at the identical 1500 ms poll interval and
+// the app-managed standalone Wayfern process plus a CDP connection and the same
+// `Network.getAllCookies` call, at the identical 1500 ms poll interval and
 // 5-minute hard timeout. The legacy JS runtime `legacy one-shot IPC listener('login:cancel', ...)` cancel
 // path is replaced by a `tokio::sync::oneshot` channel: the command layer
 // (Task 13.7) holds the `Sender` and fires it when the Renderer_UI requests a
@@ -1439,21 +1446,10 @@ const LOGIN_POLL_INTERVAL_MS: u64 = 1500;
 /// ("hard cap -- never hang forever").
 const LOGIN_TIMEOUT_MS: u64 = 5 * 60 * 1000;
 
-/// The stealth init script registered before navigation, byte-for-byte from
-/// the legacy JS backend's `context.addInitScript(...)` (Playwright's equivalent of
-/// Puppeteer's `evaluateOnNewDocument`). Added via
-/// [`Page::evaluate_on_new_document`] so it runs on every document before the
-/// page's own scripts, exactly as the legacy JS build did.
-const STEALTH_INIT_SCRIPT: &str = "\
-Object.defineProperty(navigator,'webdriver',{get:()=>false});\
-Object.defineProperty(navigator,'plugins',{get:()=>[{name:'Chrome PDF Plugin',filename:'internal-pdf-viewer'}]});";
-
-/// The Chromium launch flags, byte-for-byte from the legacy JS backend's
-/// `args: ['--no-sandbox', '--disable-setuid-sandbox',
-/// '--disable-blink-features=AutomationControlled', '--window-size=530,700']`.
-const LOGIN_CHROME_ARGS: [&str; 4] = [
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
+/// Extra flags for the standalone Wayfern login window. The shared standalone
+/// launcher supplies the profile/CDP flags and intentionally never adds
+/// `--enable-automation` (Wayfern's paid Donut Browser automation gate).
+const LOGIN_WAYFERN_ARGS: [&str; 2] = [
     "--disable-blink-features=AutomationControlled",
     "--window-size=530,700",
 ];
@@ -1634,6 +1630,77 @@ async fn browser_window_open(browser: &Browser) -> bool {
     matches!(browser.pages().await, Ok(pages) if !pages.is_empty())
 }
 
+/// Create a page through Chromium's local DevTools HTTP endpoint after the CDP
+/// handler is connected. Wayfern permits `/json/new`, emits `targetCreated`, and
+/// chromiumoxide then owns a normal [`Page`] without either paid
+/// `Target.createTarget` or the broken pre-existing-target hydration path.
+async fn create_tracked_page(cdp_port: u32, browser: &Browser) -> Result<Page, String> {
+    let base = format!("http://127.0.0.1:{cdp_port}");
+    let client = reqwest::Client::new();
+    let existing_response = client
+        .get(format!("{base}/json/list"))
+        .send()
+        .await
+        .map_err(|error| format!("Could not inspect Wayfern DevTools targets: {error}"))?;
+    let existing_text = existing_response
+        .text()
+        .await
+        .map_err(|error| format!("Could not read Wayfern DevTools targets: {error}"))?;
+    let existing: Vec<Value> = serde_json::from_str(&existing_text)
+        .map_err(|error| format!("Wayfern returned invalid DevTools targets: {error}"))?;
+
+    // Give Handler::new's SetDiscoverTargets command a chance to reach Wayfern
+    // before creating the page whose targetCreated event we need to observe.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let created_response = client
+        .put(format!("{base}/json/new?about:blank"))
+        .send()
+        .await
+        .map_err(|error| format!("Could not create the Wayfern login tab: {error}"))?;
+    if !created_response.status().is_success() {
+        return Err(format!(
+            "Wayfern could not create its login tab (HTTP {}).",
+            created_response.status().as_u16()
+        ));
+    }
+    let created_text = created_response
+        .text()
+        .await
+        .map_err(|error| format!("Could not read the new Wayfern target: {error}"))?;
+    let created: Value = serde_json::from_str(&created_text)
+        .map_err(|error| format!("Wayfern returned an invalid new target: {error}"))?;
+    let target_id = created
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| "Wayfern did not identify its new login tab".to_string())?;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let page = loop {
+        if let Ok(page) = browser.get_page(TargetId::new(target_id)).await {
+            break page;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err("Wayfern did not report its newly created login tab".to_string());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+
+    // Remove Wayfern's automatic startup tab so the user sees only the login.
+    for prior_id in existing
+        .iter()
+        .filter_map(|target| target.get("id").and_then(Value::as_str))
+        .filter(|id| id.chars().all(|ch| ch.is_ascii_alphanumeric()))
+    {
+        let _ = client
+            .get(format!("{base}/json/close/{prior_id}"))
+            .send()
+            .await;
+    }
+
+    Ok(page)
+}
+
 /// One cookie-capture attempt, mirroring the legacy JS backend's `tryGetCookie()`: resolve the
 /// active page, read all browser cookies (`Storage.getCookies`, the CDP
 /// equivalent of the legacy JS backend's `Network.getAllCookies`), and return the matching
@@ -1666,45 +1733,88 @@ const LOGIN_SUBMIT_SELECTOR: &str = "#login-button";
 /// after navigation resolves.
 const LOGIN_FIELD_WAIT_MS: u64 = 15_000;
 
-/// Poll `page` for `selector` until it resolves to an element or `timeout`
-/// elapses. chromiumoxide's `find_element` errors (rather than returning `None`)
-/// when the node is absent, so this retries on error instead of failing the
-/// whole flow the instant the SPA has not mounted the form yet.
-async fn wait_for_element(
+/// Poll the DOM domain for `selector` until Roblox's SPA mounts the node. This
+/// deliberately avoids Runtime.evaluate/Element helpers because standalone
+/// Wayfern gates the Runtime automation domain behind Donut Browser Pro, while
+/// DOM.querySelector remains available through local CDP.
+async fn wait_for_node(
     page: &Page,
     selector: &str,
     timeout: Duration,
-) -> Option<chromiumoxide::element::Element> {
+) -> Result<Option<NodeId>, String> {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        if let Ok(element) = page.find_element(selector).await {
-            return Some(element);
+        let document = page
+            .execute(GetDocumentParams::default())
+            .await
+            .map_err(|error| format!("Could not inspect the Wayfern login DOM: {error}"))?;
+        let queried = page
+            .execute(QuerySelectorParams::new(
+                document.result.root.node_id,
+                selector,
+            ))
+            .await
+            .map_err(|error| format!("Could not query the Wayfern login DOM: {error}"))?;
+        if *queried.result.node_id.inner() != 0 {
+            return Ok(Some(queried.result.node_id));
         }
         if tokio::time::Instant::now() >= deadline {
-            return None;
+            return Ok(None);
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
 }
 
-/// Type `text` into `element` one character at a time, sleeping a humanized
-/// delay before each keystroke so the fill has a natural, jittery cadence
-/// instead of appearing all at once (see [`crate::humanize`]).
+async fn focus_node(page: &Page, node_id: NodeId) -> Result<(), String> {
+    page.execute(FocusParams::builder().node_id(node_id).build())
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("Could not focus the Wayfern login field: {error}"))
+}
+
+/// Fill `selector` one character at a time, sleeping a humanized delay before
+/// each update. Input.insertText produces the browser's native beforeinput/input
+/// events, so Roblox's controlled React form observes every character without
+/// any Runtime.evaluate call.
 async fn type_humanized(
-    element: &chromiumoxide::element::Element,
+    page: &Page,
+    selector: &str,
     text: &str,
     rhythm: &crate::humanize::TypingRhythm,
     prng: &mut crate::humanize::Prng,
 ) -> Result<(), String> {
-    element.click().await.map_err(|e| e.to_string())?;
+    let node_id = wait_for_node(page, selector, Duration::from_millis(LOGIN_FIELD_WAIT_MS))
+        .await?
+        .ok_or_else(|| "login field did not appear".to_string())?;
+    focus_node(page, node_id).await?;
+
     for ch in text.chars() {
         tokio::time::sleep(rhythm.next_delay(prng)).await;
-        // Per-char `type_str` dispatches keydown/keypress/keyup for that single
-        // character, so each keystroke is its own event at a human interval.
-        element
-            .type_str(ch.to_string())
+        page.execute(InsertTextParams::new(ch.to_string()))
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|_| "Wayfern could not type into the login field".to_string())?;
+    }
+    Ok(())
+}
+
+async fn press_enter(page: &Page) -> Result<(), String> {
+    for event_type in [DispatchKeyEventType::KeyDown, DispatchKeyEventType::KeyUp] {
+        let is_key_down = matches!(event_type, DispatchKeyEventType::KeyDown);
+        let mut event = DispatchKeyEventParams::builder()
+            .r#type(event_type)
+            .key("Enter")
+            .code("Enter")
+            .windows_virtual_key_code(13)
+            .native_virtual_key_code(13);
+        if is_key_down {
+            event = event.text("\r");
+        }
+        let event = event
+            .build()
+            .map_err(|error| error.to_string())?;
+        page.execute(event)
+            .await
+            .map_err(|error| format!("Wayfern could not activate the login button: {error}"))?;
     }
     Ok(())
 }
@@ -1719,24 +1829,24 @@ async fn autofill_login_form(page: &Page, username: &str, password: &str) -> Res
     let rhythm = crate::humanize::TypingRhythm::default();
     let mut prng = crate::humanize::Prng::from_entropy();
 
-    let username_field = wait_for_element(page, LOGIN_USERNAME_SELECTOR, Duration::from_millis(LOGIN_FIELD_WAIT_MS))
-        .await
-        .ok_or_else(|| "login username field did not appear".to_string())?;
-    type_humanized(&username_field, username, &rhythm, &mut prng).await?;
+    type_humanized(page, LOGIN_USERNAME_SELECTOR, username, &rhythm, &mut prng).await?;
 
     // A human pause before moving to the password field.
     tokio::time::sleep(rhythm.field_switch_delay(&mut prng)).await;
 
-    let password_field = page
-        .find_element(LOGIN_PASSWORD_SELECTOR)
-        .await
-        .map_err(|e| e.to_string())?;
-    type_humanized(&password_field, password, &rhythm, &mut prng).await?;
+    type_humanized(page, LOGIN_PASSWORD_SELECTOR, password, &rhythm, &mut prng).await?;
 
     // A beat before submitting, then click the login button.
     tokio::time::sleep(rhythm.field_switch_delay(&mut prng)).await;
-    if let Ok(button) = page.find_element(LOGIN_SUBMIT_SELECTOR).await {
-        let _ = button.click().await;
+    if let Some(button) = wait_for_node(
+        page,
+        &format!("{LOGIN_SUBMIT_SELECTOR}:not([disabled])"),
+        Duration::from_secs(5),
+    )
+    .await?
+    {
+        focus_node(page, button).await?;
+        press_enter(page).await?;
     }
     Ok(())
 }
@@ -1749,22 +1859,13 @@ async fn autofill_login_form(page: &Page, username: &str, password: &str) -> Res
 /// [`LoginOutcome`] conditions is met.
 async fn login_poll_loop(
     browser: &Browser,
+    page: Page,
     handler_task: &mut tokio::task::JoinHandle<()>,
     cancel_rx: &mut oneshot::Receiver<()>,
     credentials: Option<(&str, &str)>,
 ) -> LoginOutcome {
-    // Create a blank page, register the stealth init script BEFORE navigation so
-    // it applies to the login document (legacy JS backend registered it on the context
-    // before newPage/goto), then navigate to the login URL.
-    let page = match browser.new_page("about:blank").await {
-        Ok(page) => page,
-        Err(e) => return LoginOutcome::Error(e.to_string()),
-    };
-    if let Err(e) = page.evaluate_on_new_document(STEALTH_INIT_SCRIPT).await {
-        return LoginOutcome::Error(e.to_string());
-    }
     if let Err(e) = page.goto(LOGIN_URL).await {
-        return LoginOutcome::Error(e.to_string());
+        return LoginOutcome::Error(format!("Could not navigate Wayfern to Roblox login: {e}"));
     }
 
     // Credential mode: humanized auto-fill + submit. A failure here is not fatal
@@ -1817,7 +1918,7 @@ async fn login_poll_loop(
 }
 
 /// Port of the legacy JS backend's `puppeteerLogin(chromePath)` (Requirement 5.1): launch a
-/// non-headless Chromium at `chrome_path`, open the Roblox login page, and poll
+/// standalone Wayfern at `wayfern_path`, open the Roblox login page, and poll
 /// for the `.ROBLOSECURITY` cookie every 1500 ms until it is captured, the user
 /// cancels (via `cancel_rx`, replacing `legacy one-shot IPC listener('login:cancel')`), the login
 /// window is closed, or the 5-minute hard timeout elapses.
@@ -1831,14 +1932,15 @@ async fn login_poll_loop(
 ///
 /// The `roblox_open_login` / `login_cancel` command wrappers (and the `oneshot`
 /// sender stored in [`AppState`]) live below in this module and drive this flow:
-/// `roblox_open_login` resolves a system browser via [`ensure_chrome`], stores
-/// the cancel `Sender`, and awaits this function; `login_cancel` fires that
+/// `roblox_open_login` resolves standalone Wayfern, stores the cancel `Sender`,
+/// and awaits this function; `login_cancel` fires that
 /// sender to trip `cancel_rx`.
 pub async fn run_login_flow(
-    chrome_path: &Path,
+    wayfern_path: &Path,
+    startup_lock: Arc<AsyncMutex<()>>,
     cancel_rx: oneshot::Receiver<()>,
 ) -> LoginResult {
-    run_login_flow_inner(chrome_path, None, cancel_rx).await
+    run_login_flow_inner(wayfern_path, startup_lock, None, cancel_rx).await
 }
 
 /// Credential variant of [`run_login_flow`]: identical launch / cookie-capture /
@@ -1847,12 +1949,19 @@ pub async fn run_login_flow(
 /// visible, so a captcha or 2FA challenge that follows is solved by the user and
 /// the same cookie poll captures the resulting session.
 pub async fn run_credential_login_flow(
-    chrome_path: &Path,
+    wayfern_path: &Path,
+    startup_lock: Arc<AsyncMutex<()>>,
     username: &str,
     password: &str,
     cancel_rx: oneshot::Receiver<()>,
 ) -> LoginResult {
-    run_login_flow_inner(chrome_path, Some((username, password)), cancel_rx).await
+    run_login_flow_inner(
+        wayfern_path,
+        startup_lock,
+        Some((username, password)),
+        cancel_rx,
+    )
+    .await
 }
 
 /// Shared implementation behind [`run_login_flow`] (manual) and
@@ -1861,27 +1970,45 @@ pub async fn run_credential_login_flow(
 /// types those into the form first. Launch, cleanup and cookie verification are
 /// identical in both modes.
 async fn run_login_flow_inner(
-    chrome_path: &Path,
+    wayfern_path: &Path,
+    startup_lock: Arc<AsyncMutex<()>>,
     credentials: Option<(&str, &str)>,
     mut cancel_rx: oneshot::Receiver<()>,
 ) -> LoginResult {
     // A fresh, unique profile per launch so each account logs in from a clean
     // browser (no cross-account cookie/session leakage in a bulk run).
     let profile_dir = unique_login_profile_dir();
-    let config = match BrowserConfig::builder()
-        .chrome_executable(chrome_path)
-        .with_head()
-        .user_data_dir(&profile_dir)
-        .args(LOGIN_CHROME_ARGS.iter().map(|s| s.to_string()))
-        .build()
+    // Use the exact normal-process startup path as account browsers. Calling
+    // chromiumoxide's Browser::launch here would silently append
+    // `--enable-automation`, which Wayfern rejects behind Donut Browser Pro.
+    let startup_guard = startup_lock.lock().await;
+    let (mut child, cdp_port) = match crate::wayfern::spawn_standalone(
+        wayfern_path,
+        &profile_dir,
+        "about:blank",
+        &LOGIN_WAYFERN_ARGS,
+    )
+    .await
     {
-        Ok(config) => config,
-        Err(e) => return LoginResult::fail(format!("Failed to launch Chrome: {e}")),
+        Ok(started) => started,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&profile_dir);
+            return LoginResult::fail(error);
+        }
     };
+    drop(startup_guard);
 
-    let (browser, mut handler) = match Browser::launch(config).await {
+    let (browser, mut handler) = match Browser::connect(format!("http://127.0.0.1:{cdp_port}"))
+        .await
+    {
         Ok(pair) => pair,
-        Err(e) => return LoginResult::fail(format!("Failed to launch Chrome: {e}")),
+        Err(error) => {
+            let _ = child.kill().await;
+            let _ = std::fs::remove_dir_all(&profile_dir);
+            return LoginResult::fail(format!(
+                "Could not connect to standalone Wayfern: {error}"
+            ));
+        }
     };
 
     // Drive the CDP message handler concurrently; without this, no page command
@@ -1898,13 +2025,33 @@ async fn run_login_flow_inner(
         }
     });
 
-    let outcome = login_poll_loop(&browser, &mut handler_task, &mut cancel_rx, credentials).await;
+    let page = match create_tracked_page(cdp_port, &browser).await {
+        Ok(page) => page,
+        Err(error) => {
+            handler_task.abort();
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            let _ = std::fs::remove_dir_all(&profile_dir);
+            return LoginResult::fail(error);
+        }
+    };
+
+    let outcome = login_poll_loop(
+        &browser,
+        page,
+        &mut handler_task,
+        &mut cancel_rx,
+        credentials,
+    )
+    .await;
 
     // cleanup(): close the browser and stop the handler task in every branch,
     // then delete the throwaway profile so it never leaks state to a later login.
     let mut browser = browser;
     let _ = browser.close().await;
     handler_task.abort();
+    let _ = child.kill().await;
+    let _ = child.wait().await;
     let _ = std::fs::remove_dir_all(&profile_dir);
 
     match outcome {
@@ -1925,7 +2072,9 @@ async fn run_login_flow_inner(
         LoginOutcome::Timeout => LoginResult::fail(
             "Timed out waiting for login. Please try again, or use \"Paste Cookie\".",
         ),
-        LoginOutcome::Error(e) => LoginResult::fail(format!("Failed to launch Chrome: {e}")),
+        LoginOutcome::Error(error) => {
+            LoginResult::fail(format!("Standalone Wayfern login failed: {error}"))
+        }
     }
 }
 
@@ -2157,21 +2306,13 @@ async fn prepare_wayfern_fingerprint(page: &Page, path: &Path) -> Result<(), Str
 }
 
 async fn inject_on_connection(
-    browser: &Browser,
+    page: Page,
     cookie: &str,
     wayfern_fingerprint_path: Option<&Path>,
 ) -> Result<Page, String> {
-    // Reuse the context/tab Donut Browser already opened rather than spawning a
-    // second one — the legacy JS backend's `pages.length > 0 ? pages[0] : context.newPage()`.
-    let pages = browser.pages().await.map_err(|e| e.to_string())?;
-    let page = match pages.into_iter().next() {
-        Some(page) => page,
-        None => browser
-            .new_page("about:blank")
-            .await
-            .map_err(|e| e.to_string())?,
-    };
-
+    // Use the standalone Wayfern tab created through its local DevTools endpoint.
+    // Creating it only after CDP discovery is active guarantees chromiumoxide
+    // receives the targetCreated event without any paid automation command.
     // Fingerprint first: the initial Roblox request and every script it loads
     // must observe the account's stable identity from the first byte.
     if let Some(path) = wayfern_fingerprint_path {
@@ -2279,7 +2420,15 @@ async fn inject_cookie_and_navigate_inner(
         }
     });
 
-    match inject_on_connection(&browser, cookie, wayfern_fingerprint_path).await {
+    let page = match create_tracked_page(cdp_port, &browser).await {
+        Ok(page) => page,
+        Err(error) => {
+            handler_task.abort();
+            return Err(inject_error(cookie, &error));
+        }
+    };
+
+    match inject_on_connection(page, cookie, wayfern_fingerprint_path).await {
         Ok(page) => Ok(InjectedSession {
             browser,
             page,
@@ -3730,18 +3879,18 @@ pub async fn browser_open(
     let result = async {
         let dir = accounts::store_dir(&app)?;
         let sessions = Arc::clone(&state.browser_sessions);
-        if crate::wayfern::selected(&dir) {
-            Ok(crate::wayfern::open_account_browser(
-                &app,
-                &dir,
-                sessions,
-                Arc::clone(&state.wayfern_install_lock),
-                &account_id,
-            )
-            .await)
-        } else {
-            Ok(open_account_browser(&app, &dir, sessions, &account_id).await)
-        }
+        // Account browsers always run on the app-managed standalone Wayfern:
+        // the app downloads it from the public manifest and spawns the binary
+        // itself, so opening an account never depends on a separate Donut
+        // Browser install or on its local HTTP API being reachable.
+        Ok(crate::wayfern::open_account_browser(
+            &app,
+            &dir,
+            sessions,
+            Arc::clone(&state.wayfern_install_lock),
+            &account_id,
+        )
+        .await)
     }
     .await;
     crate::logging::log_command_result("browser_open", result)
@@ -3756,18 +3905,15 @@ pub async fn browser_open_batch(
     let result = async {
         let dir = accounts::store_dir(&app)?;
         let sessions = Arc::clone(&state.browser_sessions);
-        if crate::wayfern::selected(&dir) {
-            Ok(crate::wayfern::open_account_browsers(
-                &app,
-                &dir,
-                sessions,
-                Arc::clone(&state.wayfern_install_lock),
-                account_ids,
-            )
-            .await)
-        } else {
-            Ok(open_account_browsers(&app, &dir, sessions, account_ids).await)
-        }
+        // Standalone Wayfern only — see `browser_open` for the rationale.
+        Ok(crate::wayfern::open_account_browsers(
+            &app,
+            &dir,
+            sessions,
+            Arc::clone(&state.wayfern_install_lock),
+            account_ids,
+        )
+        .await)
     }
     .await;
     crate::logging::log_command_result("browser_open_batch", result)
@@ -3874,11 +4020,9 @@ pub async fn browser_copy_cookie(
 ///   1. Windows-gated first via [`crate::platform::ensure_windows`]; on a
 ///      non-Windows OS it resolves to `LoginResult::fail("Windows only")` rather
 ///      than proceeding (Requirement 8.4), matching how `browser_open` gates.
-///   2. Resolves a system Chromium browser via [`ensure_chrome`]. Since this
-///      distributable ships no bundled browser download (no Playwright), a
-///      missing browser reports the accurate build-state message and keeps
-///      "Paste Cookie" available — the Tauri_Build's form of the legacy JS backend's
-///      no-browser fallback.
+///   2. Resolves the app-managed standalone Wayfern executable from the official
+///      Donut manifest; it never calls the Donut Browser local API or falls back
+///      to an unrelated system Chromium.
 ///   3. Stores a cancel `Sender` in [`AppState`], awaits [`run_login_flow`],
 ///      then clears the slot regardless of how the flow ended. The cancel path
 ///      is driven by [`login_cancel`], replacing `legacy one-shot IPC listener('login:cancel')`.
@@ -3889,7 +4033,7 @@ pub async fn browser_copy_cookie(
 /// produced.
 #[tauri::command]
 pub async fn roblox_open_login(
-    _app: AppHandle,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<LoginResult, String> {
     // 1. Windows-only, matching the rest of the app (and the legacy JS backend's win32 browser
@@ -3898,14 +4042,20 @@ pub async fn roblox_open_login(
         return Ok(LoginResult::fail(e));
     }
 
-    // 2. Resolve a system Chromium browser. No bundled-browser fallback exists in
-    //    this build, so a missing browser keeps "Paste Cookie" as the path
-    //    forward (the legacy JS backend's no-browser fallback wording).
-    let chrome_path = match ensure_chrome() {
-        Some(path) => path,
-        None => {
+    // 2. Resolve standalone Wayfern. There is deliberately no Donut Browser API
+    //    or unrelated system-Chromium fallback.
+    let dir = accounts::store_dir(&app)?;
+    let wayfern_path = match crate::wayfern::ensure_executable(
+        &app,
+        &dir,
+        Arc::clone(&state.wayfern_install_lock),
+    )
+    .await
+    {
+        Ok(path) => path,
+        Err(error) => {
             return Ok(LoginResult::fail(
-                "Browser login is not available in this build. Use \"Paste Cookie\" instead.",
+                format!("Wayfern is not available for browser login: {error}"),
             ));
         }
     };
@@ -3918,7 +4068,12 @@ pub async fn roblox_open_login(
         *guard = Some(cancel_tx);
     }
 
-    let result = run_login_flow(&chrome_path, cancel_rx).await;
+    let result = run_login_flow(
+        &wayfern_path,
+        Arc::clone(&state.wayfern_install_lock),
+        cancel_rx,
+    )
+    .await;
 
     {
         let mut guard = state.login_cancel_tx.lock().await;
@@ -3934,7 +4089,7 @@ pub async fn roblox_open_login(
 /// bulk `user:pass` add flow.
 ///
 /// It shares every guard and the cancel wiring with [`roblox_open_login`]:
-/// Windows-gated, resolves a system Chromium via [`ensure_chrome`], and stores a
+/// Windows-gated, resolves standalone Wayfern, and stores a
 /// cancel `Sender` in [`AppState`] so [`login_cancel`] can abort a stuck attempt
 /// (e.g. one waiting on a captcha the user chooses not to solve). The only
 /// difference is that [`run_credential_login_flow`] types the credentials into
@@ -3945,7 +4100,7 @@ pub async fn roblox_open_login(
 /// and the cookie poll would just hang until the 5-minute timeout.
 #[tauri::command]
 pub async fn roblox_login_credentials(
-    _app: AppHandle,
+    app: AppHandle,
     state: State<'_, AppState>,
     username: String,
     password: String,
@@ -3957,11 +4112,18 @@ pub async fn roblox_login_credentials(
         return Ok(LoginResult::fail("A username and password are required."));
     }
 
-    let chrome_path = match ensure_chrome() {
-        Some(path) => path,
-        None => {
+    let dir = accounts::store_dir(&app)?;
+    let wayfern_path = match crate::wayfern::ensure_executable(
+        &app,
+        &dir,
+        Arc::clone(&state.wayfern_install_lock),
+    )
+    .await
+    {
+        Ok(path) => path,
+        Err(error) => {
             return Ok(LoginResult::fail(
-                "Browser login is not available in this build. Use \"Paste Cookie\" instead.",
+                format!("Wayfern is not available for credential login: {error}"),
             ));
         }
     };
@@ -3972,7 +4134,14 @@ pub async fn roblox_login_credentials(
         *guard = Some(cancel_tx);
     }
 
-    let result = run_credential_login_flow(&chrome_path, username.trim(), &password, cancel_rx).await;
+    let result = run_credential_login_flow(
+        &wayfern_path,
+        Arc::clone(&state.wayfern_install_lock),
+        username.trim(),
+        &password,
+        cancel_rx,
+    )
+    .await;
 
     {
         let mut guard = state.login_cancel_tx.lock().await;
@@ -5344,5 +5513,77 @@ mod tests {
             ".roblox.com",
             &"z".repeat(100)
         ));
+    }
+
+    /// Opt-in runtime diagnostic for the locally installed standalone Wayfern.
+    /// It never submits the form: it proves the exact Rust connection path can
+    /// create a tracked tab, navigate, and fill React inputs without any paid
+    /// Donut Browser automation command.
+    #[tokio::test]
+    #[ignore = "requires the locally installed Wayfern binary and network"]
+    async fn live_standalone_wayfern_login_cdp_smoke() {
+        let appdata = std::env::var_os("APPDATA").expect("APPDATA");
+        let app_dir = std::path::PathBuf::from(appdata).join("robloxaccountmanager");
+        let metadata_path = app_dir.join("wayfern").join("installed.json");
+        let metadata: Value = serde_json::from_slice(
+            &std::fs::read(&metadata_path).expect("read Wayfern installed.json"),
+        )
+        .expect("parse Wayfern installed.json");
+        let relative = metadata
+            .get("executable")
+            .and_then(Value::as_str)
+            .expect("Wayfern executable metadata");
+        let executable = app_dir.join("wayfern").join(relative);
+        let profile = unique_temp_dir("live-wayfern-login");
+        let (mut child, cdp_port) = crate::wayfern::spawn_standalone(
+            &executable,
+            &profile,
+            "about:blank",
+            &LOGIN_WAYFERN_ARGS,
+        )
+        .await
+        .expect("spawn standalone Wayfern");
+        let (mut browser, mut handler) = Browser::connect(format!(
+            "http://127.0.0.1:{cdp_port}"
+        ))
+        .await
+        .expect("connect to standalone Wayfern");
+        let handler_task = tokio::spawn(async move {
+            while let Some(event) = handler.next().await {
+                if event.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let smoke: Result<(), String> = async {
+            let page = create_tracked_page(cdp_port, &browser).await?;
+            page.goto(LOGIN_URL).await.map_err(|error| error.to_string())?;
+            let rhythm = crate::humanize::TypingRhythm::default();
+            let mut prng = crate::humanize::Prng::new(42);
+            type_humanized(&page, LOGIN_USERNAME_SELECTOR, "codex-smoke", &rhythm, &mut prng)
+                .await?;
+            type_humanized(&page, LOGIN_PASSWORD_SELECTOR, "not-a-secret", &rhythm, &mut prng)
+                .await?;
+            wait_for_node(
+                &page,
+                &format!("{LOGIN_SUBMIT_SELECTOR}:not([disabled])"),
+                Duration::from_secs(5),
+            )
+            .await?
+            .ok_or_else(|| "Roblox did not accept the filled inputs".to_string())?;
+            page.execute(GetCookiesParams::default())
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        }
+        .await;
+
+        let _ = browser.close().await;
+        handler_task.abort();
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        let _ = std::fs::remove_dir_all(&profile);
+        smoke.expect("standalone Wayfern login CDP smoke");
     }
 }

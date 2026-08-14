@@ -29,11 +29,14 @@
  * 4. Real-time presence polling ({@link usePresencePolling}) over the loaded
  *    accounts, feeding the Presence_Store (Requirement 26).
  *
+ * 5. Idle warm-up of the caches the slowest pages read from, and the
+ *    Ctrl+1..Ctrl+8 page shortcuts over {@link NAV_PAGES}.
+ *
  * Launch-metadata / localStorage parity (Requirements 27.2, 28.1) is owned by
  * the individual stores and `lib/persistence.ts`; this component only ensures
  * those stores are mounted and their startup hooks fire.
  */
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
 import { PageRouter } from './components/PageRouter';
@@ -45,9 +48,45 @@ import { useAccountStore } from './stores/accountStore';
 import { useLogStore } from './stores/logStore';
 import { initTheme } from './stores/themeStore';
 import { initLanguage } from './stores/languageStore';
+import { NAV_PAGES, useNavigationStore, type PageId } from './stores/navigationStore';
 import { usePresencePolling } from './hooks/usePresencePolling';
+import { useHotkey } from './hooks/useHotkey';
+import { ipc } from './lib/ipc';
+import { loadClientsSnapshot } from './lib/clientsSnapshotCache';
+import { schedulePrefetch } from './lib/prefetch';
 import './App.css';
 import './styles/liquid-glass.css';
+
+/**
+ * How many sidebar entries get a Ctrl+<digit> shortcut.
+ *
+ * Capped rather than derived from `NAV_PAGES.length` so a ninth page added
+ * later cannot silently claim Ctrl+9 — and Ctrl+0 has no sensible meaning here.
+ */
+const PAGE_HOTKEY_COUNT = 8;
+
+/** Props for {@link PageHotkey}. */
+interface PageHotkeyProps {
+  /** The page to activate when the shortcut fires. */
+  readonly pageId: PageId;
+  /** The digit key, as a 1-based position in the sidebar list. */
+  readonly ordinal: number;
+}
+
+/**
+ * Binds one `Ctrl+<ordinal>` shortcut to one page. Renders nothing.
+ *
+ * One component per shortcut rather than a loop inside {@link App}: `useHotkey`
+ * takes a single combo, and calling a hook in a loop is exactly what the rules
+ * of hooks forbid. Giving each binding its own component keeps the hook count
+ * of every instance fixed at one while the list itself stays data-driven.
+ */
+function PageHotkey({ pageId, ordinal }: PageHotkeyProps): null {
+  const navigate = useNavigationStore((state) => state.navigate);
+  const go = useCallback(() => navigate(pageId), [navigate, pageId]);
+  useHotkey({ key: String(ordinal), ctrlOrMeta: true }, go);
+  return null;
+}
 
 /**
  * The composed application shell. See the module docblock for the full startup
@@ -114,9 +153,24 @@ export default function App(): JSX.Element {
   // transition to satisfy the startup ordering; loading here populates the
   // Account_Store that the pages render from.
   useEffect(() => {
-    if (accessGranted) {
-      void useAccountStore.getState().load();
+    if (!accessGranted) {
+      return;
     }
+    void useAccountStore.getState().load();
+
+    // Warm the *backend* caches rather than any page's own module state: an
+    // `ipc` + `lib/` warm-up is what lets the shell prefetch for Settings and
+    // WEAO without importing anything out of `pages/**`, which the cross-page
+    // layering forbids. Each warm-up gets its own idle slot so one that throws
+    // — including a partially mocked `ipc` under test — cannot starve the rest.
+    const cancels = [
+      schedulePrefetch(() => loadClientsSnapshot().catch(() => undefined)),
+      schedulePrefetch(() => ipc.weaoVersions(false).catch(() => undefined)),
+      schedulePrefetch(() => ipc.weaoExploits(false).catch(() => undefined)),
+    ];
+    return () => {
+      for (const cancel of cancels) cancel();
+    };
   }, [accessGranted]);
 
   // ── Real-time presence polling (Req 26) ──
@@ -155,6 +209,16 @@ export default function App(): JSX.Element {
 
       {/* Singleton toast host for IPC success/error notifications (Req 2.5–2.7). */}
       <Toast />
+
+      {/* Ctrl+1..Ctrl+8 jump straight to a sidebar page. Rendered only behind
+          the gate, since there is no page to reach while it is closed. Ctrl+R
+          and F5 are deliberately left alone: they reload the webview, and
+          stealing them would cost the only escape hatch from a wedged UI. */}
+      {accessGranted
+        ? NAV_PAGES.slice(0, PAGE_HOTKEY_COUNT).map((page, index) => (
+            <PageHotkey key={page.id} pageId={page.id} ordinal={index + 1} />
+          ))
+        : null}
     </div>
   );
 }

@@ -9,11 +9,9 @@
 //   (`languageStore` via `useTranslation`); switching cross-fades the UI.
 // - Encryption key controls: an input + "Save key" action that invokes
 //   `enc_set_key` with the entered key, unchanged — Requirement 21.2.
-// - Donut Browser token: an input + "Save token" action that invokes
-//   `settings_save_donut_token` with the entered token, unchanged —
-//   Requirement 21.3 — plus a read-only configured/not-configured status
-//   derived (via the pure `donutTokenStatus` helper) from the stored token,
-//   which never reveals its value — Requirement 21.4.
+// - Account browser: a read-only install/update status for the standalone
+//   Wayfern build plus the action that downloads it. Wayfern is now the only
+//   provider, so there is no provider choice to present.
 // - Multi-instance status: read-only enabled/disabled indicator from
 //   `multi_instance_status`, plus the Anti-AFK toggle that reflects the stored
 //   `antiAfk` setting and persists changes via `settings_save` — Requirement
@@ -42,10 +40,8 @@ import {
   CircleGauge,
   Download,
   Globe2,
-  HardDrive,
   KeyRound,
   Languages,
-  MonitorCog,
   Palette,
   RadioTower,
   ShieldCheck,
@@ -67,7 +63,6 @@ import { useToastStore } from '@/stores/toastStore';
 import { LANGUAGES } from '@/i18n';
 import type { MessageKey } from '@/i18n';
 import { useTranslation } from '@/i18n/useTranslation';
-import { donutTokenStatus, type DonutTokenStatus } from './donutTokenStatus';
 import { SessionAutomationCard } from './SessionAutomationCard';
 import { ThemesTab } from './ThemesTab';
 import { SoundsTab } from './SoundsTab';
@@ -208,8 +203,6 @@ interface GeneralTabSnapshot {
   robloxVersion: string | null;
   multiInstance: boolean | null;
   antiAfk: boolean | null;
-  browserProvider: 'donut' | 'wayfern';
-  donutStatus: DonutTokenStatus | null;
   wayfernStatus: WayfernStatus | null;
 }
 
@@ -250,18 +243,7 @@ function GeneralTab(): JSX.Element {
   const [encKey, setEncKey] = useState('');
   const [savingKey, setSavingKey] = useState(false);
 
-  // ── Donut Browser token control (Requirement 21.3) ──
-  const [donutToken, setDonutToken] = useState('');
-  const [savingToken, setSavingToken] = useState(false);
-
-  // ── Donut Browser token status (Requirement 21.4) ──
-  // Only the configured / not-configured status is ever held or shown here —
-  // never the token value itself. `null` means "not yet loaded".
-  const [donutStatus, setDonutStatus] = useState<DonutTokenStatus | null>(cached?.donutStatus ?? null);
-
-  // ── Account browser provider ──
-  const [browserProvider, setBrowserProvider] = useState<'donut' | 'wayfern'>(cached?.browserProvider ?? 'donut');
-  const [savingProvider, setSavingProvider] = useState(false);
+  // ── Account browser (standalone Wayfern; the only provider) ──
   const [wayfernStatus, setWayfernStatus] = useState<WayfernStatus | null>(cached?.wayfernStatus ?? null);
   const [wayfernProgress, setWayfernProgress] = useState<WayfernProgress | null>(null);
   const [installingWayfern, setInstallingWayfern] = useState(false);
@@ -274,24 +256,9 @@ function GeneralTab(): JSX.Element {
       robloxVersion,
       multiInstance,
       antiAfk,
-      browserProvider,
-      donutStatus,
       wayfernStatus,
     });
-  }, [robloxVersion, multiInstance, antiAfk, browserProvider, donutStatus, wayfernStatus]);
-
-  // Load the current settings and derive the Donut token status. Kept as a
-  // stable callback so it can be reused on mount and to refresh after a save.
-  const refreshDonutStatus = useCallback(async () => {
-    try {
-      const settings = await ipc.loadSettings();
-      // `donutTokenStatus` is pure and returns only 'configured' /
-      // 'not-configured' — the raw token never reaches component state.
-      setDonutStatus(donutTokenStatus(settings));
-    } catch {
-      // Failure already surfaced as a toast by lib/ipc; leave "unknown".
-    }
-  }, []);
+  }, [robloxVersion, multiInstance, antiAfk, wayfernStatus]);
 
   // ── Delete all (Requirement 21.6) ──
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
@@ -317,16 +284,10 @@ function GeneralTab(): JSX.Element {
       // (Requirement 21.5). Until this resolves the toggle stays disabled.
       try {
         const settings = await ipc.loadSettings();
-        if (!cancelled) {
-          setAntiAfk(settings.antiAfk);
-          setBrowserProvider(settings.browserProvider === 'wayfern' ? 'wayfern' : 'donut');
-        }
+        if (!cancelled) setAntiAfk(settings.antiAfk);
       } catch {
         /* leave "unknown" — toggle stays disabled */
       }
-      // Load the Donut token status (Requirement 21.4). `refreshDonutStatus`
-      // only sets the derived configured/not-configured status, never a value.
-      if (!cancelled) await refreshDonutStatus();
       try {
         const status = await ipc.getWayfernStatus();
         if (!cancelled) setWayfernStatus(status);
@@ -337,7 +298,7 @@ function GeneralTab(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [refreshDonutStatus]);
+  }, []);
 
   // The backend streams the ~1 GB archive and emits byte progress. Subscribe
   // once so installs triggered by this page or the account launcher update the
@@ -372,23 +333,6 @@ function GeneralTab(): JSX.Element {
     }
   }, [installingWayfern, showSuccess, t]);
 
-  const onSelectBrowserProvider = useCallback(async (next: 'donut' | 'wayfern') => {
-    if (savingProvider || next === browserProvider) return;
-    const previous = browserProvider;
-    setBrowserProvider(next);
-    setSavingProvider(true);
-    try {
-      await ipc.saveSettings({ browserProvider: next });
-      showSuccess(next === 'wayfern'
-        ? t('settings.provider.wayfernSelected')
-        : t('settings.provider.donutSelected'));
-    } catch {
-      setBrowserProvider(previous);
-    } finally {
-      setSavingProvider(false);
-    }
-  }, [browserProvider, savingProvider, showSuccess, t]);
-
   // Save a new encryption key: invoke `enc_set_key` with the entered key,
   // exactly as typed (Requirement 21.2). An empty key is allowed (it disables
   // encryption / skips the gate, mirroring the setup flow).
@@ -409,30 +353,6 @@ function GeneralTab(): JSX.Element {
       setSavingKey(false);
     }
   }, [encKey, savingKey, showSuccess, showError, t]);
-
-  // Save a Donut Browser token: invoke `settings_save_donut_token` with the
-  // entered token, exactly as typed (Requirement 21.3). The token value is
-  // never echoed back; only the configured/not-configured status is refreshed
-  // afterwards (Requirement 21.4).
-  const onSaveToken = useCallback(async () => {
-    if (savingToken) return;
-    setSavingToken(true);
-    try {
-      const ok = await ipc.saveDonutToken(donutToken);
-      if (ok) {
-        setDonutToken('');
-        showSuccess(t('settings.token.saved'));
-        // Reflect the new configured/not-configured status (Requirement 21.4).
-        await refreshDonutStatus();
-      } else {
-        showError(t('settings.token.saveFailed'));
-      }
-    } catch {
-      // lib/ipc already reported the failure as a toast.
-    } finally {
-      setSavingToken(false);
-    }
-  }, [donutToken, savingToken, showSuccess, showError, refreshDonutStatus, t]);
 
   // Toggle Anti-AFK (Requirement 21.5): persist the new value via `settings_save`
   // (through `ipc.saveSettings`). The UI updates optimistically for immediate
@@ -590,46 +510,12 @@ function GeneralTab(): JSX.Element {
             </div>
           </div>
           <span className="settings-status-badge settings-status-badge--on">
-            {browserProvider === 'wayfern' ? 'Wayfern' : 'Donut'}
+            Wayfern
           </span>
         </div>
         <p className="settings-hint">
           {t('settings.provider.hint')}
         </p>
-        <div className="settings-provider-grid" role="radiogroup" aria-label={t('settings.provider.groupAria')}>
-          <button
-            type="button"
-            role="radio"
-            aria-label="Donut Browser"
-            aria-checked={browserProvider === 'donut'}
-            className={`settings-provider-option${browserProvider === 'donut' ? ' selected' : ''}`}
-            disabled={savingProvider || installingWayfern}
-            onClick={() => void onSelectBrowserProvider('donut')}
-          >
-            <span className="settings-provider-icon"><HardDrive size={18} strokeWidth={1.9} /></span>
-            <span className="settings-provider-copy">
-              <strong>{t('settings.provider.donut')}</strong>
-              <small>{t('settings.provider.donutDesc')}</small>
-            </span>
-            <span className="settings-provider-check"><Check size={14} strokeWidth={2.4} /></span>
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-label="Wayfern portable"
-            aria-checked={browserProvider === 'wayfern'}
-            className={`settings-provider-option${browserProvider === 'wayfern' ? ' selected' : ''}`}
-            disabled={savingProvider || installingWayfern}
-            onClick={() => void onSelectBrowserProvider('wayfern')}
-          >
-            <span className="settings-provider-icon"><MonitorCog size={18} strokeWidth={1.9} /></span>
-            <span className="settings-provider-copy">
-              <strong>{t('settings.provider.wayfern')}</strong>
-              <small>{t('settings.provider.wayfernDesc')}</small>
-            </span>
-            <span className="settings-provider-check"><Check size={14} strokeWidth={2.4} /></span>
-          </button>
-        </div>
 
         <div className="settings-wayfern-status">
           <div>
@@ -675,54 +561,7 @@ function GeneralTab(): JSX.Element {
         ) : null}
       </section>
 
-      {browserProvider === 'donut' ? <section className="settings-card settings-card--token">
-        <div className="settings-card-heading">
-          <div className="settings-card-title-group">
-            <span className="settings-card-icon"><ShieldCheck size={17} /></span>
-            <div>
-              <span className="settings-eyebrow">{t('settings.token.eyebrow')}</span>
-              <h2 className="settings-card-title">{t('settings.token.title')}</h2>
-            </div>
-          </div>
-          <span
-            className={`settings-status-badge${
-              donutStatus === 'configured' ? ' settings-status-badge--on' : ''
-            }`}
-          >
-            {donutStatus === null
-              ? t('common.unknown')
-              : donutStatus === 'configured'
-                ? t('settings.token.configured')
-                : t('settings.token.notConfigured')}
-          </span>
-        </div>
-        <p className="settings-hint">
-          {t('settings.token.hint')}
-        </p>
-        <label className="settings-field-label" htmlFor="settings-donut-token">{t('settings.token.label')}</label>
-        <div className="settings-field-row">
-          <input
-            id="settings-donut-token"
-            className="settings-input"
-            type="password"
-            autoComplete="off"
-            placeholder={t('settings.token.placeholder')}
-            aria-label={t('settings.token.placeholder')}
-            value={donutToken}
-            onChange={(event) => setDonutToken(event.target.value)}
-          />
-          <Button
-            variant="primary"
-            onClick={() => void onSaveToken()}
-            disabled={savingToken}
-            aria-label={t('settings.token.saveAria')}
-          >
-            {savingToken ? t('common.saving') : t('settings.token.save')}
-          </Button>
-        </div>
-      </section> : null}
-
-      <section className={`settings-card settings-card--runtime${browserProvider === 'donut' ? '' : ' settings-card--wide'}`}>
+      <section className="settings-card settings-card--runtime settings-card--wide">
         <div className="settings-card-heading">
           <div className="settings-card-title-group">
             <span className="settings-card-icon"><Zap size={17} /></span>

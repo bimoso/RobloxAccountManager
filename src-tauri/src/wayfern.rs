@@ -6,6 +6,7 @@
 //! hammered. Each Roblox account receives its own persistent user-data folder.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -357,17 +358,28 @@ async fn activate_staging(
     Ok(executable)
 }
 
-async fn cleanup_own_staging(root: &Path, version: &str) {
+/// Reclaim staging directories left behind by installs that never finished.
+///
+/// A staging tree is the fully extracted browser — about 1.9 GB — so every
+/// cancelled download, crashed extraction or app close mid-install stranded one
+/// permanently: the previous implementation only matched the *current* PID and
+/// the *current* version, and a leftover directory by definition carries neither.
+///
+/// The in-memory install mutex cannot coordinate two separate application
+/// processes, so a directory whose PID is still live is left alone — that is
+/// another instance's active extraction. When the process sweep cannot run at
+/// all, only this process's own leftovers are removed.
+async fn cleanup_stale_staging(root: &Path) {
     let Ok(mut entries) = tokio::fs::read_dir(root).await else {
         return;
     };
-    // The in-memory install mutex cannot coordinate two separate application
-    // processes. Only remove staging folders owned by this PID so one running
-    // instance can never delete another instance's active extraction.
-    let prefix = format!("staging-{version}-{}-", std::process::id());
+    let live_pids = crate::roblox_process::enumerate_live_pids().await;
     while let Ok(Some(entry)) = entries.next_entry().await {
         let name = entry.file_name();
-        if name.to_string_lossy().starts_with(&prefix) {
+        if crate::roblox_process::staging_dir_is_abandoned(
+            &name.to_string_lossy(),
+            live_pids.as_ref(),
+        ) {
             let _ = tokio::fs::remove_dir_all(entry.path()).await;
         }
     }
@@ -385,6 +397,9 @@ async fn download_and_install(
     tokio::fs::create_dir_all(&downloads)
         .await
         .map_err(|e| format!("Could not create the Wayfern download folder: {e}"))?;
+    // Before, not only after: an install needs roughly 2 GB of headroom, and any
+    // orphan sitting here is holding exactly that much.
+    cleanup_stale_staging(&root).await;
 
     let archive = downloads.join(format!("wayfern-{version}.zip.part"));
     let existing_size = tokio::fs::metadata(&archive)
@@ -469,7 +484,7 @@ async fn download_and_install(
     let executable =
         activate_staging(dir, &root, &version, &staging, &extracted_executable).await?;
     let _ = tokio::fs::remove_file(&archive).await;
-    cleanup_own_staging(&root, &version).await;
+    cleanup_stale_staging(&root).await;
     emit_progress(app, "ready", &version, downloaded, total);
     Ok(executable)
 }
@@ -495,6 +510,18 @@ async fn ensure_installed(
         }
     }
     download_and_install(app, dir, &manifest).await
+}
+
+/// Resolve the app-managed standalone Wayfern executable, installing/updating
+/// it from the official Donut manifest when necessary. Browser-backed features
+/// outside this module (notably credential login) use this entrypoint so they
+/// never fall back to Donut Browser's local API or to an unrelated Chromium.
+pub async fn ensure_executable(
+    app: &AppHandle,
+    dir: &Path,
+    install_lock: Arc<AsyncMutex<()>>,
+) -> Result<PathBuf, String> {
+    ensure_installed(app, dir, install_lock, true).await
 }
 
 fn profile_key(account_id: &str) -> String {
@@ -543,6 +570,57 @@ async fn wait_for_devtools_port(
             return Err("Wayfern did not expose its CDP port within 45 seconds.".to_string());
         }
         tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+}
+
+fn standalone_args(
+    user_data_dir: &Path,
+    initial_url: &str,
+    extra_args: &[&str],
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from(format!("--user-data-dir={}", user_data_dir.display())),
+        OsString::from("--remote-debugging-port=0"),
+        OsString::from("--remote-allow-origins=*"),
+        OsString::from("--force-device-scale-factor=1"),
+        OsString::from("--no-first-run"),
+        OsString::from("--no-default-browser-check"),
+    ];
+    args.extend(extra_args.iter().map(OsString::from));
+    args.push(OsString::from(initial_url));
+    args
+}
+
+/// Start the app-managed Wayfern binary as a normal standalone browser and
+/// discover its local CDP port. Deliberately avoids chromiumoxide's
+/// `Browser::launch`, whose default arguments include `--enable-automation` and
+/// make Wayfern route the launch through Donut Browser's paid automation gate.
+pub(crate) async fn spawn_standalone(
+    executable: &Path,
+    user_data_dir: &Path,
+    initial_url: &str,
+    extra_args: &[&str],
+) -> Result<(tokio::process::Child, u32), String> {
+    tokio::fs::create_dir_all(user_data_dir)
+        .await
+        .map_err(|error| format!("Could not create the Wayfern profile: {error}"))?;
+    let _ = tokio::fs::remove_file(user_data_dir.join(DEVTOOLS_PORT_FILE)).await;
+
+    let mut command = tokio::process::Command::new(executable);
+    command.args(standalone_args(user_data_dir, initial_url, extra_args));
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("Could not start standalone Wayfern: {error}"))?;
+
+    match wait_for_devtools_port(&mut child, user_data_dir).await {
+        Ok(port) => Ok((child, port)),
+        Err(error) => {
+            let _ = child.kill().await;
+            Err(error)
+        }
     }
 }
 
@@ -616,7 +694,6 @@ pub async fn open_account_browser(
             "Could not create the Wayfern account profile: {error}"
         ));
     }
-    let _ = tokio::fs::remove_file(user_data_dir.join(DEVTOOLS_PORT_FILE)).await;
     let fingerprint_path = user_data_dir.join(WAYFERN_FINGERPRINT_FILE);
 
     // Wayfern/Chromium performs process-singleton setup during startup. Starting
@@ -625,33 +702,16 @@ pub async fn open_account_browser(
     // soon as this profile is independently reachable, release the lane so its
     // cookie injection can overlap with the next profile's startup.
     let startup_guard = install_lock.lock().await;
-    let mut child = match tokio::process::Command::new(&executable)
-        .arg(format!("--user-data-dir={}", user_data_dir.display()))
-        .arg("--remote-debugging-port=0")
-        .arg("--remote-allow-origins=*")
-        // Wayfern otherwise injected 1.25 on a monitor that Windows reports at
-        // 100%, inflating the browser chrome and every webpage. This override
-        // reaches both the browser process and its renderers.
-        .arg("--force-device-scale-factor=1")
-        .arg("--no-first-run")
-        .arg("--no-default-browser-check")
-        .arg("about:blank")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
+    let (mut child, cdp_port) = match spawn_standalone(
+        &executable,
+        &user_data_dir,
+        "about:blank",
+        &[],
+    )
+    .await
     {
-        Ok(child) => child,
+        Ok(started) => started,
         Err(error) => {
-            browser_launcher::untrack_session(&sessions, account_id).await;
-            return OpenResult::err(format!("Could not start Wayfern: {error}"));
-        }
-    };
-
-    let cdp_port = match wait_for_devtools_port(&mut child, &user_data_dir).await {
-        Ok(port) => port,
-        Err(error) => {
-            let _ = child.kill().await;
             browser_launcher::untrack_session(&sessions, account_id).await;
             return OpenResult::err(error);
         }
@@ -745,6 +805,13 @@ pub fn selected(dir: &Path) -> bool {
 #[tauri::command]
 pub async fn browser_wayfern_status(app: AppHandle) -> Result<WayfernStatus, String> {
     let dir = accounts::store_dir(&app)?;
+    // Sweep abandoned staging trees here too, not only inside an install. Each
+    // one is ~1.9 GB, and an install that died mid-extraction leaves a tree that
+    // the install path alone would never revisit — a user who already has
+    // Wayfern would keep paying for it until they happened to reinstall. This
+    // command is the Settings panel's mount-time read, so the space comes back
+    // simply by opening the page.
+    cleanup_stale_staging(&wayfern_root(&dir)).await;
     let latest = fetch_manifest().await.ok().map(|manifest| manifest.version);
     Ok(status_from(&dir, latest))
 }
@@ -776,6 +843,23 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn standalone_launch_never_enables_paid_browser_automation() {
+        let args = standalone_args(
+            Path::new(r"C:\temp\wayfern-profile"),
+            "about:blank",
+            &["--window-size=530,700"],
+        );
+        let rendered: Vec<String> = args
+            .iter()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect();
+
+        assert!(rendered.iter().any(|argument| argument == "--remote-debugging-port=0"));
+        assert!(rendered.iter().any(|argument| argument == "--window-size=530,700"));
+        assert!(!rendered.iter().any(|argument| argument == "--enable-automation"));
     }
 
     fn touch(path: &Path) {

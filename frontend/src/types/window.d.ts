@@ -22,6 +22,7 @@ import type {
   RobloxDeployment,
   RobloxDeploymentProgress,
   RobloxClientsSnapshot,
+  WeaoPayload,
 } from './models';
 
 /** Handle returned by an event subscription; call it to unsubscribe (Tauri's `UnlistenFn`). */
@@ -213,6 +214,10 @@ export interface TauriApi {
   getGameName: (placeId: string, cookie: string) => Promise<string>;
   getAvatarThumbnails: (userIds: Array<string | number>) => Promise<AvatarThumbnailsResponse>;
   robloxApiGet: (url: string) => Promise<unknown>;
+  /** Published Roblox client versions (`current` + `future`) from weao.xyz. */
+  weaoVersions: (force: boolean) => Promise<WeaoPayload>;
+  /** The weao.xyz executor catalog with each entry's update status. */
+  weaoExploits: (force: boolean) => Promise<WeaoPayload>;
   getPresence: (userIds: Array<string | number>, cookie: string) => Promise<PresenceResponse>;
   getGameDetails: (placeId: string, cookie: string) => Promise<GameDetails>;
   sendFriendRequest: (cookie: string, targetUserId: string | number) => Promise<unknown>;

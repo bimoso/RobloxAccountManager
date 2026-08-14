@@ -550,6 +550,33 @@ export function findAccountByUsername(
 }
 
 /**
+ * Find the saved record for a verified Roblox identity. A non-empty `userId` is
+ * authoritative; username is only the fallback for legacy/moderated records
+ * where one side has no numeric id yet. This prevents a renamed account from
+ * being merged into a different account that later claimed its old username.
+ */
+export function findAccountByIdentity(
+  accounts: readonly Account[],
+  identity: { userId?: string; username?: string },
+): Account | undefined {
+  const userId = identity.userId?.trim() ?? '';
+  if (userId) {
+    const byId = accounts.find((account) => account.userId.trim() === userId);
+    if (byId) return byId;
+  }
+
+  const username = identity.username?.trim().toLowerCase() ?? '';
+  if (!username) return undefined;
+  return accounts.find((account) => {
+    const existingId = account.userId.trim();
+    // When both ids exist and the authoritative id lookup above missed, these
+    // are different Roblox accounts even if their names happen to collide.
+    if (userId && existingId) return false;
+    return account.username.trim().toLowerCase() === username;
+  });
+}
+
+/**
  * Process a batch of credential entries SEQUENTIALLY, mirroring
  * {@link processBatchCookies}.
  *

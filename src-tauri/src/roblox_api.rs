@@ -108,20 +108,42 @@ pub struct ResolvedShareLink {
     pub link_code: String,
 }
 
+/// The two process-wide clients, one per redirect policy.
+///
+/// Only the `Ok` is cached: caching a `Result` would let one transient builder
+/// failure poison every later request for the lifetime of the process.
+static REDIRECTING_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+static NON_REDIRECTING_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
 /// Build a `reqwest` client. `follow_redirects=false` reproduces the legacy JS runtime
 /// `redirect: 'manual'` behavior needed by [`follow_redirect`] and
 /// [`get_access_code`]'s redirect-scrape fallback; the other calls hit endpoints
 /// that answer `200` directly, matching Node's non-following `https.get`.
+///
+/// Each policy's client is built once and shared, so the connection pool survives
+/// between calls instead of re-paying a TLS handshake per request. Sharing is
+/// safe because reqwest's `cookies` feature is not enabled — there is no cookie
+/// jar for two accounts to collide in, and every call sets its own `Cookie`
+/// header — and because every timeout here is set per request, not on the client.
 fn build_client(follow_redirects: bool) -> Result<reqwest::Client, String> {
+    let cell = if follow_redirects {
+        &REDIRECTING_CLIENT
+    } else {
+        &NON_REDIRECTING_CLIENT
+    };
+    if let Some(client) = cell.get() {
+        return Ok(client.clone());
+    }
     let policy = if follow_redirects {
         reqwest::redirect::Policy::default()
     } else {
         reqwest::redirect::Policy::none()
     };
-    reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .redirect(policy)
         .build()
-        .map_err(|e| format!("failed to build HTTP client: {e}"))
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+    Ok(cell.get_or_init(|| client).clone())
 }
 
 /// Port of `getRobloxVersion`.
@@ -824,7 +846,12 @@ fn retry_after_ms(resp: &reqwest::Response, attempt: u32) -> u64 {
 /// [`MAX_429_RETRIES`] times, honoring `Retry-After` or exponential backoff
 /// between attempts. The builder must be cloneable (string/empty bodies always
 /// are); a non-cloneable builder is sent once without retry.
-async fn send_retrying(req: reqwest::RequestBuilder) -> Result<reqwest::Response, String> {
+///
+/// Crate-visible so other API clients ([`crate::weao`]) reuse this single 429
+/// policy instead of each growing its own copy.
+pub(crate) async fn send_retrying(
+    req: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, String> {
     let mut attempt = 0u32;
     loop {
         let attempt_req = match req.try_clone() {

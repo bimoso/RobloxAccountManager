@@ -126,6 +126,11 @@ export interface Settings {
   windowTargetHeight?: number;
   /** Windows placed per grid row in the manual window layout. */
   windowPerRow?: number;
+  /**
+   * Milliseconds the backend waits between successive client spawns in a bulk
+   * launch. Absent means the backend default (4000).
+   */
+  launchSpawnGapMs?: number;
   /** Catch-all preserving any unrecognized/legacy field on round-trip. */
   [key: string]: unknown;
 }
@@ -244,6 +249,25 @@ export interface RobloxDeploymentProgress {
   totalBytes: number | null;
   percent: number | null;
   message: string | null;
+}
+
+/**
+ * Envelope returned by `weao_versions` / `weao_exploits`.
+ *
+ * `data` is `unknown` on purpose: the backend forwards the weao.xyz body
+ * untouched because the live schema already contradicts its own documentation,
+ * so the shape is narrowed by the defensive normalizer in `pages/Weao/weaoApi`
+ * rather than being asserted here. A populated `data` alongside a non-null
+ * `staleReason` is the normal degraded path — the backend serves its cached
+ * copy instead of failing whenever it has one.
+ */
+export interface WeaoPayload {
+  data: unknown;
+  fetchedAt: number;
+  fromCache: boolean;
+  /** Stable reason id (`refresh_throttled`, `rate_limited`, `request_failed`). */
+  staleReason: string | null;
+  retryAfterMs: number | null;
 }
 
 /** The 12 selectable themes, matching the ported legacy palettes. */

@@ -20,6 +20,7 @@ const PAGES = [
   'Logs',
   'Packages',
   'Settings',
+  'Weao',
 ];
 
 /**

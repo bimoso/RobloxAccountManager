@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
+import { mapWithConcurrency } from '@/lib/concurrency';
 import { ipc } from '@/lib/ipc';
 import { createKeyedSessionCache } from '@/lib/sessionCache';
 import { useAccountStore } from '@/stores/accountStore';
 import { useToastStore } from '@/stores/toastStore';
 import type { Account } from '@/types/models';
-import { normalizeCredentialLogin, normalizeValidation } from './addAccount';
+import { normalizeCredentialLogin } from './addAccount';
 import { reLoginAccount } from './reLogin';
 import { Accounts } from './index';
 import { AddAccountModal } from './AddAccountModal';
@@ -24,6 +25,19 @@ import { useLaunchIntentStore } from '@/stores/launchIntentStore';
  * flashing placeholders on each visit.
  */
 const avatarThumbCache = createKeyedSessionCache<string, string>();
+
+/** Ids per `roblox_get_avatar_thumbnails` call — the endpoint's own ceiling. */
+const AVATAR_BATCH_SIZE = 100;
+
+/**
+ * Batches allowed in flight at once.
+ *
+ * Deliberately small, and deliberately not `Promise.all`: unlike the rest of the
+ * Roblox surface, `roblox_get_avatar_thumbnails` does not go through the
+ * backend's retrying sender, so it has **no 429 handling whatsoever**. Releasing
+ * every batch at once would trade a slow first paint for rate-limit failures.
+ */
+const AVATAR_BATCH_CONCURRENCY = 4;
 
 /** Maps each account id to its cached avatar URL (misses are simply absent). */
 function cachedAvatarUrls(accounts: Account[]): Record<string, string> {
@@ -80,22 +94,31 @@ export function AccountsContainer(): JSX.Element {
       };
     }
 
+    const batches: string[][] = [];
+    for (let i = 0; i < need.length; i += AVATAR_BATCH_SIZE) {
+      batches.push(need.slice(i, i + AVATAR_BATCH_SIZE));
+    }
+
     void (async () => {
-      // The thumbnails endpoint accepts up to 100 ids per call.
-      for (let i = 0; i < need.length; i += 100) {
-        const chunk = need.slice(i, i + 100);
-        try {
-          const res = await ipc.getAvatarThumbnails(chunk);
-          for (const item of res?.data ?? []) {
-            if (item && item.imageUrl) {
-              avatarThumbCache.set(String(item.targetId), item.imageUrl);
-            }
-          }
-        } catch {
-          /* leave these as placeholders; a later render can retry */
-        }
+      // Up to 100 accounts fit in a single batch, so for most libraries this is
+      // exactly as fast as the serial loop it replaces; the win only shows up
+      // once there are hundreds of accounts to resolve.
+      await mapWithConcurrency(batches, AVATAR_BATCH_CONCURRENCY, async (batch) => {
+        // The guard sits inside the worker rather than between batches: with
+        // several in flight, the batches still queued behind a torn-down effect
+        // must never reach the network at all.
         if (cancelled) return;
-      }
+        const res = await ipc.getAvatarThumbnails(batch);
+        for (const item of res?.data ?? []) {
+          if (item && item.imageUrl) {
+            avatarThumbCache.set(String(item.targetId), item.imageUrl);
+          }
+        }
+      });
+      // `mapWithConcurrency` settles every batch instead of rejecting, which is
+      // what the per-batch try/catch used to buy: one failed batch leaves the
+      // others' thumbnails cached and its own accounts on placeholders, for a
+      // later render to retry.
       rebuild();
     })();
 
@@ -161,17 +184,16 @@ export function AccountsContainer(): JSX.Element {
     })();
   }, [showSuccess, showError]);
 
-  // Re-login: validate the cookie and, if it has expired, re-sign-in with the
-  // account's saved credentials (humanized auto-login), refreshing the cookie.
+  // Re-login is explicit: always open the credential-login browser and refresh
+  // the cookie instead of short-circuiting merely because the old cookie works.
   const handleReLogin = useCallback(
     async (account: Account): Promise<void> => {
       const result = await reLoginAccount(account, {
-        validate: async (cookie) => normalizeValidation(await ipc.validateCookie(cookie)),
         login: async (username, password) =>
           normalizeCredentialLogin(await ipc.loginCredentials(username, password)),
         update,
       });
-      if (result.status === 'still-valid' || result.status === 'refreshed') {
+      if (result.status === 'refreshed') {
         showSuccess(result.message);
       } else {
         showError(result.message);

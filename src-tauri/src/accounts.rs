@@ -573,6 +573,144 @@ pub fn add(accounts: &mut Vec<Account>, account: Account) -> Result<Account, Add
     Ok(account)
 }
 
+/// Whether two records refer to the same Roblox identity. A populated user id
+/// is authoritative. Username is only a fallback when at least one side is a
+/// legacy/moderated record without a user id.
+pub fn same_account_identity(left: &Account, right: &Account) -> bool {
+    let left_user_id = left.user_id.trim();
+    let right_user_id = right.user_id.trim();
+    if !left_user_id.is_empty() && !right_user_id.is_empty() {
+        return left_user_id == right_user_id;
+    }
+
+    let left_username = left.username.trim();
+    let right_username = right.username.trim();
+    !left_username.is_empty()
+        && !right_username.is_empty()
+        && left_username.eq_ignore_ascii_case(right_username)
+}
+
+/// Merge the newest session material into the canonical record while preserving
+/// user-owned metadata (id, nickname, creation time and browser profile).
+fn merge_duplicate_account(canonical: &mut Account, newer: Account) {
+    if !newer.username.trim().is_empty() {
+        canonical.username = newer.username;
+    }
+    if !newer.user_id.trim().is_empty() {
+        canonical.user_id = newer.user_id;
+    }
+    if !newer.cookie.is_empty() {
+        canonical.cookie = newer.cookie;
+    }
+    if !newer.password.is_empty() {
+        canonical.password = newer.password;
+    }
+    if newer
+        .login_username
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        canonical.login_username = newer.login_username;
+    }
+    if canonical.nickname.trim().is_empty() && !newer.nickname.trim().is_empty() {
+        canonical.nickname = newer.nickname;
+    }
+    if canonical.created_at.trim().is_empty() && !newer.created_at.trim().is_empty() {
+        canonical.created_at = newer.created_at;
+    }
+    if newer.last_used > canonical.last_used {
+        canonical.last_used = newer.last_used;
+    }
+    if canonical.donut_profile_id.is_none() {
+        canonical.donut_profile_id = newer.donut_profile_id;
+    }
+    canonical.donut_profile_pending_delete |= newer.donut_profile_pending_delete;
+
+    // Import-specific extras: never clear an existing target with the blank
+    // placeholder sent by AddAccountModal, and retain a positive moderation flag.
+    if let Some(Value::String(target)) = newer.extra.get("gameTarget") {
+        if !target.trim().is_empty() {
+            canonical
+                .extra
+                .insert("gameTarget".to_string(), Value::String(target.clone()));
+        }
+    }
+    if newer.extra.get("moderated").and_then(Value::as_bool) == Some(true) {
+        canonical
+            .extra
+            .insert("moderated".to_string(), Value::Bool(true));
+    }
+}
+
+/// Collapse duplicate logical identities in place, retaining the first record's
+/// stable app id/profile and the latest non-empty session credentials. Returns
+/// the number of records removed.
+pub fn deduplicate_logical_accounts(accounts: &mut Vec<Account>) -> usize {
+    let original_len = accounts.len();
+    let mut unique: Vec<Account> = Vec::with_capacity(original_len);
+    let mut by_user_id: HashMap<String, usize> = HashMap::new();
+    let mut by_username: HashMap<String, usize> = HashMap::new();
+
+    for account in accounts.drain(..) {
+        let user_id_key = account.user_id.trim().to_string();
+        let username_key = account.username.trim().to_ascii_lowercase();
+        let matched_index = (!user_id_key.is_empty())
+            .then(|| by_user_id.get(&user_id_key).copied())
+            .flatten()
+            .or_else(|| {
+                if username_key.is_empty() {
+                    return None;
+                }
+                by_username
+                    .get(&username_key)
+                    .copied()
+                    .filter(|index| same_account_identity(&unique[*index], &account))
+            });
+
+        if let Some(index) = matched_index {
+            merge_duplicate_account(&mut unique[index], account);
+            let canonical = &unique[index];
+            if !canonical.user_id.trim().is_empty() {
+                by_user_id.insert(canonical.user_id.trim().to_string(), index);
+            }
+            if !canonical.username.trim().is_empty() {
+                by_username.insert(canonical.username.trim().to_ascii_lowercase(), index);
+            }
+            continue;
+        }
+
+        let index = unique.len();
+        if !user_id_key.is_empty() {
+            by_user_id.insert(user_id_key, index);
+        }
+        if !username_key.is_empty() {
+            by_username.insert(username_key, index);
+        }
+        unique.push(account);
+    }
+
+    let removed = original_len.saturating_sub(unique.len());
+    *accounts = unique;
+    removed
+}
+
+/// Add a newly imported identity or update the canonical existing record when
+/// Roblox validation resolves to an account already present in the store.
+pub fn upsert_imported_account(
+    accounts: &mut Vec<Account>,
+    incoming: Account,
+) -> Result<Account, AddError> {
+    deduplicate_logical_accounts(accounts);
+    if let Some(index) = accounts
+        .iter()
+        .position(|existing| same_account_identity(existing, &incoming))
+    {
+        merge_duplicate_account(&mut accounts[index], incoming);
+        return Ok(accounts[index].clone());
+    }
+    add(accounts, incoming)
+}
+
 /// `true` when an incoming add-payload `id` value must NOT override the minted
 /// id: absent-equivalent (`null`) or a blank/whitespace-only string. Any other
 /// value keeps the legacy spread's caller-wins behavior.
@@ -926,26 +1064,38 @@ pub fn accounts_load(app: AppHandle) -> Result<Vec<Account>, String> {
         // minted one (see `backfill_blank_ids`): re-mint the blank ids and
         // persist. The healed ids are adopted ONLY once they are on disk, so the
         // renderer never holds an id the store cannot resolve.
-        let mut healed_accounts = loaded.accounts.clone();
-        let healed = backfill_blank_ids(&mut healed_accounts, now_millis());
-        if healed > 0 {
-            match save_to_dir(&dir, &healed_accounts, passphrase_mode, safe_storage_ready, device_key) {
+        let mut repaired_accounts = loaded.accounts.clone();
+        let healed = backfill_blank_ids(&mut repaired_accounts, now_millis());
+        let duplicates = deduplicate_logical_accounts(&mut repaired_accounts);
+        if healed > 0 || duplicates > 0 {
+            match save_to_dir(&dir, &repaired_accounts, passphrase_mode, safe_storage_ready, device_key) {
                 Ok(()) => {
-                    loaded.accounts = healed_accounts;
-                    logging::send_log(
-                        &app,
-                        "warn",
-                        "accounts",
-                        &format!("Re-minted {healed} account id(s) that were saved blank by an earlier add bug."),
-                        serde_json::json!({ "healed": healed }),
-                    );
+                    loaded.accounts = repaired_accounts;
+                    if healed > 0 {
+                        logging::send_log(
+                            &app,
+                            "warn",
+                            "accounts",
+                            &format!("Re-minted {healed} account id(s) that were saved blank by an earlier add bug."),
+                            serde_json::json!({ "healed": healed }),
+                        );
+                    }
+                    if duplicates > 0 {
+                        logging::send_log(
+                            &app,
+                            "warn",
+                            "accounts",
+                            &format!("Merged {duplicates} duplicate Roblox account record(s)."),
+                            serde_json::json!({ "duplicates": duplicates }),
+                        );
+                    }
                 }
                 Err(e) => logging::send_log(
                     &app,
                     "err",
                     "accounts",
-                    &format!("Could not persist the re-minted account id(s): {e}"),
-                    serde_json::json!({ "healed": healed }),
+                    &format!("Could not persist account-store repairs: {e}"),
+                    serde_json::json!({ "healed": healed, "duplicates": duplicates }),
                 ),
             }
         }
@@ -994,7 +1144,7 @@ pub fn accounts_add(app: AppHandle, account: Value) -> Result<Account, String> {
             .map_err(|e| e.to_string())?
             .accounts;
 
-        let added = add(&mut accounts, minted).map_err(|e| e.to_string())?;
+        let added = upsert_imported_account(&mut accounts, minted).map_err(|e| e.to_string())?;
         save_to_dir(&dir, &accounts, passphrase_mode, safe_storage_ready, device_key)
             .map_err(|e| e.to_string())?;
         Ok(added)
@@ -1522,6 +1672,62 @@ mod write_tests {
         // Store untouched: same length, same original entry.
         assert_eq!(ids_of(&store), ids_of(&before));
         assert_eq!(store[0].nickname, "Original");
+    }
+
+    #[test]
+    fn imported_account_upserts_by_user_id_and_preserves_user_metadata() {
+        let mut original = account("canonical", "My label", "old-cookie");
+        original.user_id = "42".to_string();
+        original.username = "OldName".to_string();
+        original.donut_profile_id = Some("profile-1".to_string());
+        let mut incoming = account("newly-minted", "", "fresh-cookie");
+        incoming.user_id = "42".to_string();
+        incoming.username = "NewName".to_string();
+        incoming.password = "secret".to_string();
+        incoming.login_username = Some("login@example.com".to_string());
+
+        let mut store = vec![original];
+        let saved = upsert_imported_account(&mut store, incoming).unwrap();
+
+        assert_eq!(store.len(), 1);
+        assert_eq!(saved.id, "canonical");
+        assert_eq!(saved.username, "NewName");
+        assert_eq!(saved.cookie, "fresh-cookie");
+        assert_eq!(saved.password, "secret");
+        assert_eq!(saved.nickname, "My label");
+        assert_eq!(saved.donut_profile_id.as_deref(), Some("profile-1"));
+    }
+
+    #[test]
+    fn deduplicate_identity_keeps_canonical_id_and_latest_session() {
+        let mut first = account("first", "Primary", "old-cookie");
+        first.user_id = "99".to_string();
+        let mut duplicate = account("duplicate", "", "new-cookie");
+        duplicate.user_id = "99".to_string();
+        duplicate.password = "pw".to_string();
+
+        let mut store = vec![first, duplicate];
+        assert_eq!(deduplicate_logical_accounts(&mut store), 1);
+        assert_eq!(store.len(), 1);
+        assert_eq!(store[0].id, "first");
+        assert_eq!(store[0].nickname, "Primary");
+        assert_eq!(store[0].cookie, "new-cookie");
+        assert_eq!(store[0].password, "pw");
+    }
+
+    #[test]
+    fn same_username_with_different_populated_user_ids_is_not_a_duplicate() {
+        let mut left = account("left", "", "one");
+        left.username = "SameName".to_string();
+        left.user_id = "1".to_string();
+        let mut right = account("right", "", "two");
+        right.username = "SameName".to_string();
+        right.user_id = "2".to_string();
+
+        assert!(!same_account_identity(&left, &right));
+        let mut store = vec![left, right];
+        assert_eq!(deduplicate_logical_accounts(&mut store), 0);
+        assert_eq!(store.len(), 2);
     }
 
     // ── mint_account_json (add-payload assembly) ─────────────────────────────

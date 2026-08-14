@@ -19,6 +19,7 @@ import { useTranslation } from '@/i18n/useTranslation';
 import { AccountsContainer } from '@/pages/Accounts/AccountsContainer';
 import { PackagesPage } from '@/pages/Packages';
 import ChartsPage from '@/pages/Charts';
+import WeaoPage from '@/pages/Weao';
 import Generator from '@/pages/Generator';
 import { Settings } from '@/pages/Settings';
 import { LogsPage } from '@/pages/Logs';
@@ -41,6 +42,7 @@ const PAGE_COMPONENTS: Record<PageId, ComponentType> = {
   accounts: AccountsContainer,
   packages: PackagesPage,
   charts: ChartsPage,
+  weao: WeaoPage,
   generator: Generator,
   settings: Settings,
   logs: LogsPage,

@@ -177,6 +177,14 @@ pub fn settings_save(app: AppHandle, data: Map<String, Value>) -> Result<bool, S
         crate::window_layout::schedule_layout_pass(&app, 0);
     }
 
+    // Launch-plan side effect: the cached installation sweep is what the launch
+    // path maps `robloxLaunchPresetId` against, so a change to either key must
+    // not be answered from a sweep taken under the previous selection.
+    const LAUNCH_PLAN_KEYS: [&str; 2] = ["robloxLaunchPresetId", "robloxLaunchMode"];
+    if LAUNCH_PLAN_KEYS.iter().any(|k| data.contains_key(*k)) {
+        crate::roblox_installations::invalidate_install_scan_for(&app);
+    }
+
     // NOTE (Task 9 / native_helper.rs): the legacy handler also starts/stops the
     // Native_Helper mutex holder on `multiInstance` and the anti-AFK loop on
     // `antiAfk` / `antiAfkInterval` here. Those side effects are wired in when

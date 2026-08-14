@@ -17,6 +17,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Button } from '@/components/Button';
+import { loadClientsSnapshot } from '@/lib/clientsSnapshotCache';
 import { ipc } from '@/lib/ipc';
 import { createSessionCache } from '@/lib/sessionCache';
 import { normalizeErrorMessage, useToastStore } from '@/stores/toastStore';
@@ -141,7 +142,11 @@ export function ClientsTab(): JSX.Element {
       // all derive from the same registry + disk sweep, which the backend now
       // runs once, off the main thread.
       const [snapshot, nextSettings] = await Promise.all([
-        ipc.getRobloxClientsSnapshot(),
+        // Through the shared cache so the sweep this deck pays for is also the
+        // one the idle warm-up and the WEAO hub read. `force` because the deck's
+        // own richer snapshot above already decided this scan is due — the
+        // shared freshness window must not veto it.
+        loadClientsSnapshot({ force: true }),
         ipc.loadSettings(),
       ]);
       setInstallations(snapshot.installations);

@@ -189,6 +189,13 @@ pub struct Settings {
     /// Windows placed per grid row in the manual window layout (1 when absent).
     #[serde(rename = "windowPerRow", skip_serializing_if = "Option::is_none")]
     pub window_per_row: Option<u32>,
+    /// Minimum gap, in milliseconds, between two successive Roblox client
+    /// spawns. Absent means the built-in default; the value is resolved and
+    /// clamped at read time (`roblox_process::configured_spawn_gap_ms`) rather
+    /// than by the load-time runtime defaults, so leaving it unset does not
+    /// materialize a number into every user's `settings.json` on the next save.
+    #[serde(rename = "launchSpawnGapMs", skip_serializing_if = "Option::is_none")]
+    pub launch_spawn_gap_ms: Option<u64>,
     /// Catch-all preserving any unrecognized/legacy field on round-trip.
     #[serde(flatten)]
     pub extra: Map<String, Value>,

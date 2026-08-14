@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   findAccountByUsername,
+  findAccountByIdentity,
   moderationLabel,
   normalizeCredentialLogin,
   normalizeModerationInfo,
@@ -67,6 +68,26 @@ describe('findAccountByUsername', () => {
   it('returns undefined for no match or a blank needle', () => {
     expect(findAccountByUsername(accounts, 'carol')).toBeUndefined();
     expect(findAccountByUsername(accounts, '   ')).toBeUndefined();
+  });
+});
+
+describe('findAccountByIdentity', () => {
+  const accounts = [account('Alice'), account('Bob')];
+
+  it('prefers the authoritative userId over username', () => {
+    expect(
+      findAccountByIdentity(accounts, { userId: 'uid-Bob', username: 'Alice' })?.id,
+    ).toBe('id-Bob');
+  });
+
+  it('does not merge two populated, different userIds just because usernames match', () => {
+    expect(
+      findAccountByIdentity(accounts, { userId: 'someone-else', username: 'Alice' }),
+    ).toBeUndefined();
+  });
+
+  it('falls back to username for a legacy identity without a userId', () => {
+    expect(findAccountByIdentity(accounts, { username: '  aLIce ' })?.id).toBe('id-Alice');
   });
 });
 

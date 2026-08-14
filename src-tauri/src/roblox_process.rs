@@ -19,8 +19,9 @@
 //!   * the **launch queue** — a `tokio::sync::Mutex` (`AppState::launch_lock`)
 //!     that serializes concurrent launches so they cannot all hammer
 //!     `auth.roblox.com` at once (porting the legacy JS backend's promise-chained
-//!     `_launchQueue`), plus the 4-second [`LAUNCH_STAGGER_MS`] gap enforced
-//!     against `AppState::last_launch_ts`;
+//!     `_launchQueue`), plus the user-configurable spawn gap
+//!     ([`DEFAULT_LAUNCH_SPAWN_GAP_MS`] when unset) enforced against
+//!     `AppState::last_launch_ts`;
 //!   * **CSRF-token caching** ([`get_csrf_token`]) with a 5-minute
 //!     ([`CSRF_TTL_MS`]) TTL, keyed per cookie;
 //!   * **auth-ticket caching** ([`get_auth_ticket`]) with a 25-second
@@ -66,7 +67,7 @@
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -349,10 +350,47 @@ fn extract_place_id(path: &str) -> Option<String> {
 
 // ── Launch-credential pipeline (Task 10.2) ──────────────────────────────────
 
-/// 4-second minimum gap between successive launches (`LAUNCH_STAGGER` in
-/// the legacy JS backend), enforced against [`AppState::last_launch_ts`] to avoid tripping
-/// `auth.roblox.com`'s 429 rate limiter when several accounts launch at once.
-pub const LAUNCH_STAGGER_MS: i64 = 4_000;
+/// Default minimum gap between successive launches (`LAUNCH_STAGGER` in the
+/// legacy JS backend), enforced against [`AppState::last_launch_ts`] to avoid
+/// tripping `auth.roblox.com`'s 429 rate limiter when several accounts launch at
+/// once — and, more importantly, to give each freshly spawned client time to
+/// create its own `ROBLOX_singletonEvent` before the next spawn, without which
+/// several launches collapse into a single window.
+pub const DEFAULT_LAUNCH_SPAWN_GAP_MS: i64 = 4_000;
+
+/// Lower bound accepted for `launchSpawnGapMs`. The genuinely safe floor is
+/// hardware-dependent and unmeasured; this only stops a configured value from
+/// removing the gap altogether.
+pub const MIN_LAUNCH_SPAWN_GAP_MS: u64 = 250;
+
+/// Upper bound accepted for `launchSpawnGapMs`, so a mistyped value cannot make
+/// a batch launch look like a hang.
+pub const MAX_LAUNCH_SPAWN_GAP_MS: u64 = 60_000;
+
+/// Clamp a stored `launchSpawnGapMs` into the accepted range, falling back to
+/// [`DEFAULT_LAUNCH_SPAWN_GAP_MS`] when it is absent.
+///
+/// Resolved on read, never written back: baking the default into
+/// `default_settings()` would materialize `"launchSpawnGapMs": 4000` into every
+/// user's `settings.json` on their next save, freezing today's default forever.
+pub fn resolve_spawn_gap_ms(configured: Option<u64>) -> i64 {
+    match configured {
+        Some(value) => value.clamp(MIN_LAUNCH_SPAWN_GAP_MS, MAX_LAUNCH_SPAWN_GAP_MS) as i64,
+        None => DEFAULT_LAUNCH_SPAWN_GAP_MS,
+    }
+}
+
+/// Read `launchSpawnGapMs` from the Settings_Store, resolving the app-data dir
+/// the same way the rest of the backend does. Any failure (dir unresolved,
+/// unreadable or corrupt store) yields the default, mirroring
+/// `native_helper::load_anti_afk_interval`.
+pub fn configured_spawn_gap_ms(app: &AppHandle) -> i64 {
+    let configured = crate::accounts::store_dir(app)
+        .ok()
+        .and_then(|dir| crate::settings::load_from_dir(&dir).ok())
+        .and_then(|loaded| loaded.launch_spawn_gap_ms);
+    resolve_spawn_gap_ms(configured)
+}
 
 /// CSRF-token cache TTL (`CSRF_TTL` in the legacy JS backend): 5 minutes. A cached token
 /// newer than this is reused; anything older is re-fetched.
@@ -410,15 +448,31 @@ async fn sleep_ms(ms: i64) {
     }
 }
 
+/// The process-wide `auth.roblox.com` client.
+///
+/// Only the `Ok` is cached: caching a `Result` would let one transient builder
+/// failure poison every later launch for the lifetime of the process.
+static AUTH_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
 /// Build the HTTP client used for the `auth.roblox.com` calls. Redirects are
 /// disabled (`redirect: 'manual'`-equivalent) so a `3xx` surfaces as-is rather
 /// than being transparently followed, matching the Node `https` behavior these
 /// calls relied on.
+///
+/// The client is built once and shared, so its connection pool survives between
+/// calls instead of re-paying a TLS handshake per launch. Sharing is safe here
+/// because reqwest's `cookies` feature is not enabled — there is no cookie jar
+/// to leak between accounts — and every timeout in this module is set per
+/// request rather than on the client.
 fn build_auth_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+    if let Some(client) = AUTH_CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
-        .map_err(|e| format!("failed to build HTTP client: {e}"))
+        .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+    Ok(AUTH_CLIENT.get_or_init(|| client).clone())
 }
 
 /// Acquire the launch-queue lock, serializing this launch against every other
@@ -435,7 +489,7 @@ pub async fn acquire_launch_slot(state: &AppState) -> tokio::sync::OwnedMutexGua
     state.launch_lock.clone().lock_owned().await
 }
 
-/// Enforce the 4-second stagger between launches.
+/// Enforce the configured stagger between launches.
 ///
 /// Ports the legacy JS backend's pre-launch guard:
 /// ```js
@@ -446,15 +500,18 @@ pub async fn acquire_launch_slot(state: &AppState) -> tokio::sync::OwnedMutexGua
 /// The `_lastLaunchTs` timestamp is only ever set by [`mark_launched`] (called by
 /// the spawn step on a *successful* launch), so a run of failed launches does not
 /// keep pushing the stagger window forward.
-pub async fn enforce_launch_stagger(state: &AppState) {
+///
+/// `spawn_gap_ms` is passed in already resolved and clamped, so the sleep never
+/// depends on re-reading settings mid-batch.
+pub async fn enforce_launch_stagger(state: &AppState, spawn_gap_ms: i64) {
     let last = *state
         .last_launch_ts
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if last > 0 {
         let since = now_ms() - last;
-        if since < LAUNCH_STAGGER_MS {
-            sleep_ms(LAUNCH_STAGGER_MS - since).await;
+        if since < spawn_gap_ms {
+            sleep_ms(spawn_gap_ms - since).await;
         }
     }
 }
@@ -726,8 +783,9 @@ pub struct LaunchCredentials {
 pub async fn acquire_launch_credentials(
     state: &AppState,
     cookie: &str,
+    spawn_gap_ms: i64,
 ) -> Result<LaunchCredentials, LaunchResult> {
-    acquire_launch_credentials_via(state, cookie, &RealCredentialSteps).await
+    acquire_launch_credentials_gapped(state, cookie, &RealCredentialSteps, spawn_gap_ms).await
 }
 
 /// The two credential-acquisition steps a launch runs against `auth.roblox.com`,
@@ -794,7 +852,19 @@ pub async fn acquire_launch_credentials_via(
     cookie: &str,
     steps: &dyn LaunchCredentialSteps,
 ) -> Result<LaunchCredentials, LaunchResult> {
-    enforce_launch_stagger(state).await;
+    acquire_launch_credentials_gapped(state, cookie, steps, DEFAULT_LAUNCH_SPAWN_GAP_MS).await
+}
+
+/// [`acquire_launch_credentials_via`] with the stagger gap supplied explicitly.
+/// Split out so the injectable-steps seam keeps a signature that does not force
+/// every test to care about a setting it is not exercising.
+pub async fn acquire_launch_credentials_gapped(
+    state: &AppState,
+    cookie: &str,
+    steps: &dyn LaunchCredentialSteps,
+    spawn_gap_ms: i64,
+) -> Result<LaunchCredentials, LaunchResult> {
+    enforce_launch_stagger(state, spawn_gap_ms).await;
 
     let csrf_token = match steps.csrf(state, cookie).await {
         Some(t) => t,
@@ -1551,6 +1621,76 @@ pub async fn count_roblox_processes() -> usize {
 #[cfg(not(windows))]
 pub async fn count_roblox_processes() -> usize {
     0
+}
+
+/// `tasklist` sweep of *every* process, used to decide whether a PID stamped
+/// into a leftover staging directory name still belongs to a live process.
+pub const TASKLIST_ALL_CMD: &str = "tasklist /FO CSV /NH";
+
+/// Pull the PID cell out of each row of [`TASKLIST_ALL_CMD`] output.
+///
+/// The CSV shape is `"Image Name","PID","Session Name",...`, so splitting on the
+/// `","` cell separator puts the PID at index 1 without needing to know how the
+/// image name is spelled — which matters because this parser must accept every
+/// process on the machine, not one known executable.
+pub fn parse_tasklist_csv_pid_column(output: &str) -> HashSet<u32> {
+    output
+        .lines()
+        .filter_map(|line| line.split("\",\"").nth(1))
+        .filter_map(|cell| cell.parse::<u32>().ok())
+        .collect()
+}
+
+/// Every live PID, or `None` when the sweep itself could not run.
+///
+/// `None` is deliberately distinct from an empty set: a caller reclaiming disk
+/// from dead processes must treat "could not tell" as "still alive", or a failed
+/// `tasklist` would authorize deleting a directory another running instance is
+/// actively extracting into.
+#[cfg(windows)]
+pub async fn enumerate_live_pids() -> Option<HashSet<u32>> {
+    let output = spawn_cmd(TASKLIST_ALL_CMD).output().await.ok()?;
+    let pids = parse_tasklist_csv_pid_column(&String::from_utf8_lossy(&output.stdout));
+    // An empty sweep means the output was unparseable, not that the machine is
+    // running no processes.
+    if pids.is_empty() {
+        None
+    } else {
+        Some(pids)
+    }
+}
+
+#[cfg(not(windows))]
+pub async fn enumerate_live_pids() -> Option<HashSet<u32>> {
+    None
+}
+
+/// Whether a directory named `staging-…-{pid}-{nonce}` can be reclaimed.
+///
+/// Both staging conventions in this app end in `-{pid}-{nonce}`, and everything
+/// before that is a version or channel string that may itself contain `-`, so
+/// the PID is read from the right. A name that does not parse, or a PID that is
+/// still live, is left alone; the current process's own leftovers are always
+/// reclaimable because its installs are serialized by a mutex, so no staging
+/// directory of its own is ever in flight while this runs.
+pub fn staging_dir_is_abandoned(name: &str, live_pids: Option<&HashSet<u32>>) -> bool {
+    if !name.starts_with("staging-") {
+        return false;
+    }
+    let mut tail = name.rsplitn(3, '-');
+    let (Some(nonce), Some(pid)) = (tail.next(), tail.next()) else {
+        return false;
+    };
+    if nonce.is_empty() || !nonce.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    let Ok(pid) = pid.parse::<u32>() else {
+        return false;
+    };
+    if pid == std::process::id() {
+        return true;
+    }
+    live_pids.is_some_and(|live| !live.contains(&pid))
 }
 
 /// Issue [`TASKKILL_ALL_CMD`]. `Ok(())` once the command ran to completion —
@@ -2323,7 +2463,8 @@ async fn do_launch(
 
     // (2) Stagger → CSRF → auth ticket. On failure at either step, report it
     //     without touching launch/watch state (Requirement 2.2).
-    let creds = match acquire_launch_credentials(state, cookie).await {
+    let creds = match acquire_launch_credentials(state, cookie, configured_spawn_gap_ms(app)).await
+    {
         Ok(c) => c,
         Err(result) => {
             if let Some(err) = &result.error {
@@ -2347,10 +2488,12 @@ async fn do_launch(
     //     not recorded because Fishstrap/Bloxstrap subsequently create a
     //     different RobloxPlayerBeta process. Protocol mode delegates to the
     //     active Windows handler.
-    let launch_plan = crate::accounts::store_dir(app)
-        .ok()
-        .map(|dir| crate::roblox_installations::resolve_launch_plan(&dir, &roblox_uri))
-        .unwrap_or(crate::roblox_installations::RobloxLaunchPlan::Protocol);
+    let launch_plan = match crate::accounts::store_dir(app) {
+        Ok(dir) => {
+            crate::roblox_installations::resolve_launch_plan_cached(state, &dir, &roblox_uri).await
+        }
+        Err(_) => crate::roblox_installations::RobloxLaunchPlan::Protocol,
+    };
     match launch_plan {
         crate::roblox_installations::RobloxLaunchPlan::Protocol => {
             open_external_uri(&roblox_uri);
@@ -2906,10 +3049,23 @@ mod tests {
 
     #[test]
     fn ttl_constants_match_main_js() {
-        assert_eq!(LAUNCH_STAGGER_MS, 4_000);
+        assert_eq!(DEFAULT_LAUNCH_SPAWN_GAP_MS, 4_000);
         assert_eq!(CSRF_TTL_MS, 300_000);
         assert_eq!(TICKET_TTL_MS, 25_000);
         assert_eq!(TICKET_MIN_GAP_MS, 8_000);
+    }
+
+    #[test]
+    fn spawn_gap_defaults_when_unset_and_clamps_otherwise() {
+        // Absent stays on the legacy 4-second stagger.
+        assert_eq!(resolve_spawn_gap_ms(None), DEFAULT_LAUNCH_SPAWN_GAP_MS);
+        assert_eq!(resolve_spawn_gap_ms(Some(1_000)), 1_000);
+        // A gap of zero would let two clients race for the singleton event.
+        assert_eq!(resolve_spawn_gap_ms(Some(0)), MIN_LAUNCH_SPAWN_GAP_MS as i64);
+        assert_eq!(
+            resolve_spawn_gap_ms(Some(u64::MAX)),
+            MAX_LAUNCH_SPAWN_GAP_MS as i64
+        );
     }
 
     #[test]
@@ -3004,7 +3160,9 @@ mod tests {
             "precondition: no launch recorded yet"
         );
 
-        let result = acquire_launch_credentials(&state, "unreachable-cookie").await;
+        let result =
+            acquire_launch_credentials(&state, "unreachable-cookie", DEFAULT_LAUNCH_SPAWN_GAP_MS)
+                .await;
 
         assert_eq!(
             result,
@@ -3024,8 +3182,63 @@ mod tests {
         // completes effectively instantly.
         let state = AppState::default();
         let start = std::time::Instant::now();
-        enforce_launch_stagger(&state).await;
+        enforce_launch_stagger(&state, DEFAULT_LAUNCH_SPAWN_GAP_MS).await;
         assert!(start.elapsed() < Duration::from_millis(500));
+    }
+
+    #[tokio::test]
+    async fn enforce_launch_stagger_waits_out_the_configured_gap() {
+        // A prior launch that just happened must hold the next one back by
+        // roughly the configured gap, not by the compiled-in default.
+        let state = AppState::default();
+        mark_launched(&state);
+        let start = std::time::Instant::now();
+        enforce_launch_stagger(&state, 300).await;
+        let waited = start.elapsed();
+        assert!(waited >= Duration::from_millis(250), "waited {waited:?}");
+        assert!(waited < Duration::from_millis(2_000), "waited {waited:?}");
+    }
+
+    #[test]
+    fn abandoned_staging_is_reclaimed_only_when_its_pid_is_gone() {
+        let mine = std::process::id();
+        let mut live = HashSet::new();
+        live.insert(4_242u32);
+
+        // Another live instance's in-flight extraction is untouchable.
+        assert!(!staging_dir_is_abandoned(
+            "staging-150.0.7871.102-4242-99",
+            Some(&live)
+        ));
+        // A PID nobody holds any more is the 1.9 GB orphan this reclaims.
+        assert!(staging_dir_is_abandoned(
+            "staging-150.0.7871.102-4243-99",
+            Some(&live)
+        ));
+        // This process's own leftovers are always reclaimable.
+        assert!(staging_dir_is_abandoned(
+            &format!("staging-LIVE-version-abc-{mine}-99"),
+            Some(&live)
+        ));
+        // Without a process sweep, only our own leftovers may be removed.
+        assert!(!staging_dir_is_abandoned("staging-LIVE-1-2", None));
+        assert!(staging_dir_is_abandoned(
+            &format!("staging-LIVE-version-abc-{mine}-99"),
+            None
+        ));
+        // Anything that does not carry a `-{pid}-{nonce}` tail is left alone.
+        assert!(!staging_dir_is_abandoned("staging-onlyversion", Some(&live)));
+        assert!(!staging_dir_is_abandoned("versions", Some(&live)));
+    }
+
+    #[test]
+    fn tasklist_pid_column_is_read_from_every_row() {
+        let output = "\"svchost.exe\",\"1234\",\"Services\",\"0\",\"12,345 K\"\n\
+                      \"My App-1.0.exe\",\"5678\",\"Console\",\"1\",\"98,765 K\"\n";
+        let pids = parse_tasklist_csv_pid_column(output);
+        assert!(pids.contains(&1234));
+        assert!(pids.contains(&5678));
+        assert_eq!(pids.len(), 2);
     }
 
     #[tokio::test]

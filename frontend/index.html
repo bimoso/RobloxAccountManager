@@ -6,10 +6,13 @@
     <!-- Content-Security-Policy retained from the retired Legacy_Frontend so
          the React_Frontend is no less restrictive
          (Requirement 28.2). Allows the Google Fonts stylesheets/font files used
-         below plus the Roblox/BloxGen endpoints and the Tauri IPC origin. -->
+         below plus the Roblox/BloxGen endpoints and the Tauri IPC origin.
+         cdn.weao.gg is allowed in img-src only — the WEAO page renders executor
+         logos from it — and deliberately NOT in connect-src, so the relaxation
+         cannot become a fetch/exfiltration path. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.rbxcdn.com https://*.roblox.com https://cdn.discordapp.com; connect-src 'self' ipc: http://ipc.localhost https://*.roblox.com https://core.bloxgen.net; object-src 'none'; base-uri 'self'; frame-src 'none'"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.rbxcdn.com https://*.roblox.com https://cdn.discordapp.com https://cdn.weao.gg; connect-src 'self' ipc: http://ipc.localhost https://*.roblox.com https://core.bloxgen.net; object-src 'none'; base-uri 'self'; frame-src 'none'"
     />
     <title>Roblox Account Manager</title>
     <!-- Fonts + Material Icons ligature font, matching the Legacy_Frontend.

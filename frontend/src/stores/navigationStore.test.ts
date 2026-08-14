@@ -35,6 +35,7 @@ describe('NAV_PAGES ordering', () => {
       'accounts',
       'packages',
       'charts',
+      'weao',
       'generator',
       'settings',
       'logs',

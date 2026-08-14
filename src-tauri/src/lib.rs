@@ -126,6 +126,12 @@ pub mod humanize;
 /// and verified managed deployment installation.
 pub mod roblox_installations;
 
+/// WEAO (whatexpsare.online) client: published Roblox client versions and the
+/// executor status catalog. Runs server-side because weao.xyz rejects any
+/// request without `User-Agent: WEAO-3PService`, a header the webview `fetch`
+/// silently drops, and its host is absent from the page CSP's `connect-src`.
+pub mod weao;
+
 /// Settings_Store + encryption Tauri command layer (Task 7.7). Hosts the
 /// `settings_*` / `enc_*` / `genhistory_*` / `fflag_*` / `fps_*` `#[tauri::command]`
 /// wrappers that orchestrate `settings.rs`, `encryption.rs`, `accounts.rs`, and
@@ -292,6 +298,25 @@ pub struct AppState {
     /// tick only re-arranges when instances actually opened/closed or the
     /// layout configuration changed (never fighting the user's manual moves).
     pub layout_last: Arc<Mutex<Option<window_layout::LayoutStamp>>>,
+
+    /// WEAO responses keyed by endpoint group (`versions` / `exploits`), each
+    /// with its own TTL. Async because `weao.rs` releases the guard across the
+    /// HTTP await — holding it would serialize the two version requests that
+    /// `weao_versions` deliberately issues concurrently.
+    pub weao_cache: Arc<AsyncMutex<HashMap<String, weao::CachedResponse>>>,
+
+    /// The most recent Roblox installation sweep, reused by every launch until
+    /// it is invalidated or ages out. The sweep walks three uninstall registry
+    /// hives, the AppX package repository and several install trees, so re-running
+    /// it per launch cost hundreds of milliseconds of blocking I/O each time.
+    /// Async because the accessor awaits the `spawn_blocking` that refills it.
+    pub install_scan: Arc<AsyncMutex<Option<roblox_installations::CachedInstallScan>>>,
+
+    /// Bumped by everything that can change what a sweep would return. An atomic
+    /// rather than a flag inside `install_scan` because two of the invalidating
+    /// commands (`roblox_custom_preset_add` / `_remove`) are synchronous `pub fn`
+    /// and so cannot await the mutex.
+    pub install_scan_epoch: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Default for AppState {
@@ -316,6 +341,9 @@ impl Default for AppState {
             relaunching: Arc::new(Mutex::new(HashSet::new())),
             layout_pass_running: Arc::new(AtomicBool::new(false)),
             layout_last: Arc::new(Mutex::new(None)),
+            weao_cache: Arc::new(AsyncMutex::new(HashMap::new())),
+            install_scan: Arc::new(AsyncMutex::new(None)),
+            install_scan_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }
@@ -453,6 +481,8 @@ pub fn run() {
             roblox_installations::roblox_deployments_list,
             roblox_installations::roblox_deployment_install,
             roblox_installations::roblox_deployment_cancel,
+            weao::weao_versions,
+            weao::weao_exploits,
             browser_launcher::roblox_open_login,
             browser_launcher::roblox_login_credentials,
             browser_launcher::login_cancel,

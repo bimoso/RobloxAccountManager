@@ -191,6 +191,15 @@
     // Generic server-side GET for public *.roblox.com JSON APIs (bypasses CORS).
     // Returns the parsed JSON body; rejects on a disallowed URL or failure.
     robloxApiGet: (url) => invoke('roblox_api_get', { url }),
+    // WEAO version tracker + executor catalog. Server-side because weao.xyz
+    // rejects any request lacking `User-Agent: WEAO-3PService`, a header the
+    // webview fetch drops, and its host is not in the page CSP's connect-src.
+    // `force` bypasses the backend TTL (still floored by its refresh guard);
+    // it is coerced because the command takes a plain bool, which an omitted
+    // argument would fail to deserialize into.
+    // Both return { data, fetchedAt, fromCache, staleReason, retryAfterMs }.
+    weaoVersions: (force) => invoke('weao_versions', { force: force === true }),
+    weaoExploits: (force) => invoke('weao_exploits', { force: force === true }),
     // Presence for a batch of user ids -> { userPresences: [{ userPresenceType,
     // placeId, rootPlaceId, gameId, universeId, lastLocation, userId }] }.
     // userPresenceType: 0 Offline, 1 Online, 2 InGame, 3 InStudio.

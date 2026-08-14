@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   validateCookie: vi.fn(),
   onChromeProgress: vi.fn(),
+  onWayfernProgress: vi.fn(),
   cancelLogin: vi.fn(),
   openLogin: vi.fn(),
   loginCredentials: vi.fn(),
@@ -17,6 +18,7 @@ import { AddAccountModal } from './AddAccountModal';
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.onChromeProgress.mockResolvedValue(() => undefined);
+  mocks.onWayfernProgress.mockResolvedValue(() => undefined);
   mocks.validateCookie.mockImplementation(async (cookie: string) => ({
     ok: true,
     username: `user-${cookie}`,
@@ -60,3 +62,56 @@ describe('AddAccountModal unified cookie flow', () => {
     expect(screen.getByText('Se añadieron 2 de 2 cuentas.')).toBeInTheDocument();
   });
 });
+
+describe('AddAccountModal user:pass flow', () => {
+  it('opens credential login even when the username is already saved', async () => {
+    const user = userEvent.setup();
+    const existing = buildExistingAccount('Alice');
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    mocks.loginCredentials.mockResolvedValue({
+      success: true,
+      cookie: 'fresh-cookie',
+      username: 'Alice',
+      userId: existing.userId,
+    });
+
+    render(
+      <AddAccountModal
+        open
+        onClose={vi.fn()}
+        onAdd={vi.fn().mockResolvedValue(undefined)}
+        accounts={[existing]}
+        onUpdate={onUpdate}
+      />,
+    );
+
+    await user.click(screen.getByRole('tab', { name: 'User : Pass' }));
+    await user.type(
+      screen.getByLabelText(/Credenciales \(user:pass/i),
+      'alice@example.com:secret',
+    );
+    await user.click(screen.getByRole('button', { name: 'Procesar credenciales' }));
+
+    await waitFor(() =>
+      expect(mocks.loginCredentials).toHaveBeenCalledWith('alice@example.com', 'secret'),
+    );
+    expect(onUpdate).toHaveBeenCalledWith(
+      existing.id,
+      expect.objectContaining({ cookie: 'fresh-cookie', password: 'secret' }),
+    );
+  });
+});
+
+function buildExistingAccount(username: string) {
+  return {
+    id: `saved-${username}`,
+    username,
+    userId: '42',
+    nickname: '',
+    cookie: 'old-cookie',
+    createdAt: '',
+    lastUsed: null,
+    donutProfileId: null,
+    donutProfilePendingDelete: false,
+  };
+}

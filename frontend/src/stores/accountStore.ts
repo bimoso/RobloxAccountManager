@@ -163,6 +163,42 @@ export function orderAccountsByIds(accounts: Account[], ids: string[]): Account[
   return ordered;
 }
 
+/** True when two records identify the same Roblox account. */
+export function sameAccountIdentity(left: Account, right: Account): boolean {
+  const leftUserId = left.userId.trim();
+  const rightUserId = right.userId.trim();
+  if (leftUserId && rightUserId) return leftUserId === rightUserId;
+
+  const leftUsername = left.username.trim();
+  const rightUsername = right.username.trim();
+  return !!leftUsername && !!rightUsername && leftUsername.localeCompare(rightUsername, undefined, {
+    sensitivity: 'accent',
+  }) === 0;
+}
+
+/**
+ * Reconcile the backend result of `accounts_add` into local state. The backend
+ * may return an existing record when the imported cookie resolves to an account
+ * already on disk, so blindly appending here would recreate the duplicate in
+ * memory even though persistence correctly performed an upsert.
+ */
+export function reconcileAddedAccount(accounts: Account[], saved: Account): Account[] {
+  const matching = accounts
+    .map((account, index) => ({ account, index }))
+    .filter(({ account }) => account.id === saved.id || sameAccountIdentity(account, saved));
+  if (matching.length === 0) return [...accounts, saved];
+
+  const first = matching[0];
+  const duplicateIndexes = new Set(matching.slice(1).map(({ index }) => index));
+  return accounts
+    .map((account, index) =>
+      index === first.index
+        ? { ...account, ...saved }
+        : account,
+    )
+    .filter((_, index) => !duplicateIndexes.has(index));
+}
+
 /**
  * Apply a per-account `roblox://closed` event to an accounts list
  * (Requirement 15.4, Property 29).
@@ -357,7 +393,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
 
   add: async (account) => {
     const created = await ipc.addAccount(account);
-    set((state) => ({ accounts: [...state.accounts, created] }));
+    set((state) => ({ accounts: reconcileAddedAccount(state.accounts, created) }));
   },
 
   update: async (id, changedFields) => {

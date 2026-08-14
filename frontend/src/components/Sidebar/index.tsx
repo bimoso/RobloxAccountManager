@@ -7,6 +7,7 @@ import {
   BarChart3,
   Boxes,
   HeartHandshake,
+  Radar,
   ScrollText,
   Settings2,
   ShieldCheck,
@@ -23,6 +24,7 @@ const NAV_ICONS: Record<PageId, LucideIcon> = {
   accounts: UsersRound,
   packages: Boxes,
   charts: BarChart3,
+  weao: Radar,
   generator: Sparkles,
   settings: Settings2,
   logs: ScrollText,
@@ -44,7 +46,9 @@ const NAV_SECTIONS: ReadonlyArray<{
   readonly pages: readonly PageId[];
 }> = [
   { id: 'manage', labelKey: 'sidebar.sectionManage', pages: ['accounts', 'packages'] },
-  { id: 'discover', labelKey: 'sidebar.sectionDiscover', pages: ['charts', 'generator'] },
+  // Membership here is not compiler-checked: a page missing from every section
+  // simply never renders, with nothing failing to say so.
+  { id: 'discover', labelKey: 'sidebar.sectionDiscover', pages: ['charts', 'weao', 'generator'] },
   { id: 'system', labelKey: 'sidebar.sectionSystem', pages: ['settings', 'logs', 'credits'] },
 ];
 

@@ -56,7 +56,9 @@ const LEGACY_FRONTEND_META_CSP =
   "script-src 'self' 'unsafe-inline'; " +
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
   "font-src 'self' https://fonts.gstatic.com; " +
-  "img-src 'self' data: https://*.rbxcdn.com https://*.roblox.com https://cdn.discordapp.com; " +
+  // cdn.weao.gg is an images-only relaxation for the WEAO executor logos; it is
+  // deliberately absent from connect-src below.
+  "img-src 'self' data: https://*.rbxcdn.com https://*.roblox.com https://cdn.discordapp.com https://cdn.weao.gg; " +
   "connect-src 'self' ipc: http://ipc.localhost https://*.roblox.com https://core.bloxgen.net; " +
   "object-src 'none'; " +
   "base-uri 'self'; " +

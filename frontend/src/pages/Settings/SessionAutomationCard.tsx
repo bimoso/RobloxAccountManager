@@ -37,6 +37,25 @@ const DEFAULT_TARGET_H = 350;
 /** Default windows-per-row, matching the backend default. */
 const DEFAULT_PER_ROW = 1;
 
+/**
+ * Spawn-gap bounds, mirroring `resolve_spawn_gap_ms` in the backend. The gap is
+ * the pause between successive client launches in a bulk run and dominates how
+ * long launching many accounts takes, so it is worth tuning — but it also has a
+ * floor that is not merely cosmetic: the native helper closes the Roblox
+ * singleton-event handles of *already running* clients, so if the next client
+ * spawns before the previous one has created its handle, the two collapse into
+ * a single instance. 4000 ms is the long-standing safe default; lower it a step
+ * at a time and confirm every account really opened.
+ */
+const DEFAULT_SPAWN_GAP_MS = 4000;
+const MIN_SPAWN_GAP_MS = 250;
+const MAX_SPAWN_GAP_MS = 60_000;
+
+/** Clamp a spawn gap into the range the backend accepts. */
+function clampSpawnGap(value: number): number {
+  return Math.min(Math.max(Math.floor(value), MIN_SPAWN_GAP_MS), MAX_SPAWN_GAP_MS);
+}
+
 /** Cadence of the live window-count poll while the card is mounted. */
 const WINDOW_COUNT_POLL_MS = 4_000;
 
@@ -54,6 +73,7 @@ interface SessionAutomationSnapshot {
   autoLayout: boolean | null;
   savedSize: [number, number];
   savedPerRow: number;
+  savedSpawnGap: number;
   runningCount: number;
 }
 
@@ -98,6 +118,10 @@ export function SessionAutomationCard(): JSX.Element {
     cached?.savedSize ?? [DEFAULT_TARGET_W, DEFAULT_TARGET_H],
   );
   const [savedPerRow, setSavedPerRow] = useState(cached?.savedPerRow ?? DEFAULT_PER_ROW);
+  const [spawnGapText, setSpawnGapText] = useState(
+    String(cached?.savedSpawnGap ?? DEFAULT_SPAWN_GAP_MS),
+  );
+  const [savedSpawnGap, setSavedSpawnGap] = useState(cached?.savedSpawnGap ?? DEFAULT_SPAWN_GAP_MS);
   const [saving, setSaving] = useState(false);
   const [arranging, setArranging] = useState(false);
   const [runningCount, setRunningCount] = useState(cached?.runningCount ?? 0);
@@ -112,9 +136,10 @@ export function SessionAutomationCard(): JSX.Element {
       autoLayout,
       savedSize,
       savedPerRow,
+      savedSpawnGap,
       runningCount,
     });
-  }, [autoRelaunch, replaceRunning, layoutEnabled, autoLayout, savedSize, savedPerRow, runningCount]);
+  }, [autoRelaunch, replaceRunning, layoutEnabled, autoLayout, savedSize, savedPerRow, savedSpawnGap, runningCount]);
 
   // Load the stored settings once on mount.
   useEffect(() => {
@@ -136,6 +161,11 @@ export function SessionAutomationCard(): JSX.Element {
         setSizeText(`${w}x${h}`);
         setSavedPerRow(perRow);
         setPerRowText(String(perRow));
+        const gap = typeof settings.launchSpawnGapMs === 'number'
+          ? clampSpawnGap(settings.launchSpawnGapMs)
+          : DEFAULT_SPAWN_GAP_MS;
+        setSavedSpawnGap(gap);
+        setSpawnGapText(String(gap));
       } catch {
         // lib/ipc already surfaced the failure; controls stay disabled.
       }
@@ -231,6 +261,25 @@ export function SessionAutomationCard(): JSX.Element {
       setPerRowText(String(savedPerRow));
     }
   }, [perRowText, savedPerRow, showSuccess, t]);
+
+  /** Commit the spawn-gap field (blur / Enter). Invalid text reverts. */
+  const commitSpawnGap = useCallback(async () => {
+    const parsed = Number.parseInt(spawnGapText, 10);
+    if (!Number.isFinite(parsed)) {
+      setSpawnGapText(String(savedSpawnGap));
+      return;
+    }
+    const next = clampSpawnGap(parsed);
+    setSpawnGapText(String(next));
+    if (next === savedSpawnGap) return;
+    try {
+      await ipc.saveSettings({ launchSpawnGapMs: next });
+      setSavedSpawnGap(next);
+      showSuccess(t('settings.session.spawnGapSaved'));
+    } catch {
+      setSpawnGapText(String(savedSpawnGap));
+    }
+  }, [spawnGapText, savedSpawnGap, showSuccess, t]);
 
   /** "Arrange now": place every Roblox window into the grid immediately. */
   const onArrangeNow = useCallback(async () => {
@@ -405,6 +454,35 @@ export function SessionAutomationCard(): JSX.Element {
             />
             <span className="settings-session-unit">{t('settings.session.perRowUnit')}</span>
           </div>
+        </div>
+        {/* Not gated by `manualDisabled`: the spawn gap governs launching, not
+            the window grid, so it applies whether or not layout is enabled. */}
+        <div className="settings-session-field">
+          <label className="settings-field-label" htmlFor="session-spawn-gap">
+            {t('settings.session.spawnGap')}
+          </label>
+          <div className="settings-session-inline">
+            <input
+              id="session-spawn-gap"
+              className="settings-input settings-session-input settings-session-input--narrow"
+              type="number"
+              min={MIN_SPAWN_GAP_MS}
+              max={MAX_SPAWN_GAP_MS}
+              step={250}
+              aria-label={t('settings.session.spawnGapAria')}
+              aria-describedby="session-spawn-gap-hint"
+              value={spawnGapText}
+              onChange={(event) => setSpawnGapText(event.target.value)}
+              onBlur={() => void commitSpawnGap()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
+            />
+            <span className="settings-session-unit">{t('settings.session.spawnGapUnit')}</span>
+          </div>
+          <small id="session-spawn-gap-hint" className="settings-hint">
+            {t('settings.session.spawnGapHint')}
+          </small>
         </div>
         <div className="settings-session-actions">
           <Button

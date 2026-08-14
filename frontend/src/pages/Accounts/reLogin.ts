@@ -7,18 +7,17 @@
 // decision logic is unit-testable with injected effects.
 
 import type { Account } from '@/types/models';
-import type { CookieValidation, CredentialLoginResult } from './addAccount';
+import type { CredentialLoginResult } from './addAccount';
 
 /**
  * The outcome of a re-login attempt, which the caller turns into a toast.
  *
- * - `still-valid` — the cookie authenticated, so no login was performed.
  * - `refreshed` — the cookie had expired and a new one was captured and saved.
- * - `no-credentials` — the cookie was invalid and no saved password is available
+ * - `no-credentials` — no saved password is available
  *   to re-login with.
  * - `failed` — a re-login was attempted but did not produce a valid session.
  */
-export type ReLoginStatus = 'still-valid' | 'refreshed' | 'no-credentials' | 'failed';
+export type ReLoginStatus = 'refreshed' | 'no-credentials' | 'failed';
 
 /** The structured result of {@link reLoginAccount}. */
 export interface ReLoginResult {
@@ -32,8 +31,6 @@ export interface ReLoginResult {
 
 /** Effects injected into {@link reLoginAccount}. */
 export interface ReLoginDeps {
-  /** Validate the account's current cookie (→ `ipc.validateCookie`, normalized). */
-  validate: (cookie: string) => Promise<CookieValidation> | CookieValidation;
   /** Drive the humanized auto-login with saved credentials (→ `ipc.loginCredentials`). */
   login: (
     username: string,
@@ -57,11 +54,10 @@ export function reLoginIdentifier(account: Account): string {
  * nuevo").
  *
  * Steps:
- *   1. Validate the current cookie. If it is still valid, return `still-valid`
- *      WITHOUT touching the browser — nothing to do.
- *   2. Otherwise the cookie has expired: if no saved password exists, return
- *      `no-credentials` (there is nothing to log in with).
- *   3. With credentials, drive the humanized auto-login. On success, persist the
+ *   1. If no saved password exists, return `no-credentials`.
+ *   2. With credentials, always drive the visible humanized auto-login. This is
+ *      an explicit re-login action, not a cookie-validity check.
+ *   3. On success, persist the
  *      new cookie (and refreshed user id) and return `refreshed`; on failure,
  *      return `failed` with the login reason.
  *
@@ -75,23 +71,7 @@ export async function reLoginAccount(
   account: Account,
   deps: ReLoginDeps,
 ): Promise<ReLoginResult> {
-  // 1. Is the current cookie still good?
-  if (account.cookie) {
-    let validation: CookieValidation;
-    try {
-      validation = await deps.validate(account.cookie);
-    } catch {
-      validation = { ok: false };
-    }
-    if (validation.ok) {
-      return {
-        status: 'still-valid',
-        message: 'La cookie sigue siendo válida.',
-      };
-    }
-  }
-
-  // 2. Cookie expired/absent — we need saved credentials to re-login.
+  // 1. We need saved credentials to re-login.
   const password = typeof account.password === 'string' ? account.password : '';
   if (!password) {
     return {
@@ -100,7 +80,7 @@ export async function reLoginAccount(
     };
   }
 
-  // 3. Re-login with the saved credentials.
+  // 2. Re-login with the saved credentials even when the old cookie is valid.
   const identifier = reLoginIdentifier(account);
   let result: CredentialLoginResult;
   try {
@@ -126,6 +106,6 @@ export async function reLoginAccount(
   });
   return {
     status: 'refreshed',
-    message: 'La cookie expiró; se inició sesión de nuevo y se actualizó.',
+    message: 'Se inició sesión de nuevo y se actualizó la cookie.',
   };
 }
