@@ -1,7 +1,7 @@
 // pages/Credits/index.tsx
 //
 // Credits page (design.md → Requisito 24). A static listing of the people
-// behind RobloxAccountManager, ported from the Legacy_Frontend
+// behind RAM (Roblox Account Manager), ported from the Legacy_Frontend
 // (the retired `#page-credits` view).
 //
 // Each contributor is shown with their role, name and external links
@@ -10,11 +10,21 @@
 // `ipc.openExternal` and prevents the default anchor navigation
 // (Requisito 24.2). This page imports nothing from other `pages/` folders
 // (Requisito 1.1).
+//
+// The page pairs an "about RAM" card (mark, name, what the app is) with one
+// card per contributor: banner, overlapping profile avatars, role and external
+// links. The animated banner is swapped for a flat surface under
+// `prefers-reduced-motion` — a GIF cannot be paused from CSS, so the decision
+// is made in JS.
 
 import type { MouseEvent } from 'react';
 import { useState, useEffect } from 'react';
+import { useReducedMotion } from 'framer-motion';
+import { ExternalLink } from 'lucide-react';
+import { RamLogo } from '@/components/Brand';
 import { ipc } from '@/lib/ipc';
 import { createKeyedSessionCache } from '@/lib/sessionCache';
+import type { MessageKey } from '@/i18n';
 import { useTranslation } from '@/i18n/useTranslation';
 import './Credits.css';
 
@@ -32,10 +42,10 @@ interface CreditLink {
 
 /** A person credited on the Credits page. */
 interface Contributor {
-  /** Single-letter avatar glyph shown in the gradient circle. */
+  /** Single-letter avatar glyph shown when the remote avatar is unavailable. */
   readonly avatar: string;
-  /** Role label shown above the name (e.g. "Developer"). */
-  readonly role: string;
+  /** Message key for the role label shown under the name. */
+  readonly role: MessageKey;
   /** Display name. */
   readonly name: string;
   /** Roblox user ID for fetching their avatar dynamically. */
@@ -52,7 +62,7 @@ interface Contributor {
 const CONTRIBUTORS: readonly Contributor[] = [
   {
     avatar: 'B',
-    role: 'Lead Developer & Creator',
+    role: 'credits.role.lead',
     name: 'Bimo',
     robloxId: '9889370526',
     discordId: '649501821072834580',
@@ -109,7 +119,13 @@ const robloxAvatarCache = createKeyedSessionCache<string, string>();
  */
 export function CreditsPage(): JSX.Element {
   const { t } = useTranslation();
+  // `useReducedMotion` can return null before the media query resolves; treat
+  // that as "motion allowed" so the banner is not needlessly suppressed.
+  const reducedMotion = useReducedMotion() ?? false;
   const [failedDiscordAvatars, setFailedDiscordAvatars] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [failedRobloxAvatars, setFailedRobloxAvatars] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [robloxAvatars, setRobloxAvatars] = useState<Record<string, string>>(() => {
@@ -152,85 +168,117 @@ export function CreditsPage(): JSX.Element {
   };
 
   return (
-    <div className="credits-page">
-      <header className="credits-header">
-        <h1 className="credits-title">{t('credits.title')}</h1>
-        <p className="credits-sub">{t('credits.subtitle')}</p>
+    <div className="rk-page">
+      <header className="rk-page__head">
+        <div className="rk-page__titles">
+          <h1>{t('credits.title')}</h1>
+          <span className="rk-page__sub">{t('credits.subtitle')}</span>
+        </div>
       </header>
 
-      <div className="credits-scroll">
-        <div className="credits-list">
-          {CONTRIBUTORS.map((contributor) => (
-            <div className="credit-card" key={`${contributor.role}-${contributor.name}`}>
-              {/* Card Banner */}
-              <div className="credit-banner" />
+      <div className="rk-page__body rk-page__body--pad cr-body">
+        <div className="cr-stack">
+          <section className="rk-panel cr-about" aria-label={t('credits.aboutAria')}>
+            <RamLogo size={56} />
+            <div className="cr-about__text">
+              <h2 className="cr-about__name">RAM</h2>
+              <span className="cr-about__full">Roblox Account Manager</span>
+              <p className="cr-about__copy">{t('credits.aboutCopy')}</p>
+            </div>
+          </section>
 
-              {/* Overlapping Avatars */}
-              <div className="credit-avatars-container" aria-hidden="true">
-                <div className="credit-avatar-wrapper roblox" title="Roblox Profile">
-                  {robloxAvatars[contributor.name] ? (
-                    <img
-                      src={robloxAvatars[contributor.name]}
-                      alt={`${contributor.name} Roblox`}
-                      className="credit-avatar-img"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="credit-avatar-fallback roblox">{contributor.avatar}</div>
-                  )}
+          {CONTRIBUTORS.map((contributor) => (
+            <section
+              className="rk-panel cr-panel"
+              key={`${contributor.role}-${contributor.name}`}
+            >
+              {/* Banner. Flat surface instead of the GIF under reduced motion. */}
+              <div
+                className="cr-banner"
+                data-static={reducedMotion ? '' : undefined}
+                aria-hidden="true"
+              />
+
+              {/* Identity: overlapping avatars, name, role. */}
+              <div className="cr-id">
+                <div className="cr-avatars" aria-hidden="true">
+                  <div className="cr-avatar" data-kind="roblox" title="Roblox Profile">
+                    {robloxAvatars[contributor.name] &&
+                    !failedRobloxAvatars.has(contributor.name) ? (
+                      <img
+                        src={robloxAvatars[contributor.name]}
+                        alt={`${contributor.name} Roblox`}
+                        className="cr-avatar__img"
+                        loading="lazy"
+                        onError={() =>
+                          setFailedRobloxAvatars((previous) =>
+                            new Set(previous).add(contributor.name),
+                          )
+                        }
+                      />
+                    ) : (
+                      <span className="cr-avatar__fallback">{contributor.avatar}</span>
+                    )}
+                  </div>
+                  <div className="cr-avatar" data-kind="discord" title="Discord Profile">
+                    {contributor.discordId
+                      && DISCORD_AVATARS_BY_ID[contributor.discordId]
+                      && !failedDiscordAvatars.has(contributor.discordId) ? (
+                      <img
+                        src={DISCORD_AVATARS_BY_ID[contributor.discordId]}
+                        alt={`${contributor.name} Discord`}
+                        className="cr-avatar__img"
+                        loading="lazy"
+                        onError={() => {
+                          const id = contributor.discordId;
+                          if (!id) return;
+                          setFailedDiscordAvatars((previous) => new Set(previous).add(id));
+                        }}
+                      />
+                    ) : (
+                      <span className="cr-avatar__fallback">D</span>
+                    )}
+                  </div>
                 </div>
-                <div className="credit-avatar-wrapper discord" title="Discord Profile">
-                  {contributor.discordId
-                    && DISCORD_AVATARS_BY_ID[contributor.discordId]
-                    && !failedDiscordAvatars.has(contributor.discordId) ? (
-                    <img
-                      src={DISCORD_AVATARS_BY_ID[contributor.discordId]}
-                      alt={`${contributor.name} Discord`}
-                      className="credit-avatar-img"
-                      loading="lazy"
-                      onError={() => {
-                        const id = contributor.discordId;
-                        if (!id) return;
-                        setFailedDiscordAvatars((previous) => new Set(previous).add(id));
-                      }}
-                    />
-                  ) : (
-                    <div className="credit-avatar-fallback discord">D</div>
-                  )}
+
+                <div className="cr-id__text">
+                  <h2 className="cr-name">{contributor.name}</h2>
+                  <span className="rk-chip" data-tone="accent">
+                    {t(contributor.role)}
+                  </span>
                 </div>
               </div>
 
-              {/* Card Info and Links */}
-              <div className="credit-info">
-                <span className="credit-role">{contributor.role}</span>
-                <div className="credit-name">{contributor.name}</div>
-                
-                <div className="credit-divider" />
-
-                <div className="credit-links">
-                  {contributor.links.map((link) => (
-                    <a
-                      key={link.url}
-                      className={`credit-link brand-${link.icon}`}
-                      href={link.url}
-                      title={link.title}
-                      rel="noopener noreferrer"
-                      onClick={(event) => handleLinkClick(event, link.url)}
-                    >
+              {/* External links, one per row, brand glyph in the status gutter. */}
+              <div className="cr-links">
+                {contributor.links.map((link) => (
+                  <a
+                    key={link.url}
+                    className="rk-row cr-link"
+                    href={link.url}
+                    title={link.title}
+                    rel="noopener noreferrer"
+                    onClick={(event) => handleLinkClick(event, link.url)}
+                  >
+                    <span className="rk-row__gutter">
                       <svg
-                        className="credit-link-svg"
+                        className="cr-link__glyph"
                         viewBox="0 0 24 24"
                         fill="currentColor"
                         aria-hidden="true"
                       >
                         <path d={LINK_ICON_PATHS[link.icon]} />
                       </svg>
-                      <span>{link.label}</span>
-                    </a>
-                  ))}
-                </div>
+                    </span>
+                    <span className="rk-row__main">
+                      <span className="rk-row__title">{link.label}</span>
+                      <span className="rk-row__meta">{link.url}</span>
+                    </span>
+                    <ExternalLink className="cr-link__ext" size={13} aria-hidden="true" />
+                  </a>
+                ))}
               </div>
-            </div>
+            </section>
           ))}
         </div>
       </div>
@@ -239,4 +287,3 @@ export function CreditsPage(): JSX.Element {
 }
 
 export default CreditsPage;
-

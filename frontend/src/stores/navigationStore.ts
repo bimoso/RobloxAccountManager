@@ -23,6 +23,7 @@ import { create } from 'zustand';
 export type PageId =
   | 'accounts'
   | 'packages'
+  | 'games'
   | 'charts'
   | 'weao'
   | 'generator'
@@ -53,6 +54,7 @@ export interface NavPage {
 export const NAV_PAGES: readonly NavPage[] = [
   { id: 'accounts', label: 'Accounts', icon: 'manage_accounts' },
   { id: 'packages', label: 'Groups', icon: 'inventory_2' },
+  { id: 'games', label: 'Games', icon: 'sports_esports' },
   { id: 'charts', label: 'Charts', icon: 'bar_chart' },
   // `label` is a proper noun, so it is identical in both dictionaries — and it
   // must stay byte-identical to `nav.weao` in `en.ts`, which `Sidebar.test.tsx`

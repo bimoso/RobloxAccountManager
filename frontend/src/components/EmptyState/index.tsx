@@ -1,71 +1,62 @@
-import type { CSSProperties, ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { Button } from '../Button';
 
 /**
  * Props for {@link EmptyState}, the placeholder shown when a list has nothing to
- * display — both the truly-empty case (Requirement 8.6) and the
- * search/filter "no results" case (Requirement 9.6) (design.md →
- * Component_Library).
+ * display — both the truly-empty case (Requirement 8.6) and the search/filter
+ * "no results" case (Requirement 9.6).
  */
 export interface EmptyStateProps {
-  /** The primary message explaining why nothing is shown. */
+  /** The message explaining why nothing is shown and what to do next. */
   message: string;
+  /** Optional headline above the message. */
+  title?: string;
   /**
-   * Label for an optional call-to-action button (e.g. "Add account", "Clear
-   * filters"). The action button is only rendered when both this and
-   * {@link EmptyStateProps.onAction} are provided.
+   * Label for an optional call-to-action button. Only rendered when both this
+   * and {@link EmptyStateProps.onAction} are provided.
    */
   actionLabel?: string;
-  /**
-   * Handler invoked when the action button is clicked. Only rendered together
-   * with {@link EmptyStateProps.actionLabel}.
-   */
+  /** Handler invoked when the action button is clicked. */
   onAction?: () => void;
-  /** Optional decorative icon/illustration rendered above the message. */
+  /**
+   * Visual weight of the call to action: primary when it is the one thing to
+   * do on an empty page, secondary for a recovery action like clearing filters.
+   *
+   * @defaultValue 'secondary'
+   */
+  actionVariant?: 'primary' | 'secondary';
+  /** Optional decorative icon rendered above the message. */
   icon?: ReactNode;
 }
 
-const containerStyle: CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: '12px',
-  padding: '48px 24px',
-  textAlign: 'center',
-  color: 'var(--t2)',
-};
-
-const messageStyle: CSSProperties = {
-  margin: 0,
-  fontSize: '15px',
-  color: 'var(--t2)',
-};
-
-const actionStyle: CSSProperties = {
-  padding: '8px 16px',
-  border: '1px solid var(--ac)',
-  borderRadius: 'var(--r2, 8px)',
-  background: 'var(--ac)',
-  color: '#fff',
-  font: 'inherit',
-  cursor: 'pointer',
-};
-
 /**
- * Renders a centered empty/no-results placeholder with an optional icon and an
- * optional call-to-action button.
+ * Renders a centered empty/no-results placeholder with an optional icon,
+ * headline and call to action, on the shared .rk-empty recipe.
  */
-export function EmptyState({ message, actionLabel, onAction, icon }: EmptyStateProps) {
+export function EmptyState({
+  message,
+  title,
+  actionLabel,
+  onAction,
+  actionVariant = 'secondary',
+  icon,
+}: EmptyStateProps) {
   const showAction = Boolean(actionLabel && onAction);
   return (
-    <div style={containerStyle} role="status">
-      {icon ? <div aria-hidden="true">{icon}</div> : null}
-      <p style={messageStyle}>{message}</p>
+    <div className="rk-empty" role="status">
+      {icon ? (
+        <div className="rk-empty__icon" aria-hidden="true">
+          {icon}
+        </div>
+      ) : null}
+      {title ? <h2 className="rk-empty__title">{title}</h2> : null}
+      <p className="rk-empty__text">{message}</p>
       {showAction ? (
-        <button type="button" style={actionStyle} onClick={onAction}>
+        <Button variant={actionVariant} onClick={onAction}>
           {actionLabel}
-        </button>
+        </Button>
       ) : null}
     </div>
   );
 }
+

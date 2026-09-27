@@ -34,6 +34,7 @@ describe('NAV_PAGES ordering', () => {
     expect(pageIds).toEqual([
       'accounts',
       'packages',
+      'games',
       'charts',
       'weao',
       'generator',

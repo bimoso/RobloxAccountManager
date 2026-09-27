@@ -1,7 +1,8 @@
 import { useEffect } from 'react';
-import type { CSSProperties } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useTranslation } from '../../i18n/useTranslation';
+import { Button } from '../Button';
+import '../Modal/Modal.css';
 
 /**
  * Props for {@link ConfirmDialog}, the modal confirmation prompt used by
@@ -31,48 +32,18 @@ export interface ConfirmDialogProps {
   cancelLabel?: string;
 }
 
-const backdropStyle: CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  zIndex: 1200,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  background: 'rgba(0,0,0,.5)',
-  padding: '20px',
-};
-
-const dialogStyle: CSSProperties = {
-  width: '100%',
-  maxWidth: '360px',
-  padding: '20px',
-  borderRadius: 'var(--r, 12px)',
-  border: '1px solid var(--bd2)',
-  background: 'var(--glass-2, var(--s1))',
-  color: 'var(--t1)',
-  boxShadow: 'var(--glass-shadow, 0 20px 50px rgba(0,0,0,.5))',
-};
-
-const buttonRowStyle: CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: '10px',
-  marginTop: '20px',
-};
-
-const buttonBase: CSSProperties = {
-  padding: '8px 16px',
-  borderRadius: 'var(--r2, 8px)',
-  font: 'inherit',
-  cursor: 'pointer',
-  border: '1px solid var(--bd2)',
-};
-
 /**
- * Modal confirm/cancel prompt. Built self-contained on `AnimatePresence` (so it
- * is not removed from the DOM until its exit animation finishes) and native
- * buttons; it can later be refactored onto the shared `Modal`/`Button`
- * components without changing this prop contract.
+ * Modal confirm/cancel prompt.
+ *
+ * It shares the app's modal chrome (`.modal-backdrop` / `.modal-content` from
+ * components/Modal) and the shared form chrome (`.fm-*` from
+ * styles/form-modal.css), and routes both actions through the shared
+ * {@link Button}, so a confirmation looks exactly like every other dialog
+ * instead of carrying its own inline-styled surface and buttons.
+ *
+ * It keeps its own `AnimatePresence` (so it is not removed from the DOM until
+ * its exit animation finishes) rather than delegating to `Modal`, because the
+ * caller contract here is confirm/cancel rather than open/close.
  */
 export function ConfirmDialog({
   open,
@@ -107,7 +78,7 @@ export function ConfirmDialog({
     <AnimatePresence>
       {open ? (
         <motion.div
-          style={backdropStyle}
+          className="modal-backdrop"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0, transition: { duration: closeDuration, ease } }}
@@ -118,7 +89,8 @@ export function ConfirmDialog({
             role="dialog"
             aria-modal="true"
             aria-label={resolvedTitle}
-            style={dialogStyle}
+            className="modal-content"
+            data-size="sm"
             initial={{ opacity: 0, transform: 'scale(0.96)' }}
             animate={{ opacity: 1, transform: 'scale(1)' }}
             exit={{
@@ -129,23 +101,19 @@ export function ConfirmDialog({
             transition={{ duration: openDuration, ease }}
             onClick={(event) => event.stopPropagation()}
           >
-            <h2 style={{ margin: '0 0 8px', fontSize: '16px' }}>{resolvedTitle}</h2>
-            <p style={{ margin: 0, color: 'var(--t2)', fontSize: '14px' }}>{message}</p>
-            <div style={buttonRowStyle}>
-              <button
-                type="button"
-                onClick={onCancel}
-                style={{ ...buttonBase, background: 'var(--s3)', color: 'var(--t1)' }}
-              >
-                {resolvedCancelLabel}
-              </button>
-              <button
-                type="button"
-                onClick={onConfirm}
-                style={{ ...buttonBase, background: 'var(--red)', borderColor: 'var(--red)', color: '#fff' }}
-              >
-                {resolvedConfirmLabel}
-              </button>
+            <div className="fm-root">
+              <div className="fm-head">
+                <h2 className="fm-title">{resolvedTitle}</h2>
+              </div>
+              <p className="fm-hint">{message}</p>
+              <div className="fm-footer">
+                <Button variant="secondary" onClick={onCancel}>
+                  {resolvedCancelLabel}
+                </Button>
+                <Button variant="danger" onClick={onConfirm}>
+                  {resolvedConfirmLabel}
+                </Button>
+              </div>
             </div>
           </motion.div>
         </motion.div>

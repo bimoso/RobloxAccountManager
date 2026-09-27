@@ -61,7 +61,7 @@ use serde_json::{Map, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::crypto_context::{self, CryptoContext};
-use crate::encryption::{decrypt_account, encrypt_account};
+use crate::encryption::{decrypt_account, decrypt_gcm, derive_scrypt_key, encrypt_account, encrypt_gcm};
 use crate::logging;
 use crate::models::Account;
 
@@ -1038,7 +1038,11 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 /// (corrupt / permission) surfaces as `Err` and never as an empty list
 /// (Requirement 11.7).
 #[tauri::command]
-pub fn accounts_load(app: AppHandle) -> Result<Vec<Account>, String> {
+pub async fn accounts_load(app: AppHandle) -> Result<Vec<Account>, String> {
+    crate::run_blocking(move || accounts_load_blocking(app)).await
+}
+
+fn accounts_load_blocking(app: AppHandle) -> Result<Vec<Account>, String> {
     crate::logging::log_command_result("accounts_load", (|| {
         let dir = store_dir(&app)?;
         let CryptoContext {
@@ -1124,7 +1128,11 @@ pub fn accounts_load(app: AppHandle) -> Result<Vec<Account>, String> {
 /// The added account is returned with its plaintext cookie, matching what the
 /// renderer pushes into its in-memory list.
 #[tauri::command]
-pub fn accounts_add(app: AppHandle, account: Value) -> Result<Account, String> {
+pub async fn accounts_add(app: AppHandle, account: Value) -> Result<Account, String> {
+    crate::run_blocking(move || accounts_add_blocking(app, account)).await
+}
+
+fn accounts_add_blocking(app: AppHandle, account: Value) -> Result<Account, String> {
     crate::logging::log_command_result("accounts_add", (|| {
         let dir = store_dir(&app)?;
         let CryptoContext {
@@ -1165,7 +1173,15 @@ pub fn accounts_add(app: AppHandle, account: Value) -> Result<Account, String> {
 /// matching the handler's `return null` (Requirement 1.2). `data` is the same
 /// partial object the legacy handler spreads.
 #[tauri::command]
-pub fn accounts_update(
+pub async fn accounts_update(
+    app: AppHandle,
+    id: String,
+    data: Map<String, Value>,
+) -> Result<Option<Account>, String> {
+    crate::run_blocking(move || accounts_update_blocking(app, id, data)).await
+}
+
+fn accounts_update_blocking(
     app: AppHandle,
     id: String,
     data: Map<String, Value>,
@@ -1218,7 +1234,11 @@ pub fn accounts_update(
 /// `browser_launcher` is ready, replace the marked block below with a call into
 /// it on the `Some(account)` branch, and this command becomes `async`.
 #[tauri::command]
-pub fn accounts_remove(app: AppHandle, id: String) -> Result<RemoveResult, String> {
+pub async fn accounts_remove(app: AppHandle, id: String) -> Result<RemoveResult, String> {
+    crate::run_blocking(move || accounts_remove_blocking(app, id)).await
+}
+
+fn accounts_remove_blocking(app: AppHandle, id: String) -> Result<RemoveResult, String> {
     crate::logging::log_command_result("accounts_remove", (|| {
         let dir = store_dir(&app)?;
         let CryptoContext {
@@ -1231,20 +1251,9 @@ pub fn accounts_remove(app: AppHandle, id: String) -> Result<RemoveResult, Strin
             .map_err(|e| e.to_string())?
             .accounts;
 
-        let removed = remove(&mut accounts, &id);
-
-        // ── Donut cleanup integration point (Task 13 / browser_launcher.rs) ──
-        // legacy JS runtime: `if (account) cleanup = await handleAccountRemovalCleanup(account)`.
-        // `removed.is_some()` is that `if (account)` precondition. No cleanup module
-        // yet, so this stays the neutral result.
-        let mut pending = false;
-        let mut notice: Option<String> = None;
-        if let Some(_account) = &removed {
-            // TODO(Task 13): cleanup = browser_launcher::handle_account_removal_cleanup(_account).await;
-            //   pending = cleanup.pending; notice = cleanup.notice;
-            let _ = (&mut pending, &mut notice);
-        }
-        // ─────────────────────────────────────────────────────────────────────
+        let _removed = remove(&mut accounts, &id);
+        let pending = false;
+        let notice: Option<String> = None;
 
         // Always re-persist the (possibly unchanged) list, matching the handler's
         // unconditional `saveAccounts(loadAccounts().filter(...))`.
@@ -1281,7 +1290,11 @@ pub fn accounts_remove(app: AppHandle, id: String) -> Result<RemoveResult, Strin
 /// rather than dropping them; Requirement 1.4) and returns `true`, matching the
 /// handler's return value.
 #[tauri::command]
-pub fn accounts_reorder(app: AppHandle, ids: Vec<String>) -> Result<bool, String> {
+pub async fn accounts_reorder(app: AppHandle, ids: Vec<String>) -> Result<bool, String> {
+    crate::run_blocking(move || accounts_reorder_blocking(app, ids)).await
+}
+
+fn accounts_reorder_blocking(app: AppHandle, ids: Vec<String>) -> Result<bool, String> {
     crate::logging::log_command_result("accounts_reorder", (|| {
         let dir = store_dir(&app)?;
         let CryptoContext {
@@ -1301,6 +1314,175 @@ pub fn accounts_reorder(app: AppHandle, ids: Vec<String>) -> Result<bool, String
     })())
 }
 
+/// Result payload of [`accounts_export_encrypted`].
+#[derive(Debug, Clone, Serialize)]
+pub struct ExportAccountsResult {
+    /// Absolute path the encrypted backup was written to.
+    pub path: String,
+    /// Number of accounts (decrypted) sealed into the backup.
+    pub count: usize,
+}
+
+/// Result payload of [`accounts_import_encrypted`].
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportAccountsResult {
+    /// Absolute path the backup was read from.
+    pub path: String,
+    /// Accounts merged into the store.
+    pub added: usize,
+    /// Accounts skipped because their `user_id` (when present) or exact
+    /// `username` already exists. Existing accounts are NEVER overwritten.
+    pub skipped: usize,
+}
+
+/// `accounts:exportEncrypted` — seal every account (DECRYPTED cookies included)
+/// into one passphrase-encrypted `.rambak` blob using the current-format
+/// `gs:` scheme (`AES-256-GCM`, scrypt-derived key), so a backup restores on
+/// any machine with only the passphrase.
+///
+/// The file dialog is native via `rfd`, driven from
+/// [`tauri::async_runtime::spawn_blocking`] because rfd is a blocking API.
+/// Cancelling the dialog resolves to `Ok(None)` — not an error.
+#[tauri::command]
+pub async fn accounts_export_encrypted(
+    app: AppHandle,
+    passphrase: String,
+) -> Result<Option<ExportAccountsResult>, String> {
+    let dir = store_dir(&app)?;
+    let target = tauri::async_runtime::spawn_blocking(move || {
+        rfd::FileDialog::new()
+            .add_filter("RAM backup", &["rambak"])
+            .set_file_name("cuentas.rambak")
+            .save_file()
+    })
+    .await
+    .map_err(|e| format!("the save dialog could not run: {e}"))?;
+    let Some(target) = target else {
+        return Ok(None); // user cancelled
+    };
+
+    let CryptoContext {
+        passphrase_mode,
+        safe_storage_ready,
+        device_key,
+    } = crypto_context::resolve(&dir);
+    let accounts = load_from_dir(&dir, passphrase_mode, safe_storage_ready, device_key)
+        .map_err(|e| e.to_string())?
+        .accounts;
+
+    let json = serde_json::to_string(&accounts).map_err(|e| e.to_string())?;
+    let key = derive_scrypt_key(&passphrase)?;
+    let blob = encrypt_gcm(&json, &key, "gs")?;
+    std::fs::write(&target, blob).map_err(|e| e.to_string())?;
+
+    Ok(Some(ExportAccountsResult {
+        path: target.display().to_string(),
+        count: accounts.len(),
+    }))
+}
+
+/// `accounts:importEncrypted` — open a `.rambak` produced by
+/// [`accounts_export_encrypted`], decrypt it with the passphrase, and merge the
+/// accounts into the current store WITHOUT overwriting anything: an incoming
+/// account is skipped when its non-empty `user_id` or its exact `username`
+/// already exists. Every imported account passes through
+/// [`encrypt_account`] before the merge so the at-rest invariant holds on this
+/// machine, then ONE [`save_to_dir`] persists the merged store.
+///
+/// A wrong passphrase fails GCM authentication inside [`decrypt_gcm`] and is
+/// propagated verbatim as an `Err`; cancelling the dialog resolves to
+/// `Ok(None)`.
+#[tauri::command]
+pub async fn accounts_import_encrypted(
+    app: AppHandle,
+    passphrase: String,
+) -> Result<Option<ImportAccountsResult>, String> {
+    let dir = store_dir(&app)?;
+    let source = tauri::async_runtime::spawn_blocking(move || {
+        rfd::FileDialog::new()
+            .add_filter("RAM backup", &["rambak"])
+            .pick_file()
+    })
+    .await
+    .map_err(|e| format!("the file dialog could not run: {e}"))?;
+    let Some(source) = source else {
+        return Ok(None); // user cancelled
+    };
+
+
+    let dir_for_job = dir.clone();
+    let source_for_job = source.clone();
+    let prepared = tauri::async_runtime::spawn_blocking(
+        move || -> Result<(Vec<Account>, Vec<Account>), String> {
+            let blob = std::fs::read_to_string(&source_for_job).map_err(|e| e.to_string())?;
+            let rest = blob
+                .strip_prefix("gs:")
+                .ok_or("The backup file is not in a valid format.")?;
+            let key = derive_scrypt_key(&passphrase)?;
+            let json = decrypt_gcm(rest, &key, "gs")
+                .map_err(|_| "The passphrase is incorrect or the backup is corrupted.".to_string())?;
+            let incoming: Vec<Account> =
+                serde_json::from_str(&json).map_err(|e| e.to_string())?;
+
+            let CryptoContext {
+                passphrase_mode,
+                safe_storage_ready,
+                device_key,
+            } = crypto_context::resolve(&dir_for_job);
+
+            // Re-seal every imported account under THIS machine's at-rest
+            // format before merging (DPAPI in safe mode; the session/machine
+            // `gs:` key otherwise).
+            let mut decrypted_incoming = Vec::with_capacity(incoming.len());
+            for account in &incoming {
+                decrypted_incoming.push(
+                    encrypt_account(account, passphrase_mode, safe_storage_ready, device_key)?,
+                );
+            }
+            Ok((incoming, decrypted_incoming))
+        },
+    )
+    .await
+    .map_err(|e| format!("the import job could not run: {e}"))??;
+
+    let (incoming, resealed) = prepared;
+    let CryptoContext {
+        passphrase_mode,
+        safe_storage_ready,
+        device_key,
+    } = crypto_context::resolve(&dir);
+    let current = load_from_dir(&dir, passphrase_mode, safe_storage_ready, device_key)
+        .map_err(|e| e.to_string())?
+        .accounts;
+
+    let mut added = 0usize;
+    let mut skipped = 0usize;
+    let mut merged = current.clone();
+    for account in resealed {
+        let original = incoming
+            .iter()
+            .find(|candidate| candidate.id == account.id)
+            .expect("resealed entry mirrors its incoming source");
+        let duplicate = (!original.user_id.is_empty()
+            && current.iter().any(|existing| existing.user_id == original.user_id))
+            || current.iter().any(|existing| existing.username == original.username);
+        if duplicate {
+            skipped += 1;
+            continue;
+        }
+        merged.push(account);
+        added += 1;
+    }
+
+    save_to_dir(&dir, &merged, passphrase_mode, safe_storage_ready, device_key)
+        .map_err(|e| e.to_string())?;
+
+    Ok(Some(ImportAccountsResult {
+        path: source.display().to_string(),
+        added,
+        skipped,
+    }))
+}
 #[cfg(test)]
 mod tests {
     //! Unit tests for the Account_Store load path (Task 6.1):
@@ -1311,6 +1493,7 @@ mod tests {
     //! shapes that decrypt (or fail) deterministically on every platform with the
     //! key session locked:
     //!   * a NO-TAG cookie, which `decrypt_field` passes through unchanged
+
     //!     (`Ok(Some(value))`), so the entry decrypts to itself; and
     //!   * a `gs:` cookie with no key available (locked, non-passphrase, no
     //!     device key), which `decrypt_field` reports as `Err` — the

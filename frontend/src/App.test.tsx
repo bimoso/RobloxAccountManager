@@ -107,7 +107,7 @@ afterEach(() => {
 describe('App shell wiring (task 29.6)', () => {
   it('renders the title bar and sidebar navigation', async () => {
     render(<App />);
-    expect(screen.getByText('RobloxAccountManager')).toBeInTheDocument();
+    expect(screen.getByText('RAM')).toBeInTheDocument();
     // Sidebar nav entries (from navigationStore) are present.
     expect(
       screen.getByRole('button', { name: /accounts/i }),

@@ -5,6 +5,12 @@
 // Charts page exactly — impure fetching in `weaoApi`, pure logic in
 // `clientStatus`/`filterExecutors`, a session cache that paints instantly on
 // re-entry and revalidates silently behind it.
+//
+// RACKLINE: the page is the mandatory `.rk-page` frame — head / toolbar / one
+// scroll port. Published client versions are a `.rk-stats` strip, the client
+// verdict is a flat `.rk-panel`, and the executor catalogue is a `.rk-table`
+// with a sticky header. Every status is a `.rk-chip[data-tone]` carrying a text
+// code, never a bare colour.
 
 import {
   useCallback,
@@ -21,7 +27,6 @@ import {
   Boxes,
   Bug,
   CircleCheck,
-  CircleDollarSign,
   CircleHelp,
   Clock,
   Download,
@@ -32,7 +37,6 @@ import {
   MessageCircle,
   Monitor,
   Puzzle,
-  Radar,
   RefreshCw,
   Search,
   ShieldAlert,
@@ -47,7 +51,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { Button } from '@/components/Button';
-import { Card } from '@/components/Card';
 import { Dropdown } from '@/components/Dropdown';
 import { EmptyState } from '@/components/EmptyState';
 import { Switch } from '@/components/Switch';
@@ -59,6 +62,7 @@ import type { Translator } from '@/i18n';
 import type { RobloxInstallation } from '@/types/models';
 import {
   aggregateVerdict,
+  clientVerdict,
   collectInstalledGuids,
   executorTargetsInstalled,
   type ClientVerdict,
@@ -80,11 +84,14 @@ import './Weao.css';
 
 type LoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
+/** The five tones `.rk-chip` / `.rk-dot` understand. Tone is data, not a class. */
+type Tone = 'neutral' | 'ok' | 'warn' | 'danger' | 'accent';
+
 /** Everything one WEAO load produces, kept together so the cache is atomic. */
 interface WeaoSnapshot {
   versions: WeaoVersions;
   executors: Executor[];
-  /** Oldest of the two backend stamps — the pill must not over-promise. */
+  /** Oldest of the two backend stamps — the chip must not over-promise. */
   fetchedAt: number;
   fromCache: boolean;
   staleReason: string | null;
@@ -104,7 +111,7 @@ const weaoCache = createSessionCache<WeaoSnapshot>();
  */
 const WEAO_CACHE_TTL_MS = 10 * 60_000;
 
-/** Icon shown per platform tile in the versions panel. */
+/** Icon shown per platform tile in the versions strip. */
 const PLATFORM_ICONS: Record<WeaoPlatform, LucideIcon> = {
   windows: Monitor,
   mac: Apple,
@@ -120,6 +127,28 @@ const VERDICT_ICONS: Record<ClientVerdict, LucideIcon> = {
   unknown: CircleHelp,
 };
 
+/**
+ * One meaning per colour (spec §8): a client that matches the live build is
+ * `ok`, one that is behind is `danger`, an announced forced update is `warn`,
+ * and "we cannot tell" is neutral — never accent, which only ever means
+ * selection.
+ */
+const VERDICT_TONES: Record<ClientVerdict, Tone> = {
+  'up-to-date': 'ok',
+  outdated: 'danger',
+  'update-incoming': 'warn',
+  unknown: 'neutral',
+};
+
+/** Freshness state → chip tone. `cached`/`syncing` are informational, not risk. */
+const FRESHNESS_TONES: Record<Freshness['state'], Tone> = {
+  live: 'ok',
+  cached: 'neutral',
+  syncing: 'neutral',
+  stale: 'warn',
+  error: 'danger',
+};
+
 /** WEAO hub: Roblox version tracking, client verdicts and executor status. */
 export default function WeaoPage(): JSX.Element {
   const reducedMotion = useReducedMotion() ?? false;
@@ -128,7 +157,7 @@ export default function WeaoPage(): JSX.Element {
   const [snapshot, setSnapshot] = useState<WeaoSnapshot | undefined>(cached);
   const [status, setStatus] = useState<LoadStatus>(cached ? 'loaded' : 'idle');
   // Seeded from whatever sweep the Clients deck (or the idle warm-up) already
-  // paid for, so the verdict band paints with the rest of the board instead of
+  // paid for, so the verdict panel paints with the rest of the board instead of
   // popping in a beat later.
   const [installations, setInstallations] = useState<RobloxInstallation[]>(
     () => peekClientsSnapshot()?.installations ?? [],
@@ -173,7 +202,7 @@ export default function WeaoPage(): JSX.Element {
       .then((clients) => {
         if (!cancelled) setInstallations(clients.installations);
       })
-      // A failed client scan only costs the verdict band; the catalogue below
+      // A failed client scan only costs the verdict panel; the catalogue below
       // is independent and must still render.
       .catch(() => undefined);
     return () => {
@@ -256,55 +285,119 @@ export default function WeaoPage(): JSX.Element {
   const VerdictIcon = VERDICT_ICONS[verdict];
 
   return (
-    <section className="weao-page" aria-labelledby="weao-title">
-      <motion.header
-        className="weao-header"
-        initial={{ opacity: 0, y: reducedMotion ? 0 : -6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: reducedMotion ? 0 : 0.28, ease: 'easeOut' }}
-      >
-        <div className="weao-heading">
-          <span className="weao-eyebrow">
-            <Radar size={12} aria-hidden="true" /> {t('weao.eyebrow')}
-          </span>
+    <section className="rk-page weao-page" aria-labelledby="weao-title">
+      <header className="rk-page__head">
+        <div className="rk-page__titles">
           <h1 id="weao-title">{t('weao.title')}</h1>
-          <p>{t('weao.subtitle')}</p>
+          <span className="rk-page__sub">{t('weao.subtitle')}</span>
         </div>
-        <div className="weao-header__aside">
-          <div className="weao-fresh" data-state={freshness.state} aria-live="polite">
-            <span className="weao-fresh__signal" aria-hidden="true" />
+        <div className="rk-page__actions">
+          <span
+            className="rk-chip weao-fresh"
+            data-tone={FRESHNESS_TONES[freshness.state]}
+            aria-live="polite"
+          >
+            <span
+              className={
+                freshness.state === 'syncing' ? 'rk-dot rk-dot--live' : 'rk-dot'
+              }
+              data-tone={FRESHNESS_TONES[freshness.state]}
+              aria-hidden="true"
+            />
             {freshness.label}
-          </div>
+          </span>
           <Button
             variant="secondary"
-            className="weao-refresh"
             disabled={status === 'loading'}
             onClick={() => void load(true)}
           >
             <RefreshCw size={14} aria-hidden="true" /> {t('weao.refresh')}
           </Button>
         </div>
-      </motion.header>
+      </header>
 
-      <div className="weao-scroll">
+      <div className="rk-toolbar weao-toolbar">
+        <div className="rk-search weao-search" role="search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            type="search"
+            aria-label={t('weao.search.aria')}
+            placeholder={t('weao.search.placeholder')}
+            value={filters.query}
+            onChange={(event) =>
+              setFilters((previous) => ({ ...previous, query: event.target.value }))
+            }
+          />
+          {filters.query.length > 0 ? (
+            <button
+              type="button"
+              className="weao-search__clear"
+              aria-label={t('weao.search.clear')}
+              onClick={() => setFilters((previous) => ({ ...previous, query: '' }))}
+            >
+              <X size={12} aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+        <span className="weao-count u-num" aria-live="polite">
+          {shownExecutors.length}/{sourceExecutors.length}
+        </span>
+        <Dropdown
+          options={costOptions}
+          value={filters.cost}
+          aria-label={t('weao.filter.cost')}
+          onChange={(cost) => setFilters((previous) => ({ ...previous, cost }))}
+        />
+        <Dropdown
+          options={statusOptions}
+          value={filters.status}
+          aria-label={t('weao.filter.status')}
+          onChange={(next) => setFilters((previous) => ({ ...previous, status: next }))}
+        />
+        <span className="rk-toolbar__spacer" />
+        <label
+          className="weao-supported"
+          htmlFor="weao-supported-only"
+          title={t('weao.supported.hint')}
+        >
+          <Switch
+            id="weao-supported-only"
+            checked={supportedOnly}
+            // Without a local guid there is nothing to match against, so
+            // the toggle would silently empty the table.
+            disabled={installedGuids.length === 0}
+            aria-label={t('weao.supported.label')}
+            onChange={setSupportedOnly}
+          />
+          <span>
+            <strong>{t('weao.supported.label')}</strong>
+            <small>{t('weao.supported.hint')}</small>
+          </span>
+        </label>
+      </div>
+
+      <div className="rk-page__body">
         <AnimatePresence mode="sync" initial={false}>
           {isLoading ? (
-            <WeaoSkeleton key="loading" />
+            <div key="loading" className="rk-empty" role="status">
+              <span className="rk-spin" aria-hidden="true" />
+              <p className="rk-empty__text">{t('weao.loading')}</p>
+            </div>
           ) : isError ? (
             <motion.div
               key="error"
-              className="weao-message"
+              className="rk-empty"
               role="alert"
-              initial={{ opacity: 0, y: reducedMotion ? 0 : 7 }}
+              initial={{ opacity: 0, y: reducedMotion ? 0 : 3 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: reducedMotion ? 0 : 0.22 }}
+              transition={{ duration: reducedMotion ? 0 : 0.15 }}
             >
-              <div className="weao-message__glyph" aria-hidden="true">
-                <TriangleAlert size={24} />
+              <div className="rk-empty__icon weao-empty__icon" aria-hidden="true">
+                <TriangleAlert size={20} />
               </div>
-              <h2>{t('weao.error.title')}</h2>
-              <p>{t('weao.error.body')}</p>
+              <h2 className="rk-empty__title">{t('weao.error.title')}</h2>
+              <p className="rk-empty__text">{t('weao.error.body')}</p>
               <Button onClick={() => void load(true)}>
                 <RefreshCw size={14} aria-hidden="true" /> {t('weao.error.retry')}
               </Button>
@@ -312,128 +405,81 @@ export default function WeaoPage(): JSX.Element {
           ) : (
             <motion.div
               key="board"
-              className="weao-board"
-              initial={{ opacity: 0, y: reducedMotion ? 0 : 7 }}
+              initial={{ opacity: 0, y: reducedMotion ? 0 : 3 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: reducedMotion ? 0 : -4 }}
-              transition={{ duration: reducedMotion ? 0 : 0.22, ease: 'easeOut' }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: reducedMotion ? 0 : 0.15, ease: 'easeOut' }}
             >
-              <Card className="weao-clients" data-verdict={verdict}>
-                <div className="weao-clients__verdict">
-                  <span className="weao-clients__glyph" aria-hidden="true">
-                    <VerdictIcon size={19} />
-                  </span>
-                  <div>
-                    <span className="weao-section-eyebrow">{t('weao.clients.title')}</span>
-                    <strong>{t(`weao.verdict.${verdict}`)}</strong>
-                    <p>{t(`weao.clients.hint.${verdict}`)}</p>
+              <div className="rk-section weao-section">{t('weao.versions.title')}</div>
+              <div className="rk-stats weao-stats">
+                {WEAO_PLATFORMS.map((platform) => (
+                  <PlatformStat
+                    key={platform}
+                    platform={platform}
+                    current={snapshot?.versions.current[platform]}
+                    future={snapshot?.versions.future[platform]}
+                  />
+                ))}
+              </div>
+
+              <div className="weao-brief">
+                <section className="rk-panel weao-verdict" data-verdict={verdict}>
+                  <div className="rk-panel__head">
+                    <VerdictIcon size={15} aria-hidden="true" />
+                    <h2 className="rk-panel__title">{t('weao.clients.title')}</h2>
+                    <span className="weao-verdict__spacer" />
+                    <span className="rk-chip" data-tone={VERDICT_TONES[verdict]}>
+                      {t(`weao.verdict.${verdict}`)}
+                    </span>
                   </div>
-                </div>
-                <ul className="weao-clients__list">
-                  {installations.length === 0 ? (
-                    <li className="weao-clients__none">{t('weao.clients.empty')}</li>
-                  ) : (
-                    installations.slice(0, 6).map((installation) => (
-                      <li key={installation.id}>
-                        <span title={installation.displayName}>{installation.displayName}</span>
-                        <code title={installation.versionGuid ?? undefined}>
-                          {installation.versionGuid ?? t('weao.clients.versionUnknown')}
-                        </code>
-                      </li>
-                    ))
-                  )}
-                </ul>
-                {banwaveCount > 0 ? (
-                  <p className="weao-banwave" role="status">
-                    <TriangleAlert size={14} aria-hidden="true" />
-                    <strong>{t('weao.banwave.title')}</strong>
-                    <span>{t('weao.banwave.body', { count: banwaveCount })}</span>
-                  </p>
-                ) : null}
-              </Card>
-
-              <Card className="weao-versions">
-                <span className="weao-section-eyebrow">{t('weao.versions.title')}</span>
-                <div className="weao-versions__grid">
-                  {WEAO_PLATFORMS.map((platform) => (
-                    <PlatformTile
-                      key={platform}
-                      platform={platform}
-                      current={snapshot?.versions.current[platform]}
-                      future={snapshot?.versions.future[platform]}
-                    />
-                  ))}
-                </div>
-              </Card>
-
-              <div className="weao-toolbar">
-                <div className="weao-search" role="search">
-                  <Search size={16} aria-hidden="true" />
-                  <input
-                    type="search"
-                    aria-label={t('weao.search.aria')}
-                    placeholder={t('weao.search.placeholder')}
-                    value={filters.query}
-                    onChange={(event) =>
-                      setFilters((previous) => ({ ...previous, query: event.target.value }))
-                    }
-                  />
-                  {filters.query.length > 0 ? (
-                    <button
-                      type="button"
-                      className="weao-search__clear"
-                      aria-label={t('weao.search.clear')}
-                      onClick={() => setFilters((previous) => ({ ...previous, query: '' }))}
-                    >
-                      <X size={13} />
-                    </button>
-                  ) : null}
-                  <span className="weao-search__count" aria-live="polite">
-                    {shownExecutors.length}/{sourceExecutors.length}
-                  </span>
-                </div>
-                <div className="weao-filters">
-                  <Dropdown
-                    options={costOptions}
-                    value={filters.cost}
-                    aria-label={t('weao.filter.cost')}
-                    onChange={(cost) => setFilters((previous) => ({ ...previous, cost }))}
-                  />
-                  <Dropdown
-                    options={statusOptions}
-                    value={filters.status}
-                    aria-label={t('weao.filter.status')}
-                    onChange={(next) => setFilters((previous) => ({ ...previous, status: next }))}
-                  />
-                </div>
-                <label className="weao-supported" htmlFor="weao-supported-only">
-                  <Switch
-                    id="weao-supported-only"
-                    checked={supportedOnly}
-                    // Without a local guid there is nothing to match against, so
-                    // the toggle would silently empty the grid.
-                    disabled={installedGuids.length === 0}
-                    aria-label={t('weao.supported.label')}
-                    onChange={setSupportedOnly}
-                  />
-                  <span>
-                    <strong>{t('weao.supported.label')}</strong>
-                    <small>{t('weao.supported.hint')}</small>
-                  </span>
-                </label>
+                  <div className="rk-panel__body weao-verdict__body">
+                    <p className="weao-verdict__hint">{t(`weao.clients.hint.${verdict}`)}</p>
+                    {banwaveCount > 0 ? (
+                      <p className="weao-banwave" role="status">
+                        <span className="rk-chip" data-tone="danger">
+                          <TriangleAlert size={11} aria-hidden="true" />
+                          {t('weao.banwave.title')}
+                        </span>
+                        <span>{t('weao.banwave.body', { count: banwaveCount })}</span>
+                      </p>
+                    ) : null}
+                  </div>
+                  <ul className="weao-clients">
+                    {installations.length === 0 ? (
+                      <li className="weao-clients__none">{t('weao.clients.empty')}</li>
+                    ) : (
+                      installations.slice(0, 6).map((installation) => (
+                        <ClientRow
+                          key={installation.id}
+                          installation={installation}
+                          currentWindows={currentWindows}
+                          futureWindows={futureWindows}
+                        />
+                      ))
+                    )}
+                  </ul>
+                </section>
               </div>
 
               {shownExecutors.length === 0 ? (
                 <EmptyState
-                  icon={<Boxes size={26} />}
+                  icon={<Boxes size={20} />}
                   message={filtersActive ? t('weao.empty.filtered') : t('weao.empty.body')}
                   actionLabel={filtersActive ? t('weao.empty.clear') : undefined}
                   onAction={filtersActive ? clearFilters : undefined}
                 />
               ) : (
-                <div className="weao-grid">
+                <div className="rk-table weao-table">
+                  <div className="rk-table__head">
+                    <span />
+                    <span>{t('packages.modal.name')}</span>
+                    <span>{t('titlebar.clientStatus')}</span>
+                    <span>{t('clients.versionGuid')}</span>
+                    <span>{t('weao.platform.windows')}</span>
+                    <span>{t('weao.card.price')}</span>
+                  </div>
                   {shownExecutors.map((executor, index) => (
-                    <ExecutorCard
+                    <ExecutorRow
                       key={executor.trackerId}
                       executor={executor}
                       index={index}
@@ -451,7 +497,7 @@ export default function WeaoPage(): JSX.Element {
   );
 }
 
-/** Everything the header pill needs to decide what it says. */
+/** Everything the header chip needs to decide what it says. */
 interface FreshnessInput {
   snapshot: WeaoSnapshot | undefined;
   status: LoadStatus;
@@ -459,7 +505,7 @@ interface FreshnessInput {
   t: Translator;
 }
 
-/** The pill's visual state plus its resolved label. */
+/** The chip's visual state plus its resolved label. */
 interface Freshness {
   state: 'live' | 'cached' | 'stale' | 'syncing' | 'error';
   label: string;
@@ -501,152 +547,233 @@ function formatAge(fetchedAt: number, relative: Intl.RelativeTimeFormat): string
   return relative.format(Math.round(minutes / 60), 'hour');
 }
 
-/** Props for {@link PlatformTile}. */
-interface PlatformTileProps {
+/** Props for {@link PlatformStat}. */
+interface PlatformStatProps {
   platform: WeaoPlatform;
   current: PlatformVersion | undefined;
   future: PlatformVersion | undefined;
 }
 
-/** One platform column of the versions panel: the live build and the next one. */
-function PlatformTile({ platform, current, future }: PlatformTileProps): JSX.Element {
-  const { t } = useTranslation();
+/**
+ * One cell of the published-versions strip: the live build for a platform, its
+ * freshness chip, and the announced next build when WEAO has one.
+ *
+ * The version string is mono + tabular (`u-num`) because a Windows deployment
+ * guid is an opaque hash the eye has to diff character by character, and a
+ * proportional face makes that impossible.
+ */
+function PlatformStat({ platform, current, future }: PlatformStatProps): JSX.Element {
+  const { t, language } = useTranslation();
   const Icon = PLATFORM_ICONS[platform];
+  // A published next build is the thing that breaks executors, so it outranks
+  // "there is a live build" for the tone of this cell.
+  const tone: Tone = future ? 'warn' : current ? 'ok' : 'neutral';
+  const chipLabel = future
+    ? t('weao.versions.future')
+    : current
+      ? t('weao.versions.current')
+      : t('weao.versions.none');
+  // WEAO stamps builds with a full ISO timestamp; a short date is what fits the
+  // tile and what people actually compare. Unparseable stamps pass through.
+  const updated = current?.updatedAt ? new Date(current.updatedAt) : null;
+  const updatedLabel =
+    updated && !Number.isNaN(updated.getTime())
+      ? new Intl.DateTimeFormat(language === 'es' ? 'es-MX' : 'en-US', {
+          day: 'numeric',
+          month: 'short',
+        }).format(updated)
+      : current?.updatedAt;
   return (
-    <div className="weao-version" data-platform={platform}>
-      <span className="weao-version__head">
-        <Icon size={14} aria-hidden="true" />
+    <div className="rk-stat weao-stat">
+      <span className="rk-stat__label weao-stat__label">
+        <Icon size={13} aria-hidden="true" />
         {t(`weao.platform.${platform}`)}
       </span>
-      <small>{t('weao.versions.current')}</small>
-      <code title={current?.version}>{current?.version ?? t('weao.versions.none')}</code>
-      {current?.updatedAt ? <time>{current.updatedAt}</time> : null}
-      {future ? (
-        <>
-          <small className="weao-version__future">
-            <Clock size={11} aria-hidden="true" /> {t('weao.versions.future')}
-          </small>
-          <code title={future.version}>{future.version}</code>
-        </>
-      ) : null}
+      <span className="rk-stat__value weao-stat__version u-num" title={current?.version}>
+        {current?.version ?? t('weao.versions.none')}
+      </span>
+      <span className="weao-stat__foot">
+        <span className="rk-chip rk-chip--sm" data-tone={tone}>
+          {chipLabel}
+        </span>
+        {future ? (
+          <code className="weao-stat__next u-num" title={future.version}>
+            {future.version}
+          </code>
+        ) : current?.updatedAt ? (
+          <time className="weao-stat__time u-num" dateTime={current.updatedAt} title={current.updatedAt}>
+            {updatedLabel}
+          </time>
+        ) : null}
+      </span>
     </div>
   );
 }
 
-/** Props for {@link ExecutorCard}. */
-interface ExecutorCardProps {
+/** Props for {@link ClientRow}. */
+interface ClientRowProps {
+  installation: RobloxInstallation;
+  currentWindows: string | null;
+  futureWindows: string | null;
+}
+
+/** One detected Roblox install, judged against the published Windows builds. */
+function ClientRow({
+  installation,
+  currentWindows,
+  futureWindows,
+}: ClientRowProps): JSX.Element {
+  const { t } = useTranslation();
+  const rowVerdict = clientVerdict(installation, currentWindows, futureWindows);
+  const tone = VERDICT_TONES[rowVerdict];
+  return (
+    <li className="rk-row weao-client" data-tone={tone}>
+      <span className="rk-row__gutter">
+        <span className="rk-row__tick" aria-hidden="true" />
+      </span>
+      <span className="rk-row__main">
+        <span className="rk-row__title" title={installation.displayName}>
+          {installation.displayName}
+        </span>
+        <span className="rk-row__meta u-num" title={installation.versionGuid ?? undefined}>
+          {installation.versionGuid ?? t('weao.clients.versionUnknown')}
+        </span>
+      </span>
+      <span className="rk-chip rk-chip--sm" data-tone={tone}>
+        {t(`weao.verdict.${rowVerdict}`)}
+      </span>
+    </li>
+  );
+}
+
+/** Props for {@link ExecutorRow}. */
+interface ExecutorRowProps {
   executor: Executor;
   index: number;
   reducedMotion: boolean;
   installed: boolean;
 }
 
-/** One catalogue entry: identity, risk, capabilities, price and links. */
-function ExecutorCard({
+/**
+ * One catalogue entry, as two lines of the rack: the aligned column line
+ * (identity, status, version, platform, price) and a wrapping detail line that
+ * carries risk, capabilities, target build and outbound links.
+ */
+function ExecutorRow({
   executor,
   index,
   reducedMotion,
   installed,
-}: ExecutorCardProps): JSX.Element {
+}: ExecutorRowProps): JSX.Element {
   const { t } = useTranslation();
+  // Risk outranks freshness: an executor that is current but in an active
+  // banwave is not a green row.
+  const tone: Tone = executor.possibleBanwave
+    ? 'danger'
+    : executor.detected
+      ? 'warn'
+      : executor.updateStatus
+        ? 'ok'
+        : 'warn';
+  const price = executor.free
+    ? t('weao.card.free')
+    : (executor.cost ?? t('weao.card.priceUnknown'));
   return (
     <motion.div
-      layout={reducedMotion ? false : 'position'}
-      initial={{ opacity: 0, y: reducedMotion ? 0 : 7 }}
+      className="weao-exec"
+      data-rail-row
+      data-tone={tone}
+      data-detected={executor.detected ? 'true' : undefined}
+      data-banwave={executor.possibleBanwave ? 'true' : undefined}
+      initial={{ opacity: 0, y: reducedMotion ? 0 : 3 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
       transition={{
-        duration: reducedMotion ? 0 : 0.22,
-        delay: reducedMotion ? 0 : Math.min(index, 8) * 0.025,
+        duration: reducedMotion ? 0 : 0.15,
+        delay: reducedMotion ? 0 : Math.min(index, 6) * 0.04,
         ease: 'easeOut',
       }}
     >
-      <Card
-        className="weao-executor"
-        data-detected={executor.detected ? 'true' : undefined}
-        data-banwave={executor.possibleBanwave ? 'true' : undefined}
-      >
-        <header className="weao-executor__head">
+      <div className="rk-row weao-exec__main">
+        <span className="rk-row__gutter">
+          <span className="rk-row__tick" aria-hidden="true" />
+        </span>
+        <span className="weao-exec__id">
           <ExecutorLogo executor={executor} />
-          <div className="weao-executor__id">
-            <h2 title={executor.title}>{executor.title}</h2>
-            <span>
-              {t(`weao.extype.${executor.extype}`)}
-              {executor.version ? ` · ${executor.version}` : ''}
-            </span>
-          </div>
-          <span
-            className="weao-executor__state"
-            data-state={executor.updateStatus ? 'updated' : 'outdated'}
-          >
-            {executor.updateStatus ? t('weao.status.updated') : t('weao.status.outdated')}
+          <span className="rk-row__main">
+            <h2 className="rk-row__title" title={executor.title}>
+              {executor.title}
+            </h2>
+            <span className="rk-row__meta">{t(`weao.extype.${executor.extype}`)}</span>
           </span>
-        </header>
+        </span>
+        <span className="rk-chip rk-chip--sm" data-tone={executor.updateStatus ? 'ok' : 'warn'}>
+          {executor.updateStatus ? t('weao.status.updated') : t('weao.status.outdated')}
+        </span>
+        <span className="rk-table__cell rk-table__cell--num u-num" title={executor.version}>
+          {executor.version}
+        </span>
+        <span className="rk-table__cell" title={executor.platformLabel}>
+          {executor.platformLabel}
+        </span>
+        <span className="rk-table__cell weao-exec__price" title={price}>
+          {price}
+        </span>
+      </div>
 
+      <div className="weao-exec__detail">
         {executor.possibleBanwave || executor.detected ? (
-          <p className="weao-executor__risk" data-severity={executor.possibleBanwave ? 'banwave' : 'detected'}>
-            <TriangleAlert size={13} aria-hidden="true" />
-            <strong>
+          <span className="weao-exec__risk">
+            <span
+              className="rk-chip rk-chip--sm"
+              data-tone={executor.possibleBanwave ? 'danger' : 'warn'}
+            >
+              <TriangleAlert size={11} aria-hidden="true" />
               {executor.possibleBanwave ? t('weao.card.banwave') : t('weao.card.detected')}
-            </strong>
+            </span>
             {executor.detectionReason ? <span>{executor.detectionReason}</span> : null}
-          </p>
+          </span>
         ) : null}
 
-        <ul className="weao-executor__traits">
-          {executor.multiInject ? (
-            <Trait icon={Layers} label={t('weao.card.multiInject')} highlight />
-          ) : null}
-          {executor.decompiler ? <Trait icon={Terminal} label={t('weao.card.decompiler')} /> : null}
-          {executor.raknet ? <Trait icon={Zap} label={t('weao.card.raknet')} /> : null}
-          {executor.clientmods ? <Trait icon={Blocks} label={t('weao.card.clientmods')} /> : null}
-          {executor.uncPercentage !== null ? (
-            <Trait icon={Gauge} label={t('weao.card.unc', { percent: executor.uncPercentage })} />
-          ) : executor.uncStatus ? (
-            <Trait icon={Gauge} label={t('weao.card.uncOk')} />
-          ) : null}
-          {executor.suncPercentage !== null ? (
-            <Trait icon={Gauge} label={t('weao.card.sunc', { percent: executor.suncPercentage })} />
-          ) : null}
-          {executor.beta ? <Trait icon={FlaskConical} label={t('weao.card.beta')} /> : null}
-          {executor.hasIssues ? <Trait icon={Bug} label={t('weao.card.issues')} /> : null}
-        </ul>
+        {executor.multiInject ? (
+          <Trait icon={Layers} label={t('weao.card.multiInject')} tone="accent" />
+        ) : null}
+        {executor.decompiler ? <Trait icon={Terminal} label={t('weao.card.decompiler')} /> : null}
+        {executor.raknet ? <Trait icon={Zap} label={t('weao.card.raknet')} /> : null}
+        {executor.clientmods ? <Trait icon={Blocks} label={t('weao.card.clientmods')} /> : null}
+        {executor.uncPercentage !== null ? (
+          <Trait icon={Gauge} label={t('weao.card.unc', { percent: executor.uncPercentage })} />
+        ) : executor.uncStatus ? (
+          <Trait icon={Gauge} label={t('weao.card.uncOk')} />
+        ) : null}
+        {executor.suncPercentage !== null ? (
+          <Trait icon={Gauge} label={t('weao.card.sunc', { percent: executor.suncPercentage })} />
+        ) : null}
+        {executor.beta ? <Trait icon={FlaskConical} label={t('weao.card.beta')} /> : null}
+        {executor.hasIssues ? <Trait icon={Bug} label={t('weao.card.issues')} /> : null}
 
-        <dl className="weao-executor__facts">
-          <div>
-            <dt>
-              <CircleDollarSign size={12} aria-hidden="true" /> {t('weao.card.price')}
-            </dt>
-            <dd>
-              {executor.free
-                ? t('weao.card.free')
-                : (executor.cost ?? t('weao.card.priceUnknown'))}
-            </dd>
-          </div>
-          <div>
-            <dt>
-              <Download size={12} aria-hidden="true" /> {t('weao.card.targets')}
-            </dt>
-            <dd title={executor.rbxversion ?? undefined}>
-              {executor.rbxversion ?? t('weao.card.targetsUnknown')}
-              {installed ? (
-                <em>
-                  <CircleCheck size={11} aria-hidden="true" /> {t('weao.card.installed')}
-                </em>
-              ) : null}
-            </dd>
-          </div>
-          {executor.updatedDate ? (
-            <div>
-              <dt>
-                <Clock size={12} aria-hidden="true" /> {t('weao.card.updatedOn')}
-              </dt>
-              <dd>{executor.updatedDate}</dd>
-            </div>
-          ) : null}
-        </dl>
+        <span className="weao-fact">
+          <Download size={11} aria-hidden="true" />
+          <b>{t('weao.card.targets')}</b>
+          <code className="u-num" title={executor.rbxversion ?? undefined}>
+            {executor.rbxversion ?? t('weao.card.targetsUnknown')}
+          </code>
+        </span>
+        {installed ? (
+          <span className="rk-chip rk-chip--sm" data-tone="ok">
+            <CircleCheck size={11} aria-hidden="true" />
+            {t('weao.card.installed')}
+          </span>
+        ) : null}
+        {executor.updatedDate ? (
+          <span className="weao-fact">
+            <Clock size={11} aria-hidden="true" />
+            <b>{t('weao.card.updatedOn')}</b>
+            <time className="u-num">{executor.updatedDate}</time>
+          </span>
+        ) : null}
 
-        <footer className="weao-executor__links">
+        <span className="weao-exec__links">
           <LinkButton url={executor.websitelink} icon={Globe} label={t('weao.card.website')} />
           <LinkButton
             url={executor.discordlink}
@@ -658,8 +785,8 @@ function ExecutorCard({
             icon={ShoppingCart}
             label={t('weao.card.purchase')}
           />
-        </footer>
-      </Card>
+        </span>
+      </div>
     </motion.div>
   );
 }
@@ -668,16 +795,16 @@ function ExecutorCard({
 interface TraitProps {
   icon: LucideIcon;
   label: string;
-  highlight?: boolean;
+  tone?: Tone;
 }
 
 /** A single capability chip. */
-function Trait({ icon: Icon, label, highlight = false }: TraitProps): JSX.Element {
+function Trait({ icon: Icon, label, tone = 'neutral' }: TraitProps): JSX.Element {
   return (
-    <li data-highlight={highlight ? 'true' : undefined}>
+    <span className="rk-chip rk-chip--sm" data-tone={tone}>
       <Icon size={11} aria-hidden="true" />
       {label}
-    </li>
+    </span>
   );
 }
 
@@ -696,8 +823,8 @@ interface LinkButtonProps {
 function LinkButton({ url, icon: Icon, label }: LinkButtonProps): ReactNode {
   if (url === null) return null;
   return (
-    <button type="button" title={url} onClick={() => void ipc.openExternal(url)}>
-      <Icon size={12} aria-hidden="true" /> {label}
+    <button type="button" className="weao-link" title={url} onClick={() => void ipc.openExternal(url)}>
+      <Icon size={11} aria-hidden="true" /> {label}
     </button>
   );
 }
@@ -710,50 +837,22 @@ interface ExecutorLogoProps {
 /**
  * The catalogue logo from `cdn.weao.gg`. Only 18 of 29 entries ship one and the
  * CDN can fail independently of the API, so the glyph-plus-initial fallback is
- * the normal path for a third of the grid, not an edge case.
+ * the normal path for a third of the table, not an edge case.
  */
 function ExecutorLogo({ executor }: ExecutorLogoProps): JSX.Element {
   const [failed, setFailed] = useState(false);
   const logo = executor.slug.logo;
   if (logo === null || failed) {
     return (
-      <span className="weao-executor__logo" data-fallback="true" aria-hidden="true">
-        <Puzzle size={15} />
+      <span className="weao-logo" data-fallback="true" aria-hidden="true">
+        <Puzzle size={12} />
         <small>{executor.title.slice(0, 1).toUpperCase()}</small>
       </span>
     );
   }
   return (
-    <span className="weao-executor__logo">
+    <span className="weao-logo">
       <img src={logo} alt="" loading="lazy" onError={() => setFailed(true)} />
     </span>
-  );
-}
-
-/** Placeholder deck shown only when there is no cached catalogue at all. */
-function WeaoSkeleton(): JSX.Element {
-  const { t } = useTranslation();
-  return (
-    <motion.div
-      className="weao-skeleton"
-      role="status"
-      aria-label={t('weao.loading')}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-    >
-      <span className="sr-only">{t('weao.loading')}</span>
-      <div className="weao-skeleton__band" aria-hidden="true" />
-      <div className="weao-skeleton__versions" aria-hidden="true">
-        {Array.from({ length: 4 }, (_, index) => (
-          <span key={index} />
-        ))}
-      </div>
-      <div className="weao-skeleton__grid" aria-hidden="true">
-        {Array.from({ length: 6 }, (_, index) => (
-          <span key={index} />
-        ))}
-      </div>
-    </motion.div>
   );
 }

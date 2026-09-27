@@ -1,8 +1,9 @@
 import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
+import { useTranslation } from '@/i18n/useTranslation';
 import type { Account } from '@/types/models';
-import './accountModal.css';
+
 
 /**
  * Props for {@link BulkNotesModal}.
@@ -32,6 +33,7 @@ export function BulkNotesModal({
   onSave,
 }: BulkNotesModalProps): JSX.Element {
   const titleId = useId();
+  const { t } = useTranslation();
   const [text, setText] = useState('');
   const [append, setAppend] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -62,7 +64,7 @@ export function BulkNotesModal({
       }
     }
     setBusy(false);
-    setResult(`Notas guardadas para ${ok} de ${accounts.length} cuentas.`);
+    setResult(t('accounts.bulkNotes.result', { ok, total: accounts.length }));
     if (ok === accounts.length) {
       setTimeout(onClose, 500);
     }
@@ -71,51 +73,51 @@ export function BulkNotesModal({
   const count = accounts.length;
 
   return (
-    <Modal open={open && count > 0} onClose={onClose} titleId={titleId}>
-      <div className="acctmodal">
-        <div className="acctmodal__head">
-          <span className="acctmodal__eyebrow">Cuentas</span>
-          <h2 id={titleId} className="acctmodal__title">
-            Notas en lote
+    <Modal open={open && count > 0} onClose={onClose} titleId={titleId} size="md">
+      <div className="fm-root">
+        <div className="fm-head">
+          <span className="fm-eyebrow">{t('accounts.bulkNotes.eyebrow')}</span>
+          <h2 id={titleId} className="fm-title">
+            {t('accounts.bulkNotes.title')}
           </h2>
         </div>
-        <p className="acctmodal__hint">
-          {count === 1 ? '1 cuenta seleccionada.' : `${count} cuentas seleccionadas.`}
+        <p className="fm-hint">
+          {count === 1 ? t('accounts.bulkNotes.oneSelected') : t('accounts.bulkNotes.manySelected', { count })}
         </p>
 
-        <label className="acctmodal__field">
-          Nota
+        <label className="fm-field">
+          {t('accounts.bulkNotes.noteLabel')}
           <textarea
-            className="acctmodal__textarea"
+            className="fm-textarea"
             value={text}
-            placeholder="Escribe una nota…"
+            placeholder={t('accounts.bulkNotes.notePlaceholder')}
             onChange={(event) => setText(event.target.value)}
             disabled={busy}
           />
         </label>
 
-        <label className="acctmodal__check">
+        <label className="fm-check">
           <input
             type="checkbox"
             checked={append}
             onChange={(event) => setAppend(event.target.checked)}
             disabled={busy}
           />
-          Añadir a las notas existentes (en lugar de reemplazarlas)
+          {t('accounts.bulkNotes.appendLabel')}
         </label>
 
-        {result && <p className="acctmodal__hint">{result}</p>}
+        {result && <p className="fm-hint">{result}</p>}
 
-        <div className="acctmodal__footer">
+        <div className="fm-footer">
           <Button variant="secondary" onClick={onClose} disabled={busy}>
-            {result ? 'Cerrar' : 'Cancelar'}
+            {result ? t('accounts.bulkNotes.close') : t('accounts.bulkNotes.cancel')}
           </Button>
           <Button
             variant="primary"
             onClick={() => void submit()}
             disabled={busy || (append && text.trim().length === 0)}
           >
-            {busy ? 'Guardando…' : 'Guardar notas'}
+            {busy ? t('accounts.bulkNotes.saving') : t('accounts.bulkNotes.save')}
           </Button>
         </div>
       </div>

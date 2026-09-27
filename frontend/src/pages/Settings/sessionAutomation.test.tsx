@@ -90,6 +90,15 @@ describe('Settings session automation card', () => {
     await waitFor(() =>
       expect(mocks.saveSettings).toHaveBeenCalledWith({ windowLayoutEnabled: false }),
     );
+
+    // Trace cleanup defaults to on when the setting is absent, so the first
+    // click turns it off.
+    const clearTraces = screen.getByRole('switch', { name: 'Clear account traces on close' });
+    expect(clearTraces).toBeChecked();
+    await user.click(clearTraces);
+    await waitFor(() =>
+      expect(mocks.saveSettings).toHaveBeenCalledWith({ clearTracesOnClose: false }),
+    );
   });
 
   it('persists the parsed target size and reverts invalid input', async () => {

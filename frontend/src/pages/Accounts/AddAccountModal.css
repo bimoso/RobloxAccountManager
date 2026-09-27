@@ -1,118 +1,251 @@
-/* AddAccountModal — the "Añadir cuenta" dialog.
+/* ============================================================================
+ * AddAccountModal — the "Añadir cuenta" dialog.
  *
- * Shares the app's glass-card / accent-gradient language (see Generator.css):
- * a JetBrains Mono eyebrow, a Space Grotesk title, a segmented method switcher,
- * and per-method panels. All colours come from theme tokens so every theme and
- * both light/dark schemes are covered. */
+ * RACKLINE. The dialog skeleton (root, head, eyebrow, title, hint, field,
+ * input, textarea, error, footer) is the shared `.fm-*` chrome from
+ * styles/form-modal.css and is NOT restated here. The width comes from the
+ * Modal `size` preset, not from a per-dialog formula.
+ *
+ * This file additionally hosts the two recipes shared by the account dialogs
+ * that have a dismiss affordance or a tab strip:
+ *
+ *   .acc-head  — a dialog head row: the `.fm-head` block plus a trailing
+ *                icon-only close button.
+ *   .acc-seg   — THE segmented tab strip. AddAccountModal and LaunchModal both
+ *                render it, so the treatment (shell, press, selected, focus,
+ *                row height) is declared exactly once. LaunchModal.tsx imports
+ *                this stylesheet for it. It would live in styles/form-modal.css
+ *                if that file were in this agent's ownership list.
+ *
+ * Everything below it is genuinely unique to the three-method wizard: the
+ * moderated toggle, the batch progress meter and the run summary.
+ * ==========================================================================*/
 
-.addacc {
+/* ── Shared: dialog head with a trailing close button ─────────────────────── */
+.acc-head {
   display: flex;
-  /* The modal surface (.modal-content) has no padding of its own, so the body
-   * owns its inset — without this the header hugged the frame's top-left corner. */
-  width: min(468px, 92vw);
-  box-sizing: border-box;
-  padding: 24px 26px 22px;
-  flex-direction: column;
-  gap: 16px;
+  align-items: flex-start;
+  gap: var(--sp-3);
 }
 
-.addacc__head {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+.acc-head .fm-head {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
-.addacc__eyebrow {
-  color: var(--acB, var(--ac));
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 8.5px;
-  font-weight: 800;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.addacc__title {
-  margin: 0;
-  font-family: var(--font-head);
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  color: var(--t1);
-}
-
-.addacc__subtitle {
-  margin: 2px 0 0;
-  color: var(--t2);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-/* ── Segmented method switcher ── */
-.addacc__tabs {
+/* ── Shared: THE segmented tab strip ─────────────────────────────────────────
+ * One shell for every dialog tab strip in the app. Flat: a hairline tray on
+ * --surf-2, a solid accent fill for the selected segment (no gradient, no
+ * shadow, no sheen), opacity-free press via --press-fill, and the single focus
+ * recipe. Segments sit on the row grid (--row-lg by default, --row-xl when the
+ * label carries a caption).
+ * ==========================================================================*/
+.acc-seg {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid var(--bd);
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--glass-card, var(--s2)) 70%, transparent);
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 2px;
+  padding: 3px;
+  border: 0;
+  border-radius: var(--r);
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
-.addacc__tab {
+.acc-seg__tab {
+  display: flex;
+  min-width: 0;
+  height: var(--seg-h, var(--row-lg));
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--t3);
+  font-family: var(--font);
+  font-size: var(--fs-sm);
+  font-weight: var(--w-semibold);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
+}
+
+.acc-seg__tab svg {
+  flex: 0 0 auto;
+}
+
+.acc-seg__copy {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 9px 4px;
-  border: 0;
-  border-radius: 9px;
-  background: transparent;
-  color: var(--t3);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-  transition: color 160ms var(--smooth), background-color 160ms var(--smooth);
+  gap: 0;
 }
 
-.addacc__tab span {
-  max-width: 100%;
+.acc-seg__copy > * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.addacc__tab svg {
-  color: currentColor;
-  opacity: 0.85;
+.acc-seg__copy strong {
+  font-size: var(--fs-sm);
+  font-weight: var(--w-semibold);
 }
 
-.addacc__tab:hover {
+.acc-seg__copy small {
+  color: inherit;
+  font-size: var(--fs-micro);
+  font-weight: var(--w-medium);
+  opacity: 0.78;
+}
+
+.acc-seg__tab:hover {
+  color: var(--t1);
+}
+
+.acc-seg__tab:active {
+  background: var(--press-fill);
+}
+
+.acc-seg__tab[aria-selected='true'] {
+  background: var(--card-hi);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    var(--elev-1);
+  color: var(--t1);
+}
+
+.acc-seg__tab[aria-selected='true'] svg {
+  color: var(--ac-text);
+}
+
+.acc-seg__tab:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: -2px;
+}
+
+/* ── Shared: a hint paragraph that leads with an icon ─────────────────────── */
+.acc-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+
+.acc-note svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--ac-text);
+}
+
+/* ── Shared: a bordered run summary, tone-coded by outcome ───────────────── */
+.acc-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-radius: var(--r);
+  background: var(--ok-fill);
+}
+
+.acc-summary[data-tone='mixed'] {
+  background: var(--red-fill);
+}
+
+.acc-summary__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--t1);
+  font-size: var(--fs-md);
+  font-weight: var(--w-semibold);
+}
+
+.acc-summary__head svg {
+  flex: 0 0 auto;
+  color: var(--green);
+}
+
+.acc-summary[data-tone='mixed'] .acc-summary__head svg {
+  color: var(--red);
+}
+
+.acc-summary__failures {
+  display: flex;
+  max-height: 148px;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding-left: var(--sp-4);
+  overflow-y: auto;
+  color: var(--red);
+  font-size: var(--fs-xs);
+  line-height: var(--lh);
+}
+
+/* ── Shared: a determinate meter. scaleX, never width. ───────────────────── */
+.acc-meter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.acc-meter__track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--hover-fill);
+}
+
+.acc-meter__fill {
+  width: 100%;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--ac), var(--acB));
+  transform: scaleX(var(--fill, 0));
+  transform-origin: left center;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.acc-meter__label {
+  margin: 0;
   color: var(--t2);
-  background: color-mix(in srgb, var(--ac) 8%, transparent);
+  font-size: var(--fs-xs);
+  line-height: var(--lh);
 }
 
-.addacc__tab[aria-selected='true'] {
-  color: #fff;
-  background: linear-gradient(135deg, var(--ac), color-mix(in srgb, var(--ac) 55%, var(--acB, var(--ac))));
-  box-shadow: 0 6px 16px -10px color-mix(in srgb, var(--ac) 90%, transparent);
+.acc-meter__label strong {
+  color: var(--t1);
+  font-weight: var(--w-semibold);
 }
 
-.addacc__tab:focus-visible {
-  outline: 2px solid var(--ac);
-  outline-offset: 1px;
+/* ── AddAccountModal: the wizard's own pieces ───────────────────────────── */
+
+/* The cookie / combo scratchpads are monospace, unlike the shared textarea. */
+.addacc .fm-textarea {
+  min-height: 132px;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  letter-spacing: 0;
+  line-height: var(--lh);
 }
 
-/* ── Accept-moderated toggle ── */
+.addacc__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
 .addacc__moderated {
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 10px 12px;
-  border: 1px solid var(--bd);
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--s2, var(--bg)) 60%, transparent);
+  gap: var(--sp-3);
+  padding: 12px 14px;
+  border-radius: var(--r);
+  background: var(--hover-fill);
   cursor: pointer;
 }
 
@@ -125,190 +258,18 @@
 
 .addacc__moderated strong {
   color: var(--t1);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-sm);
+  font-weight: var(--w-semibold);
 }
 
 .addacc__moderated small {
   color: var(--t3);
-  font-size: 10.5px;
-  line-height: 1.4;
-}
-
-/* ── Panel scaffolding ── */
-.addacc__panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.addacc__field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--t2);
-}
-
-.addacc__input,
-.addacc__textarea {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--bd2);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--s2, var(--bg)) 82%, transparent);
-  color: var(--t1);
-  font-size: 13px;
-  font-weight: 400;
-  transition: border-color 150ms var(--smooth), box-shadow 150ms var(--smooth);
-}
-
-.addacc__textarea {
-  min-height: 132px;
-  resize: vertical;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.addacc__input::placeholder,
-.addacc__textarea::placeholder {
-  color: var(--t3);
-}
-
-.addacc__input:focus,
-.addacc__textarea:focus {
-  outline: 0;
-  border-color: color-mix(in srgb, var(--ac) 65%, var(--bd2));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac) 18%, transparent);
-}
-
-.addacc__input:disabled,
-.addacc__textarea:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.addacc__hint {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  margin: 0;
-  color: var(--t2);
-  font-size: 12px;
-  line-height: 1.5;
-}
-
-.addacc__hint svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
-  color: var(--ac-h, var(--ac));
+  font-size: var(--fs-xs);
+  line-height: var(--lh);
 }
 
 .addacc__count {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--ac-h, var(--ac));
-}
-
-.addacc__error {
-  display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  margin: 0;
-  color: var(--red);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.addacc__error svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
-}
-
-/* ── Progress ── */
-.addacc__progress {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.addacc__track {
-  height: 7px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--s3, var(--bd)) 70%, transparent);
-}
-
-.addacc__fill {
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--ac), var(--acB, var(--ac)));
-  transition: width 200ms var(--smooth);
-}
-
-.addacc__progress-label {
-  margin: 0;
-  color: var(--t2);
-  font-size: 11.5px;
-}
-
-.addacc__progress-label strong {
-  color: var(--t1);
-  font-weight: 700;
-}
-
-/* ── Result summary ── */
-.addacc__summary {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--bd);
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--green) 8%, transparent);
-}
-
-.addacc__summary[data-tone='mixed'] {
-  background: color-mix(in srgb, var(--red) 8%, transparent);
-}
-
-.addacc__summary-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--t1);
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.addacc__summary-head svg {
-  color: var(--green);
-}
-
-.addacc__summary[data-tone='mixed'] .addacc__summary-head svg {
-  color: var(--red);
-}
-
-.addacc__failures {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  max-height: 148px;
-  margin: 0;
-  padding-left: 16px;
-  overflow-y: auto;
-  color: var(--red);
-  font-size: 11.5px;
-  line-height: 1.5;
-}
-
-/* ── Footer ── */
-.addacc__footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 2px;
+  color: var(--ac-text);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-semibold);
 }

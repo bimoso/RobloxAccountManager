@@ -5,8 +5,8 @@ import { ipc } from '@/lib/ipc';
 import { displayName, isLaunched } from '@/lib/filters';
 import { useTranslation } from '@/i18n/useTranslation';
 import { useToastStore } from '@/stores/toastStore';
-import type { Account } from '@/types/models';
-import { AccountCard } from './AccountCard';
+import type { Account, AccountsView } from '@/types/models';
+import { AccountCard, AccountRow } from './AccountCard';
 import { buildContextMenuItems, type ContextMenuHandlers } from './contextMenu';
 
 /**
@@ -48,6 +48,13 @@ export interface AccountCardMenuProps extends AccountCardMenuActions {
   onSelectToggle?: () => void;
   /** Activate the card (e.g. open account details). */
   onClick?: MouseEventHandler<HTMLDivElement>;
+  /**
+   * Which presentation to render: `'list'` is the dense rack row (the page's
+   * default), `'grid'` the card tile behind the view toggle.
+   *
+   * @defaultValue 'grid'
+   */
+  view?: AccountsView;
 }
 
 /** Menu position plus whether it should keep following the card trigger. */
@@ -88,6 +95,7 @@ export function AccountCardMenu({
   selected = false,
   onSelectToggle,
   onClick,
+  view = 'grid',
   onLaunch,
   onEdit,
   onQuickLogin,
@@ -106,7 +114,11 @@ export function AccountCardMenu({
 
   const resolveCardAnchor = useCallback((): ContextMenuAnchor => {
     const rect = wrapperRef.current?.getBoundingClientRect();
-    return rect ? { x: rect.right - 12, y: rect.top + 42 } : { x: 0, y: 0 };
+    if (!rect) return { x: 0, y: 0 };
+    // Anchor just under the trigger. A 32px rack row and a grid tile have very
+    // different heights, so clamp to the entry's own box instead of assuming a
+    // card-sized header.
+    return { x: rect.right - 12, y: rect.top + Math.min(rect.height, 42) };
   }, []);
 
   const handleContextMenu = useCallback<MouseEventHandler<HTMLDivElement>>((event) => {
@@ -132,10 +144,12 @@ export function AccountCardMenu({
           try {
             const result = await ipc.openAccountBrowser(account.id);
             if (result?.ok === false) {
-              showError(result.error?.trim() || 'No se pudo abrir el navegador de la cuenta.');
+              showError(
+                result.error?.trim() || t('accounts.browsers.mixed', { ok: 0, total: 1 }),
+              );
               return;
             }
-            showSuccess(result?.focused ? 'Navegador enfocado.' : 'Navegador de cuenta abierto.');
+            showSuccess(t('accounts.browsers.openedOne'));
           } catch {
             // Rejected IPC calls are already reported by the shared wrapper.
           }
@@ -161,6 +175,7 @@ export function AccountCardMenu({
       onChangePassword,
       showSuccess,
       showError,
+      t,
     ],
   );
 
@@ -169,9 +184,11 @@ export function AccountCardMenu({
     [account, handlers, t],
   );
 
+  const Presentation = view === 'list' ? AccountRow : AccountCard;
+
   return (
     <div ref={wrapperRef} className="acc-cardmenu-shell">
-      <AccountCard
+      <Presentation
         account={account}
         avatarUrl={avatarUrl}
         selected={selected}
@@ -192,6 +209,7 @@ export function AccountCardMenu({
             title={displayName(account)}
             subtitle={account.username ? `@${account.username}` : `UID ${account.userId}`}
             eyebrow={t('accounts.menu.eyebrow')}
+            compactSectionLabel={t('accounts.menu.copySection')}
           />
         )}
       </AnimatePresence>

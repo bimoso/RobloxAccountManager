@@ -34,6 +34,8 @@ export const PERSISTENCE_KEYS = {
   view: 'ui-view',
   /** Active accounts filter (Requirement 27.1). */
   filter: 'ui-filter',
+  /** Accounts page ordering (manual | name | lastUsed). */
+  accountsSort: 'ui-accounts-sort',
   /** BloxGen API key (Requirement 27.1). */
   bloxgenApiKey: 'bloxgen-api-key',
   /** Whether to accept moderated accounts when adding/generating (boolean). */
@@ -48,6 +50,10 @@ export const PERSISTENCE_KEYS = {
   soundVolume: 'sound-volume',
   /** Shared favorites/recent Places used by Charts and the session launcher. */
   placeLibrary: 'roblox-place-library-v1',
+  /** Whether the navigation rail is collapsed to icons (boolean). */
+  railCollapsed: 'ui-rail-collapsed',
+  /** Accounts roster density: 'comfortable' | 'compact'. */
+  accountsDensity: 'ui-accounts-density',
 } as const;
 
 /** A documented UI-preference key. */

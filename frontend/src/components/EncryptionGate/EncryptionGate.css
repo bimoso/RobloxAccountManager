@@ -1,72 +1,146 @@
-/* Encryption_Gate — setup/unlock modal bodies rendered inside the shared
- * Modal surface. The Modal backdrop (fixed, z-index 1000) is what physically
- * blocks the rest of the app while a gate modal is open (Requirements 7.2, 7.3);
- * this file only styles the form contents. Colors/radii come from the theme
- * variables in styles/theme.css. */
+/* ============================================================================
+ * Encryption_Gate — the app's blocking startup dialog.
+ *
+ * The surface itself (flat --surf-1, one --line-strong hairline, --r-lg,
+ * --elev-2, centred on --scrim) comes from the shared Modal, and the head /
+ * hint / label / error / footer chrome comes from styles/form-modal.css. This
+ * file owns only the two things that are genuinely specific to a passphrase
+ * gate: the field-with-reveal-affordance, and the masked readback under it.
+ *
+ * Nothing here re-derives a token, and the old per-file reduced-motion gap
+ * (this component had no block at all) is now covered globally by global.css.
+ * ==========================================================================*/
 
 .enc-gate {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  width: min(420px, 82vw);
-  padding: 24px;
+  gap: var(--sp-3);
 }
 
+.enc-gate__head {
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.enc-gate__logo {
+  border-radius: 13px;
+}
+
+/* The gate is the first thing the app ever shows, so its title carries a touch
+   more presence than a routine dialog's. */
 .enc-gate__title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--t1);
-}
-
-.enc-gate__desc {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--t2);
+  font-size: var(--fs-lg);
 }
 
 .enc-gate__form {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--sp-2);
 }
 
-.enc-gate__label {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--t2);
+/* ── The field ───────────────────────────────────────────────────────────────
+ * The shared field recipe — height --row-lg, radius --r-sm, a 1px
+ * --line-strong hairline on --surf-2, focus of `border-color: var(--ac)` +
+ * var(--focus-ring) — carried on the wrapper instead of the input, because the
+ * reveal toggle lives inside the same shell.
+ * ==========================================================================*/
+.enc-gate__field {
+  display: grid;
+  overflow: hidden;
+  height: var(--row-lg);
+  grid-template-columns: minmax(0, 1fr) var(--row-lg);
+  border: 0;
+  border-radius: var(--r);
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition:
+    box-shadow var(--dur-quick) var(--ease-out),
+    background var(--dur-quick) var(--ease-out);
+}
+
+.enc-gate__field:focus-within {
+  background: var(--card);
+  box-shadow:
+    inset 0 0 0 1px var(--ac3),
+    var(--focus-ring);
+}
+
+.enc-gate__field[data-invalid] {
+  box-shadow: inset 0 0 0 1px var(--red);
 }
 
 .enc-gate__input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 10px 12px;
-  font: inherit;
+  min-width: 0;
+  padding: 0 var(--sp-3);
+  border: 0;
+  outline: 0;
+  background: transparent;
   color: var(--t1);
-  background: var(--s2);
-  border: 1px solid var(--bd2);
-  border-radius: var(--r2);
+  font-family: var(--mono);
+  font-size: var(--fs-md);
+  letter-spacing: 0;
 }
 
-.enc-gate__input:focus-visible {
-  outline: none;
-  border-color: var(--ac);
+.enc-gate__reveal {
+  display: grid;
+  border: 0;
+  border-left: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--t3);
+  cursor: pointer;
+  place-items: center;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
+}
+
+.enc-gate__reveal:hover {
+  background: var(--hover-fill);
+  color: var(--t1);
+}
+
+.enc-gate__reveal:active {
+  background: var(--press-fill);
+}
+
+.enc-gate__reveal:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.enc-gate__reveal[aria-pressed='true'] {
+  color: var(--ac-text);
+}
+
+/* ── Masked readback ─────────────────────────────────────────────────────────
+ * Shape and length of the passphrase, never its characters — the same
+ * reassurance the BloxGen key editor has always had, on the key that actually
+ * protects every stored cookie.
+ * ==========================================================================*/
+.enc-gate__readback {
+  display: flex;
+  min-height: var(--row-xs);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin: 0;
+  color: var(--t3);
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0;
+}
+
+.enc-gate__dots {
+  overflow: hidden;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.16em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.enc-gate__count {
+  flex: 0 0 auto;
 }
 
 .enc-gate__error {
-  margin: 0;
-  font-size: 13px;
-  color: var(--red);
-  background: var(--rd);
-  border: 1px solid var(--red);
-  border-radius: var(--r2);
-  padding: 8px 12px;
-}
-
-.enc-gate__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 4px;
+  padding: 10px 12px;
 }

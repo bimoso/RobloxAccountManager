@@ -1,7 +1,7 @@
 {
   "name": "robloxaccountmanager",
   "version": "1.0.0",
-  "description": "RobloxAccountManager",
+  "description": "RAM - Roblox Account Manager",
   "scripts": {
     "prebuild": "node scripts/build-native.js",
     "build": "node scripts/package-tauri.js",

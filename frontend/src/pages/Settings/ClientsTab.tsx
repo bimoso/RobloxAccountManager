@@ -7,7 +7,6 @@ import {
   Download,
   FolderPlus,
   HardDrive,
-  LoaderCircle,
   RadioTower,
   RefreshCw,
   RotateCcw,
@@ -30,6 +29,7 @@ import type {
   RobloxRelease,
   Settings,
 } from '@/types/models';
+import './Settings.css';
 
 function compactPath(path: string | null, missingLabel: string): string {
   if (!path) return missingLabel;
@@ -131,22 +131,25 @@ export function ClientsTab(): JSX.Element {
     }
   }, []);
 
-  const refresh = useCallback(async (requestedChannel = 'LIVE', options?: { silent?: boolean }): Promise<void> => {
+  const refresh = useCallback(async (
+    requestedChannel = 'LIVE',
+    options?: { silent?: boolean; fresh?: boolean },
+  ): Promise<void> => {
     // A silent refresh revalidates behind the cached data already on screen
     // without flipping the deck into its loading state.
     if (!options?.silent) setLoading(true);
     setError(null);
     void refreshRelease(requestedChannel);
     try {
-      // One command for installations, protocol handlers and deployments: they
-      // all derive from the same registry + disk sweep, which the backend now
-      // runs once, off the main thread.
+      // One command for installations, protocol handlers and deployments. The
+      // backend answers from its cached sweep (memory, then the copy persisted
+      // by the previous session) and verifies it in the background; only the
+      // explicit Scan action (`fresh`) waits for a full registry + disk walk.
       const [snapshot, nextSettings] = await Promise.all([
-        // Through the shared cache so the sweep this deck pays for is also the
-        // one the idle warm-up and the WEAO hub read. `force` because the deck's
-        // own richer snapshot above already decided this scan is due — the
-        // shared freshness window must not veto it.
-        loadClientsSnapshot({ force: true }),
+        // Through the shared cache so the result this deck reads is also the
+        // one the idle warm-up and the WEAO hub read. `force` because the
+        // deck's own richer snapshot above already decided this read is due.
+        loadClientsSnapshot({ force: true, fresh: options?.fresh === true }),
         ipc.loadSettings(),
       ]);
       setInstallations(snapshot.installations);
@@ -196,11 +199,30 @@ export function ClientsTab(): JSX.Element {
 
   // Roblox and the *strap forks reclaim the roblox:// handlers on launch and
   // update. Re-reading on that signal keeps the routing rail honest instead of
-  // showing a binding this app no longer owns.
+  // showing a binding this app no longer owns. The backend re-derives the
+  // cached sweep's bindings before emitting, so this read is cheap: no scan.
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void ipc.onRobloxProtocolChanged(() => {
+      if (!cancelled) void refresh(channelRef.current.trim() || 'LIVE', { silent: true });
+    }).then((stop) => {
+      if (cancelled) stop();
+      else unlisten = stop;
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [refresh]);
+
+  // A background verification found the installed clients changed (one was
+  // installed, removed or moved outside this app): repaint from the cache the
+  // backend just replaced.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void ipc.onRobloxInstallationsChanged(() => {
       if (!cancelled) void refresh(channelRef.current.trim() || 'LIVE', { silent: true });
     }).then((stop) => {
       if (cancelled) stop();
@@ -245,18 +267,37 @@ export function ClientsTab(): JSX.Element {
     }
   };
 
+  // Which route the Manager's own launches take. Independent of the Windows
+  // handlers: handing roblox:// to another client used to flip this too and
+  // silently replace the client the Manager was using.
+  const selectRouteMode = async (mode: 'direct' | 'protocol'): Promise<void> => {
+    if (mode === launchMode) return;
+    setBusyId(`route:${mode}`);
+    try {
+      await ipc.saveSettings({ robloxLaunchMode: mode });
+      setSettings((current) => current ? { ...current, robloxLaunchMode: mode } : current);
+      showSuccess(t(mode === 'protocol' ? 'clients.routeProtocolOn' : 'clients.routeDirectOn'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const activateProtocol = async (installation: RobloxInstallation): Promise<void> => {
     if (!installation.protocolCapable) return;
     setBusyId(`protocol:${installation.id}`);
     try {
       const next = await ipc.activateRobloxProtocol(installation.id);
       setProtocol(next);
-      setSettings((current) => current ? {
-        ...current,
-        robloxLaunchMode: 'protocol',
-        robloxLaunchPresetId: installation.id,
-      } : current);
       showSuccess(t('clients.nowHandles', { name: installation.displayName }));
+      // Only the registry moved; the cached sweep re-derived each client's
+      // bindings, so a cached read is enough to repaint the chips. The
+      // protocol state itself comes from the activation, which is authoritative.
+      try {
+        const snapshot = await loadClientsSnapshot({ force: true });
+        setInstallations(snapshot.installations);
+      } catch {
+        // The activation itself succeeded; the chips catch up on the next read.
+      }
     } finally {
       setBusyId(null);
     }
@@ -267,12 +308,13 @@ export function ClientsTab(): JSX.Element {
     try {
       const next = await ipc.restoreRobloxProtocol();
       setProtocol(next);
-      setSettings((current) => current ? {
-        ...current,
-        robloxLaunchMode: 'direct',
-        robloxLaunchPresetId: null,
-      } : current);
       showSuccess(t('clients.handlersRestored'));
+      try {
+        const snapshot = await loadClientsSnapshot({ force: true });
+        setInstallations(snapshot.installations);
+      } catch {
+        // As above: the restore succeeded; only the chips lag.
+      }
     } finally {
       setBusyId(null);
     }
@@ -346,85 +388,142 @@ export function ClientsTab(): JSX.Element {
     }
   };
 
-  return (
-    <div className="settings-clients">
-      <section className="clients-route-deck">
-        <div className="clients-route-deck__intro">
-          <span className="settings-card-icon settings-card-icon--feature"><Route size={18} /></span>
-          <div>
-            <span className="settings-card-eyebrow">{t('clients.routing.eyebrow')}</span>
-            <h2>{t('clients.routing.title')}</h2>
-            <p>{t('clients.routing.hint')}</p>
-          </div>
-          <Button variant="secondary" onClick={() => void refresh(channel.trim() || 'LIVE')} disabled={loading}>
-            <RefreshCw className={loading ? 'clients-spin' : undefined} size={14} /> {t('clients.scan')}
-          </Button>
-        </div>
+  const handlerName = protocol?.robloxPlayer.installationId
+    ? installations.find((item) => item.id === protocol.robloxPlayer.installationId)?.displayName
+      ?? t('clients.externalHandler')
+    : loading ? t('clients.scanning') : t('clients.noHandler');
+  const routeTarget = launchMode === 'protocol'
+    ? handlerName
+    : directPresetId
+      ? installations.find((item) => item.id === directPresetId)?.displayName ?? directPresetId
+      : t('clients.autoFallback');
+  const deployPercent = progress?.percent == null ? 0 : Math.round(progress.percent);
 
-        <div className="clients-protocol-rail" aria-label={t('clients.protocolAria')}>
-          <div className="clients-protocol-rail__scheme">
-            <span><Cable size={13} /> roblox://</span>
-            <span><Cable size={13} /> roblox-player:</span>
+  return (
+    <div className="set-stack settings-clients">
+      <header className="set-tabhead">
+        <span className="set-icon" data-tone="accent" aria-hidden="true"><Route size={15} /></span>
+        <div className="set-tabhead__text">
+          <span className="rk-eyebrow">{t('clients.routing.eyebrow')}</span>
+          <h2>{t('clients.routing.title')}</h2>
+          <p>{t('clients.routing.hint')}</p>
+        </div>
+        <Button
+          variant="secondary"
+          onClick={() => void refresh(channel.trim() || 'LIVE', { fresh: true })}
+          disabled={loading}
+        >
+          {loading ? <span className="rk-spin" aria-hidden="true" /> : <RefreshCw size={14} aria-hidden="true" />}
+          {t('clients.scan')}
+        </Button>
+      </header>
+
+      {/* ── Where roblox:// currently goes ── */}
+      <section className="rk-panel set-panel" aria-label={t('clients.protocolAria')}>
+        <div className="rk-stats">
+          <div className="rk-stat">
+            <span className="rk-stat__label">{t('clients.protocolAria')}</span>
+            <span className="clients-scheme">
+              <span><Cable size={12} aria-hidden="true" /> roblox://</span>
+              <span><Cable size={12} aria-hidden="true" /> roblox-player:</span>
+            </span>
           </div>
-          <span className="clients-protocol-rail__line" aria-hidden="true"><i /><i /><i /></span>
-          <div className="clients-protocol-rail__target">
-            <small>{t('clients.windowsHandler')}</small>
-            <strong>{protocol?.robloxPlayer.installationId
-              ? installations.find((item) => item.id === protocol.robloxPlayer.installationId)?.displayName ?? t('clients.externalHandler')
-              : loading ? t('clients.scanning') : t('clients.noHandler')}</strong>
-            <span>{compactPath(protocol?.robloxPlayer.executable ?? null, t('clients.pathNotExposed'))}</span>
+          <div className="rk-stat">
+            <span className="rk-stat__label">{t('clients.windowsHandler')}</span>
+            <span className="set-stat__strong">{handlerName}</span>
+            <span className="clients-path" title={protocol?.robloxPlayer.executable ?? undefined}>
+              {compactPath(protocol?.robloxPlayer.executable ?? null, t('clients.pathNotExposed'))}
+            </span>
           </div>
-          <div className="clients-protocol-rail__mode">
-            <small>{t('clients.appRoute')}</small>
-            <strong>{launchMode === 'protocol' ? t('clients.windowsProtocol') : t('clients.directExecutable')}</strong>
-            <span>{directPresetId
-              ? installations.find((item) => item.id === directPresetId)?.displayName ?? directPresetId
-              : t('clients.autoFallback')}</span>
+          <div className="rk-stat">
+            <span className="rk-stat__label">{t('clients.appRoute')}</span>
+            <div className="rk-seg clients-route" role="group" aria-label={t('clients.routeModeAria')}>
+              <button
+                type="button"
+                aria-pressed={launchMode === 'direct'}
+                disabled={busyId !== null || settings === null}
+                onClick={() => void selectRouteMode('direct')}
+              >
+                <Route size={12} aria-hidden="true" /> {t('clients.directExecutable')}
+              </button>
+              <button
+                type="button"
+                aria-pressed={launchMode === 'protocol'}
+                disabled={busyId !== null || settings === null}
+                onClick={() => void selectRouteMode('protocol')}
+              >
+                <Cable size={12} aria-hidden="true" /> {t('clients.windowsProtocol')}
+              </button>
+            </div>
+            <span className="clients-path">{routeTarget}</span>
           </div>
         </div>
 
         {protocol?.snapshotAvailable ? (
-          <div className="clients-restore">
-            <span><ShieldAlert size={15} /> {t('clients.snapshotStored')}</span>
-            <Button variant="secondary" disabled={busyId !== null} onClick={() => void restoreProtocol()}>
-              {busyId === 'restore' ? <LoaderCircle className="clients-spin" size={14} /> : <RotateCcw size={14} />}
-              {t('clients.restorePrevious')}
-            </Button>
+          <div className="set-rows">
+            <div className="rk-row set-row">
+              <span className="rk-row__gutter">
+                <i className="rk-row__tick" data-tone="warn" />
+              </span>
+              <span className="rk-row__main">
+                <span className="rk-row__title">
+                  <ShieldAlert size={14} aria-hidden="true" /> {t('clients.snapshotStored')}
+                </span>
+              </span>
+              <span className="set-row__control">
+                <Button variant="secondary" size="sm" disabled={busyId !== null} onClick={() => void restoreProtocol()}>
+                  {busyId === 'restore'
+                    ? <span className="rk-spin" aria-hidden="true" />
+                    : <RotateCcw size={14} aria-hidden="true" />}
+                  {t('clients.restorePrevious')}
+                </Button>
+              </span>
+            </div>
           </div>
         ) : null}
       </section>
 
-      <section className="clients-installations">
-        <div className="clients-section-head">
-          <div><span>{t('clients.detected')}</span><h3>{t('clients.installationsTitle')}</h3></div>
-          <span>{scanning ? t('clients.scanning') : t('clients.found', { count: installations.length })}</span>
+      {/* ── Detected installations ── */}
+      <section className="rk-panel set-panel">
+        <div className="rk-panel__head">
+          <span className="set-icon" aria-hidden="true"><HardDrive size={15} /></span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('clients.detected')}</span>
+            <h3 className="rk-panel__title">{t('clients.installationsTitle')}</h3>
+          </div>
+          <span className="rk-chip" data-tone={installations.length > 0 ? 'ok' : 'neutral'}>
+            {scanning ? t('clients.scanning') : t('clients.found', { count: installations.length })}
+          </span>
         </div>
+
         {error ? (
           <p className="clients-error" role="alert">
-            <ShieldAlert size={15} />
+            <ShieldAlert size={15} aria-hidden="true" />
             <span>{t('clients.scanFailed', { reason: error })}</span>
             <button type="button" onClick={() => void refresh(channel.trim() || 'LIVE')}>
-              <RefreshCw size={12} /> {t('clients.retry')}
+              <RefreshCw size={12} aria-hidden="true" /> {t('clients.retry')}
             </button>
           </p>
         ) : null}
-        <form className="clients-path-preset" onSubmit={(event) => {
+
+        <form className="clients-preset" onSubmit={(event) => {
           event.preventDefault();
           void addPathPreset();
         }}>
-          <span className="clients-path-preset__icon"><FolderPlus size={17} /></span>
-          <label>
+          <label className="fm-label">
             <span>{t('clients.pathLabel')}</span>
             <input
+              className="fm-input"
               value={presetPath}
               onChange={(event) => setPresetPath(event.target.value)}
               placeholder="C:\\RobloxVersions\\version-…  or  C:\\…\\Voidstrap.exe"
               disabled={busyId !== null}
             />
           </label>
-          <label className="clients-path-preset__name">
+          <label className="fm-label">
             <span>{t('clients.presetLabel')} <em>{t('clients.optional')}</em></span>
             <input
+              className="fm-input"
               value={presetName}
               onChange={(event) => setPresetName(event.target.value)}
               placeholder={t('clients.presetPlaceholder')}
@@ -432,15 +531,16 @@ export function ClientsTab(): JSX.Element {
               maxLength={80}
             />
           </label>
-          <Button type="submit" variant="secondary" disabled={!presetPath.trim() || busyId !== null}>
-            {busyId === 'preset:add' ? <LoaderCircle className="clients-spin" size={14} /> : <FolderPlus size={14} />}
+          <Button type="submit" variant="secondary" size="lg" disabled={!presetPath.trim() || busyId !== null}>
+            {busyId === 'preset:add'
+              ? <span className="rk-spin" aria-hidden="true" />
+              : <FolderPlus size={14} aria-hidden="true" />}
             {t('clients.addPreset')}
           </Button>
-          <small>
-            {t('clients.presetHelp')}
-          </small>
+          <p className="clients-preset__help">{t('clients.presetHelp')}</p>
         </form>
-        <div className="clients-installation-list">
+
+        <div className="set-rows">
           <AnimatePresence initial={false}>
             {installations.map((installation, index) => {
               const directActive = launchMode === 'direct' && directPresetId === installation.id;
@@ -448,24 +548,35 @@ export function ClientsTab(): JSX.Element {
               return (
                 <motion.article
                   key={installation.id}
-                  className="clients-installation"
+                  className="rk-row set-row"
                   data-active={directActive || protocolActive || undefined}
-                  initial={{ opacity: 0, y: reducedMotion ? 0 : 7 }}
+                  initial={{ opacity: 0, y: reducedMotion ? 0 : 3 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
-                  transition={{ delay: reducedMotion ? 0 : Math.min(index, 5) * .025 }}
+                  transition={{ duration: 0.15, delay: reducedMotion ? 0 : Math.min(index, 6) * 0.04 }}
                 >
-                  <span className="clients-installation__icon"><HardDrive size={17} /></span>
-                  <div className="clients-installation__copy">
-                    <span>{installationBadge(installation)} · {installation.detectedBy.replace(/_/g, ' ')}</span>
-                    <strong>{installation.displayName}</strong>
-                    <small title={installation.executable ?? undefined}>{compactPath(installation.executable, t('clients.pathNotExposed'))}</small>
-                  </div>
-                  <div className="clients-installation__meta">
-                    <span>{installation.versionGuid || installation.displayVersion || t('clients.versionUnknown')}</span>
-                    <small>{installation.activeSchemes.length ? t('clients.protocols', { count: installation.activeSchemes.length }) : t('clients.notSystemHandler')}</small>
-                  </div>
-                  <div className="clients-installation__actions">
+                  <span className="rk-row__gutter">
+                    <i
+                      className="rk-row__tick"
+                      data-tone={protocolActive ? 'ok' : directActive ? 'accent' : undefined}
+                    />
+                  </span>
+                  <span className="rk-row__main">
+                    <span className="rk-row__title">{installation.displayName}</span>
+                    <span className="rk-row__meta">
+                      {installationBadge(installation)} · {installation.detectedBy.replace(/_/g, ' ')} ·{' '}
+                      {installation.versionGuid || installation.displayVersion || t('clients.versionUnknown')}
+                    </span>
+                    <span className="clients-path" title={installation.executable ?? undefined}>
+                      {compactPath(installation.executable, t('clients.pathNotExposed'))}
+                    </span>
+                  </span>
+                  <span className="set-row__control clients-actions">
+                    <span className="rk-chip rk-chip--sm" data-tone={installation.activeSchemes.length ? 'ok' : 'neutral'}>
+                      {installation.activeSchemes.length
+                        ? t('clients.protocols', { count: installation.activeSchemes.length })
+                        : t('clients.notSystemHandler')}
+                    </span>
                     <button
                       type="button"
                       disabled={!installation.executable || busyId !== null}
@@ -488,18 +599,18 @@ export function ClientsTab(): JSX.Element {
                     {installation.detectedBy === 'user_preset' ? (
                       <button
                         type="button"
-                        className="clients-installation__remove"
+                        data-tone="danger"
                         disabled={busyId !== null}
                         title={t('clients.forgetTitle')}
                         onClick={() => void removePathPreset(installation)}
                       >
                         {busyId === `preset:remove:${installation.id}`
-                          ? <LoaderCircle className="clients-spin" size={12} />
+                          ? <span className="rk-spin" aria-hidden="true" />
                           : <Trash2 size={12} />}
                         {t('clients.forget')}
                       </button>
                     ) : null}
-                  </div>
+                  </span>
                 </motion.article>
               );
             })}
@@ -515,67 +626,125 @@ export function ClientsTab(): JSX.Element {
         </div>
       </section>
 
-      <section className="clients-deployments">
-        <div className="clients-section-head">
-          <div><span>{t('clients.deployLibrary')}</span><h3>{t('clients.packageArchive')}</h3></div>
-          {release ? <span className="clients-live"><i /> LIVE {release.clientVersion}</span> : null}
+      {/* ── Isolated deployment library ── */}
+      <section className="rk-panel set-panel">
+        <div className="rk-panel__head">
+          <span className="set-icon" aria-hidden="true"><Box size={15} /></span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('clients.deployLibrary')}</span>
+            <h3 className="rk-panel__title">{t('clients.packageArchive')}</h3>
+          </div>
+          {release ? (
+            <span className="rk-chip" data-tone="ok">
+              <i className="rk-dot rk-dot--live" data-tone="ok" aria-hidden="true" /> LIVE {release.clientVersion}
+            </span>
+          ) : null}
         </div>
 
-        <div className="clients-release-grid">
-          <div className="clients-latest">
-            <span className="clients-latest__icon"><RadioTower size={18} /></span>
-            <div><small>{t('clients.latest', { channel: release?.channel ?? channel })}</small><strong>{release?.versionGuid ?? t('clients.checking')}</strong><span>{release?.clientVersion ?? t('clients.versionUnavailable')}</span></div>
+        <div className="rk-stats">
+          <div className="rk-stat">
+            <span className="rk-stat__label">{t('clients.latest', { channel: release?.channel ?? channel })}</span>
+            <span className="set-stat__strong">{release?.versionGuid ?? t('clients.checking')}</span>
+            <span className="clients-path u-num">{release?.clientVersion ?? t('clients.versionUnavailable')}</span>
           </div>
-          <label className="clients-field">
+        </div>
+
+        <div className="clients-release">
+          <label className="fm-label">
             <span>{t('clients.channel')}</span>
-            <input value={channel} onChange={(event) => setChannel(event.target.value)} placeholder="LIVE" disabled={Boolean(operationId)} />
+            <input
+              className="fm-input"
+              value={channel}
+              onChange={(event) => setChannel(event.target.value)}
+              placeholder="LIVE"
+              disabled={Boolean(operationId)}
+            />
           </label>
-          <label className="clients-field clients-field--version">
+          <label className="fm-label">
             <span>{t('clients.versionGuid')} <em>{t('clients.optional')}</em></span>
-            <input value={versionGuid} onChange={(event) => setVersionGuid(event.target.value)} placeholder={release?.versionGuid ?? t('clients.versionPlaceholder')} disabled={Boolean(operationId)} />
+            <input
+              className="fm-input"
+              value={versionGuid}
+              onChange={(event) => setVersionGuid(event.target.value)}
+              placeholder={release?.versionGuid ?? t('clients.versionPlaceholder')}
+              disabled={Boolean(operationId)}
+            />
           </label>
           {operationId ? (
-            <Button variant="secondary" onClick={() => void cancelInstall()}><Square size={13} /> {t('common.cancel')}</Button>
+            <Button variant="secondary" size="lg" onClick={() => void cancelInstall()}>
+              <Square size={13} aria-hidden="true" /> {t('common.cancel')}
+            </Button>
           ) : (
-            <Button variant="primary" onClick={() => void startInstall()}><Download size={14} /> {t('clients.downloadDeployment')}</Button>
+            <Button variant="primary" size="lg" onClick={() => void startInstall()}>
+              <Download size={14} aria-hidden="true" /> {t('clients.downloadDeployment')}
+            </Button>
           )}
+          <p className="clients-release__note">
+            <ShieldAlert size={13} aria-hidden="true" /> {t('clients.deploymentNote')}
+          </p>
         </div>
-
-        <p className="clients-deployment-note">
-          <ShieldAlert size={13} /> {t('clients.deploymentNote')}
-        </p>
 
         <AnimatePresence initial={false}>
           {progress && operationId ? (
-            <motion.div className="clients-progress" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}>
-              <span><LoaderCircle className="clients-spin" size={14} /> {progress.stage.replace(/_/g, ' ')}</span>
+            <motion.div
+              className="clients-progress"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+            >
+              <span className="rk-spin" aria-hidden="true" />
+              <span>{progress.stage.replace(/_/g, ' ')}</span>
               <strong>{progress.packageName || progress.versionGuid || t('clients.resolvingManifest')}</strong>
-              <span>{progress.percent == null ? '—' : `${Math.round(progress.percent)}%`}</span>
-              <div><i style={{ width: `${progress.percent ?? 3}%` }} /></div>
+              <span className="u-num">{progress.percent == null ? '—' : `${deployPercent}%`}</span>
             </motion.div>
           ) : null}
         </AnimatePresence>
 
-        <div className="clients-deployment-list">
+        {progress && operationId ? (
+          // Spec motion #6: scaleX from a left origin, never an animated width.
+          <div
+            className="set-meter"
+            role="progressbar"
+            aria-label={t('clients.downloadDeployment')}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={deployPercent}
+          >
+            <span className="set-meter__fill" style={{ transform: `scaleX(${(progress.percent ?? 3) / 100})` }} />
+          </div>
+        ) : null}
+
+        <div className="set-rows">
           {deployments.map((deployment) => (
-            <article key={deployment.id}>
-              <span><Box size={15} /></span>
-              <div>
-                <strong>{deployment.versionGuid}</strong>
-                <small>{deployment.clientVersion} · {deployment.channel}</small>
-                <code title={deployment.installLocation}>{compactPath(deployment.installLocation, t('clients.pathNotExposed'))}</code>
-              </div>
-              <span>{(deployment.sizeBytes / (1024 * 1024)).toFixed(0)} MB</span>
-              <button type="button" onClick={() => {
-                const installation = installations.find((item) => item.id === deployment.id || item.versionGuid === deployment.versionGuid);
-                if (installation) void selectManagerClient(installation);
-              }}>{t('clients.use')}</button>
+            <article key={deployment.id} className="rk-row set-row">
+              <span className="rk-row__gutter">
+                <i className="rk-row__tick" data-tone="ok" />
+              </span>
+              <span className="rk-row__main">
+                <span className="rk-row__title">{deployment.versionGuid}</span>
+                <span className="rk-row__meta">
+                  {deployment.clientVersion} · {deployment.channel} ·{' '}
+                  <span className="u-num">{(deployment.sizeBytes / (1024 * 1024)).toFixed(0)} MB</span>
+                </span>
+                <span className="clients-path" title={deployment.installLocation}>
+                  {compactPath(deployment.installLocation, t('clients.pathNotExposed'))}
+                </span>
+              </span>
+              <span className="set-row__control clients-actions">
+                <button type="button" onClick={() => {
+                  const installation = installations.find((item) => item.id === deployment.id || item.versionGuid === deployment.versionGuid);
+                  if (installation) void selectManagerClient(installation);
+                }}>{t('clients.use')}</button>
+              </span>
             </article>
           ))}
           {scanning ? (
             <div className="clients-skeleton" aria-hidden="true"><span /><span /></div>
           ) : null}
-          {!loading && !error && deployments.length === 0 ? <p className="clients-empty">{t('clients.noDeployments')}</p> : null}
+          {!loading && !error && deployments.length === 0 ? (
+            <p className="clients-empty">{t('clients.noDeployments')}</p>
+          ) : null}
         </div>
       </section>
     </div>

@@ -1,34 +1,48 @@
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { dismissMock, errorMock, successMock, toasterMock } = vi.hoisted(() => ({
-  dismissMock: vi.fn(),
-  errorMock: vi.fn(),
-  successMock: vi.fn(),
-  toasterMock: vi.fn(),
-}));
-
-vi.mock('sileo', () => ({
-  sileo: {
-    dismiss: dismissMock,
-    error: errorMock,
-    success: successMock,
-  },
-  Toaster: (props: unknown) => {
-    toasterMock(props);
-    return null;
-  },
-}));
+/**
+ * Animation stub: mirrors the markup without framer-motion's frame loop so
+ * exit removal is synchronous and assertions stay deterministic (the real
+ * transition is exercised by the packaged-app smoke check).
+ */
+vi.mock('framer-motion', async () => {
+  const React = await import('react');
+  const MOTION_ONLY_PROPS = ['initial', 'animate', 'exit', 'transition', 'variants'];
+  /**
+   * Render a plain DOM element for a motion component.
+   *
+   * @param tag - HTML tag the motion proxy was queried for.
+   * @returns A stub component rendering that tag without motion-only props.
+   */
+  function stubMotionTag(tag: string) {
+    /**
+     * Forwarding stub body.
+     *
+     * @param props - Props handed to the motion component.
+     * @param ref - Ref forwarded to the underlying DOM node.
+     * @returns The plain element.
+     */
+    const Stub = (props: Record<string, unknown>, ref: unknown) => {
+      const rest = Object.fromEntries(
+        Object.entries(props).filter(([key]) => !MOTION_ONLY_PROPS.includes(key)),
+      );
+      return React.createElement(tag, { ...rest, ref });
+    };
+    return React.forwardRef(Stub);
+  }
+  return {
+    AnimatePresence: ({ children }: { children?: React.ReactNode }) => children,
+    motion: new Proxy({}, { get: (_target, tag: string) => stubMotionTag(tag) }),
+    useReducedMotion: () => false,
+  };
+});
 
 import { Toast } from './index';
 import { TOAST_AUTO_HIDE_MS, useToastStore } from '../../stores/toastStore';
 
 beforeEach(() => {
   vi.useFakeTimers();
-  dismissMock.mockReset();
-  errorMock.mockReset().mockReturnValue('error-id');
-  successMock.mockReset().mockReturnValue('success-id');
-  toasterMock.mockReset();
   useToastStore.setState({ toast: null, timerHandle: null });
 });
 
@@ -37,70 +51,52 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('Toast Sileo adapter', () => {
-  it('translates a success message into a timed Sileo success notification', async () => {
+describe('Toast viewport', () => {
+  it('renders a success toast as a status region and auto-hides it', () => {
     render(<Toast />);
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
 
     act(() => useToastStore.getState().showSuccess('Account launched'));
 
-    expect(successMock).toHaveBeenCalledWith({
-      title: 'Account launched',
-      duration: TOAST_AUTO_HIDE_MS,
+    expect(screen.getByRole('status')).toHaveTextContent('Account launched');
+
+    act(() => {
+      vi.advanceTimersByTime(TOAST_AUTO_HIDE_MS);
     });
-    expect(errorMock).not.toHaveBeenCalled();
+
+    expect(useToastStore.getState().toast).toBeNull();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
-  it('uses the error text as the Sileo description', async () => {
+  it('marks error toasts as alerts with the raw message text', () => {
     render(<Toast />);
 
     act(() => useToastStore.getState().showError('Wayfern download failed'));
 
-    expect(errorMock).toHaveBeenCalledWith({
-      title: 'Action failed',
-      description: 'Wayfern download failed',
-      duration: TOAST_AUTO_HIDE_MS,
-    });
-    expect(successMock).not.toHaveBeenCalled();
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Wayfern download failed');
+    expect(alert.className).toContain('ram-toast--error');
   });
 
-  it('dismisses the prior Sileo notification when replacing or hiding it', async () => {
+  it('replaces the visible toast when a new one arrives', () => {
     render(<Toast />);
 
     act(() => useToastStore.getState().showSuccess('First result'));
-    expect(successMock).toHaveBeenCalledTimes(1);
+    act(() => useToastStore.getState().showError('Second result'));
 
-    act(() => useToastStore.getState().showError('Replacement result'));
-    expect(errorMock).toHaveBeenCalledTimes(1);
-    expect(dismissMock).toHaveBeenCalledWith('success-id');
-
-    act(() => useToastStore.getState().hideToast());
-    expect(dismissMock).toHaveBeenCalledWith('error-id');
-
-    expect(dismissMock.mock.calls.map(([id]) => id)).toEqual([
-      'success-id',
-      'error-id',
-    ]);
+    // The store keeps a single visible toast; the viewport mirrors exactly it.
+    expect(screen.queryByText('First result')).not.toBeInTheDocument();
+    expect(screen.getByText('Second result')).toBeInTheDocument();
   });
 
-  it('configures the Sileo toaster shell for the application surface', () => {
+  it('dismisses on click by clearing the store toast', () => {
     render(<Toast />);
 
-    const props = toasterMock.mock.calls.at(-1)?.[0];
-    expect(props).toEqual(expect.objectContaining({
-      position: 'bottom-right',
-      offset: { right: 18, bottom: 18 },
-      theme: 'light',
-      options: {
-        fill: 'var(--ram-toast-surface)',
-        roundness: 14,
-        autopilot: { expand: 150, collapse: 2200 },
-        styles: {
-          title: 'ram-sileo-title',
-          description: 'ram-sileo-description',
-          badge: 'ram-sileo-badge',
-          button: 'ram-sileo-button',
-        },
-      },
-    }));
+    act(() => useToastStore.getState().showSuccess('Click me'));
+    fireEvent.click(screen.getByRole('status'));
+
+    expect(useToastStore.getState().toast).toBeNull();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

@@ -33,6 +33,8 @@ const DEPLOYMENT_SOURCE: &str = "setup-aws.rbxcdn.com";
 const DEPLOYMENT_PROGRESS_EVENT: &str = "roblox://deployment-progress";
 const PROTOCOL_SNAPSHOT_FILE: &str = "roblox-protocol-snapshot.json";
 const CUSTOM_PRESETS_FILE: &str = "roblox-custom-presets.json";
+const INSTALL_CACHE_FILE: &str = "roblox-install-cache.json";
+const INSTALL_CACHE_VERSION: u32 = 1;
 const DEPLOYMENTS_DIR: &str = "roblox-deployments";
 const INSTALL_METADATA_FILE: &str = "installed.json";
 const DOWNLOAD_CONCURRENCY: usize = 4;
@@ -65,7 +67,7 @@ pub enum DetectionSource {
     AppxRegistry,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RobloxInstallation {
     pub id: String,
@@ -1091,18 +1093,40 @@ fn generic_uninstall_installations() -> Vec<RobloxInstallation> {
             let display_name =
                 non_blank(registry_string(&key, "DisplayName")).unwrap_or_else(|| key_name.clone());
             let display_version = non_blank(registry_string(&key, "DisplayVersion"));
+            let install_location = non_blank(registry_string(&key, "InstallLocation"));
+            let icon = non_blank(registry_string(&key, "DisplayIcon"));
+            let modify = non_blank(registry_string(&key, "ModifyPath"));
+            let uninstall_string = non_blank(registry_string(&key, "UninstallString"));
+            // Only entries whose registry strings already smell like a Roblox
+            // client get their install folder listed. A classifiable executable
+            // name carries one of these markers itself, so this skips the disk
+            // walk for the hundreds of unrelated programs a machine has
+            // without hiding a fork that names itself normally.
+            if !uninstall_entry_hints_roblox(
+                [
+                    Some(key_name.as_str()),
+                    Some(display_name.as_str()),
+                    non_blank(registry_string(&key, "Publisher")).as_deref(),
+                    install_location.as_deref(),
+                    icon.as_deref(),
+                    modify.as_deref(),
+                    uninstall_string.as_deref(),
+                ]
+                .into_iter()
+                .flatten(),
+            ) {
+                continue;
+            }
             let mut candidates = Vec::new();
 
-            if let Some(location) = non_blank(registry_string(&key, "InstallLocation"))
+            if let Some(location) = install_location
                 .and_then(|value| expand_preset_path(&value).ok())
                 .filter(|path| path.is_dir())
             {
                 candidates.extend(executable_candidates_in(&location));
             }
-            for value_name in ["DisplayIcon", "ModifyPath", "UninstallString"] {
-                if let Some(executable) = non_blank(registry_string(&key, value_name))
-                    .and_then(|value| executable_from_registry_value(&value))
-                {
+            for value in [icon, modify, uninstall_string].into_iter().flatten() {
+                if let Some(executable) = executable_from_registry_value(&value) {
                     candidates.push(executable);
                 }
             }
@@ -1148,6 +1172,17 @@ fn generic_uninstall_installations() -> Vec<RobloxInstallation> {
 #[cfg(not(target_os = "windows"))]
 fn generic_uninstall_installations() -> Vec<RobloxInstallation> {
     Vec::new()
+}
+
+/// Whether any of an uninstall entry's registry strings mentions a Roblox
+/// client or bootstrapper. Used to skip the per-entry install-folder listing
+/// (the expensive part of a sweep) for unrelated programs.
+pub fn uninstall_entry_hints_roblox<'a>(values: impl IntoIterator<Item = &'a str>) -> bool {
+    const MARKERS: [&str; 4] = ["roblox", "strap", "plexity", "bootstrap"];
+    values.into_iter().any(|value| {
+        let lower = value.to_ascii_lowercase();
+        MARKERS.iter().any(|marker| lower.contains(marker))
+    })
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1481,25 +1516,7 @@ pub fn scan_installations_in(dir: &Path) -> Vec<RobloxInstallation> {
 
     installations.extend(detect_appx_installations());
 
-    for installation in &mut installations {
-        let Some(executable) = installation.executable.as_deref() else {
-            continue;
-        };
-        let executable_key = normalized_path(Path::new(executable));
-        for (scheme, command) in &raw_protocols {
-            let Some(command) = command else { continue };
-            let Some(active_executable) = executable_from_command(command) else {
-                continue;
-            };
-            if normalized_path(&active_executable) == executable_key {
-                installation.active_schemes.push((*scheme).to_string());
-                installation.handler_command = Some(command.clone());
-            }
-        }
-        if installation.handler_command.is_none() {
-            installation.handler_command = handler_command_for(installation);
-        }
-    }
+    refresh_active_schemes_with(&mut installations, &raw_protocols);
 
     installations.sort_by_key(|installation| match installation.kind {
         RobloxLauncherKind::Official => 0,
@@ -1513,6 +1530,46 @@ pub fn scan_installations_in(dir: &Path) -> Vec<RobloxInstallation> {
         RobloxLauncherKind::MicrosoftStore => 8,
     });
     installations
+}
+
+/// Re-derive every installation's `active_schemes` / `handler_command` from
+/// the current `roblox://` and `roblox-player:` registrations. Two registry
+/// value reads, no disk walk: this is how a cached sweep is kept honest after
+/// the handlers change without re-discovering the clients.
+pub fn refresh_active_schemes(installations: &mut [RobloxInstallation]) {
+    let raw_protocols = [
+        ("roblox", protocol_command("roblox")),
+        ("roblox-player", protocol_command("roblox-player")),
+    ];
+    refresh_active_schemes_with(installations, &raw_protocols);
+}
+
+fn refresh_active_schemes_with(
+    installations: &mut [RobloxInstallation],
+    raw_protocols: &[(&str, Option<String>); 2],
+) {
+    for installation in installations.iter_mut() {
+        installation.active_schemes.clear();
+        let mut matched_command = None;
+        if let Some(executable) = installation.executable.as_deref() {
+            let executable_key = normalized_path(Path::new(executable));
+            for (scheme, command) in raw_protocols {
+                let Some(command) = command else { continue };
+                let Some(active_executable) = executable_from_command(command) else {
+                    continue;
+                };
+                if normalized_path(&active_executable) == executable_key {
+                    installation.active_schemes.push((*scheme).to_string());
+                    matched_command = Some(command.clone());
+                }
+            }
+        }
+        if let Some(command) = matched_command {
+            installation.handler_command = Some(command);
+        } else if installation.handler_command.is_none() {
+            installation.handler_command = handler_command_for(installation);
+        }
+    }
 }
 
 fn protocol_handler_state(
@@ -1556,10 +1613,6 @@ fn protocol_state_from(dir: &Path, installations: &[RobloxInstallation]) -> Robl
     }
 }
 
-fn protocol_state_in(dir: &Path) -> RobloxProtocolState {
-    protocol_state_from(dir, &scan_installations_in(dir))
-}
-
 fn save_launch_selection(
     dir: &Path,
     preset_id: Option<&str>,
@@ -1594,10 +1647,62 @@ fn save_launch_selection(
 // being paid once per account in a batch launch, on an async worker, under the
 // global launch lock.
 
-/// How long a cached sweep is served before it is re-run regardless of
-/// invalidation. Purely a safety net: clients can also appear because the user
-/// installed one outside this app, which nothing here can observe.
+/// How long a cached sweep is served before a background verification is
+/// scheduled on the next read. The stale sweep is still answered immediately
+/// (stale-while-revalidate); only an explicit invalidation forces a caller to
+/// wait for a fresh walk. Purely a safety net: clients can also appear because
+/// the user installed one outside this app, which nothing here can observe.
 pub const INSTALL_SCAN_TTL_MS: u64 = 60_000;
+
+/// Event emitted when a background verification sweep finds that the installed
+/// clients differ from the cached sweep the app has been answering from.
+pub const INSTALLATIONS_CHANGED_EVENT: &str = "roblox://installations-changed";
+
+/// The last sweep, persisted so the next app start answers from it instantly
+/// and only verifies in the background.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredInstallCache {
+    version: u32,
+    captured_at: u64,
+    installations: Vec<RobloxInstallation>,
+}
+
+fn install_cache_path(dir: &Path) -> PathBuf {
+    dir.join(INSTALL_CACHE_FILE)
+}
+
+/// Read the persisted sweep, dropping entries whose executable has vanished
+/// since and re-deriving the protocol bindings from the live registry. Cheap:
+/// one JSON read, one `is_file` per client, two registry values.
+pub fn load_install_cache(dir: &Path) -> Option<Vec<RobloxInstallation>> {
+    let raw = fs::read_to_string(install_cache_path(dir)).ok()?;
+    let stored: StoredInstallCache = serde_json::from_str(&raw).ok()?;
+    if stored.version != INSTALL_CACHE_VERSION {
+        return None;
+    }
+    let mut installations: Vec<RobloxInstallation> = stored
+        .installations
+        .into_iter()
+        .filter(|installation| match installation.executable.as_deref() {
+            Some(executable) => Path::new(executable).is_file(),
+            None => true,
+        })
+        .collect();
+    refresh_active_schemes(&mut installations);
+    Some(installations)
+}
+
+/// Persist a sweep for the next start. Failures are ignored: the cache is an
+/// optimisation, and the next full sweep simply rewrites it.
+pub fn save_install_cache(dir: &Path, installations: &[RobloxInstallation]) {
+    let stored = StoredInstallCache {
+        version: INSTALL_CACHE_VERSION,
+        captured_at: now_ms(),
+        installations: installations.to_vec(),
+    };
+    let _ = write_json_atomic(&install_cache_path(dir), &stored);
+}
 
 /// An installation sweep held in [`AppState`], tagged with the invalidation
 /// epoch it was taken under.
@@ -1629,33 +1734,80 @@ pub fn invalidate_install_scan_for(app: &AppHandle) {
 /// The scan commands already pay for a full sweep on the user's behalf, so
 /// warming from their result means the first launch after opening the Clients
 /// deck never re-runs it.
-pub async fn warm_install_scan(state: &AppState, installations: &[RobloxInstallation]) {
+pub async fn warm_install_scan(
+    state: &AppState,
+    dir: &Path,
+    installations: &[RobloxInstallation],
+) {
     let epoch = state.install_scan_epoch.load(Ordering::Acquire);
     *state.install_scan.lock().await = Some(CachedInstallScan {
         installations: Arc::new(installations.to_vec()),
         captured_at: now_ms(),
         epoch,
     });
+    let dir = dir.to_path_buf();
+    let persisted = installations.to_vec();
+    let _ = tokio::task::spawn_blocking(move || save_install_cache(&dir, &persisted)).await;
 }
 
-/// The cached installation sweep, re-running it on a blocking worker when the
-/// cache is empty, stale by epoch, or older than [`INSTALL_SCAN_TTL_MS`].
+/// The cached installation sweep.
+///
+/// Resolution order, cheapest first:
+/// 1. a fresh in-memory sweep is returned as is;
+/// 2. an in-memory sweep older than [`INSTALL_SCAN_TTL_MS`] is returned as is
+///    and a background verification is scheduled;
+/// 3. with nothing in memory yet (app start), the persisted sweep from the last
+///    session is adopted after a per-client `is_file` check and verified in the
+///    background;
+/// 4. otherwise (no cache at all, or an explicit invalidation) the full walk
+///    runs on a blocking worker and the caller waits for it.
 ///
 /// The guard is never held across the `spawn_blocking`: doing so would make one
 /// slow sweep block every other reader, which is the exact cost this cache
 /// exists to remove.
 pub async fn cached_installations(
+    app: &AppHandle,
     state: &AppState,
     dir: &Path,
 ) -> Result<Arc<Vec<RobloxInstallation>>, String> {
     let epoch = state.install_scan_epoch.load(Ordering::Acquire);
-    {
+    let never_scanned = {
         let cache = state.install_scan.lock().await;
-        if let Some(cached) = cache.as_ref() {
-            if cached.epoch == epoch
-                && now_ms().saturating_sub(cached.captured_at) < INSTALL_SCAN_TTL_MS
-            {
+        match cache.as_ref() {
+            Some(cached) if cached.epoch == epoch => {
+                if now_ms().saturating_sub(cached.captured_at) >= INSTALL_SCAN_TTL_MS {
+                    spawn_install_verification(app.clone(), dir.to_path_buf(), epoch);
+                }
                 return Ok(cached.installations.clone());
+            }
+            Some(_) => false,
+            None => true,
+        }
+    };
+
+    if never_scanned {
+        let persisted_dir = dir.to_path_buf();
+        let persisted = tokio::task::spawn_blocking(move || load_install_cache(&persisted_dir))
+            .await
+            .ok()
+            .flatten();
+        if let Some(installations) = persisted {
+            let installations = Arc::new(installations);
+            let mut cache = state.install_scan.lock().await;
+            // A concurrent reader may have filled the slot meanwhile; keep the
+            // newer of the two rather than clobbering a real sweep.
+            if cache.is_none() {
+                *cache = Some(CachedInstallScan {
+                    installations: installations.clone(),
+                    captured_at: now_ms(),
+                    epoch,
+                });
+                drop(cache);
+                spawn_install_verification(app.clone(), dir.to_path_buf(), epoch);
+                return Ok(installations);
+            }
+            if let Some(existing) = cache.as_ref() {
+                return Ok(existing.installations.clone());
             }
         }
     }
@@ -1675,8 +1827,97 @@ pub async fn cached_installations(
             captured_at: now_ms(),
             epoch,
         });
+        let persist_dir = dir.to_path_buf();
+        let persisted = installations.clone();
+        let _ = tokio::task::spawn_blocking(move || save_install_cache(&persist_dir, &persisted)).await;
     }
     Ok(installations)
+}
+
+/// Verify the cached sweep against a full walk on a blocking worker, at most
+/// one at a time. A difference replaces the cache, is persisted and announced
+/// through [`INSTALLATIONS_CHANGED_EVENT`]; an identical result only renews
+/// the cache's age.
+pub fn spawn_install_verification(app: AppHandle, dir: PathBuf, epoch: u64) {
+    use tauri::Manager;
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    if state.install_verify_running.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let walk_dir = dir.clone();
+        let sweep = tokio::task::spawn_blocking(move || scan_installations_in(&walk_dir)).await;
+        let state = app.state::<AppState>();
+        if let Ok(installations) = sweep {
+            if state.install_scan_epoch.load(Ordering::Acquire) == epoch {
+                let changed = {
+                    let mut cache = state.install_scan.lock().await;
+                    let changed = cache
+                        .as_ref()
+                        .map_or(true, |cached| *cached.installations != installations);
+                    *cache = Some(CachedInstallScan {
+                        installations: Arc::new(installations.clone()),
+                        captured_at: now_ms(),
+                        epoch,
+                    });
+                    changed
+                };
+                let persist_dir = dir.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    save_install_cache(&persist_dir, &installations)
+                })
+                .await;
+                if changed {
+                    let _ = app.emit(INSTALLATIONS_CHANGED_EVENT, ());
+                }
+            }
+        }
+        state.install_verify_running.store(false, Ordering::SeqCst);
+    });
+}
+
+/// Re-derive the protocol bindings of the cached sweep after the handlers were
+/// rewritten (by this app or by a client reclaiming them), without walking the
+/// disk again. A no-op while nothing is cached.
+pub async fn rewarm_active_schemes(state: &AppState, dir: &Path) {
+    let current = state.install_scan.lock().await.clone();
+    let Some(cached) = current else {
+        return;
+    };
+    let mut installations = (*cached.installations).clone();
+    let persist_dir = dir.to_path_buf();
+    let Ok(installations) = tokio::task::spawn_blocking(move || {
+        refresh_active_schemes(&mut installations);
+        save_install_cache(&persist_dir, &installations);
+        installations
+    })
+    .await
+    else {
+        return;
+    };
+    let mut cache = state.install_scan.lock().await;
+    if cache.as_ref().is_some_and(|slot| slot.epoch == cached.epoch) {
+        *cache = Some(CachedInstallScan {
+            installations: Arc::new(installations),
+            captured_at: cached.captured_at,
+            epoch: cached.epoch,
+        });
+    }
+}
+
+/// At app start: adopt the persisted sweep (or run the first one) off the main
+/// thread, so neither the first launch nor the Clients deck waits for it.
+pub fn spawn_install_cache_warmup(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        use tauri::Manager;
+        let Ok(dir) = accounts::store_dir(&app) else {
+            return;
+        };
+        let state = app.state::<AppState>();
+        let _ = cached_installations(&app, &state, &dir).await;
+    });
 }
 
 /// Pick the client a launch should use, given an installation sweep and the
@@ -1766,6 +2007,7 @@ pub fn resolve_launch_plan(dir: &Path, uri: &str) -> RobloxLaunchPlan {
 /// the installation sweep comes from the shared cache and runs on a blocking
 /// worker instead of stalling the async worker that drives the launch.
 pub async fn resolve_launch_plan_cached(
+    app: &AppHandle,
     state: &AppState,
     dir: &Path,
     uri: &str,
@@ -1774,7 +2016,7 @@ pub async fn resolve_launch_plan_cached(
     if loaded.roblox_launch_mode == RobloxLaunchMode::Protocol {
         return RobloxLaunchTemplate::Protocol.with_uri(uri);
     }
-    let installations = cached_installations(state, dir).await.unwrap_or_default();
+    let installations = cached_installations(app, state, dir).await.unwrap_or_default();
     resolve_launch_template_from(
         &installations,
         &loaded,
@@ -2375,13 +2617,21 @@ async fn install_deployment_inner(
 }
 
 #[tauri::command]
-pub fn roblox_custom_preset_add(
+pub async fn roblox_custom_preset_add(
     app: AppHandle,
     path: String,
     display_name: Option<String>,
 ) -> Result<RobloxInstallation, String> {
+    crate::run_blocking(move || custom_preset_add_blocking(&app, path, display_name)).await
+}
+
+fn custom_preset_add_blocking(
+    app: &AppHandle,
+    path: String,
+    display_name: Option<String>,
+) -> Result<RobloxInstallation, String> {
     crate::platform::ensure_windows()?;
-    let dir = accounts::store_dir(&app)?;
+    let dir = accounts::store_dir(app)?;
     let executable = resolve_preset_executable(&path)?;
     let executable_key = normalized_path(&executable);
     let (detected_kind, detected_name) = classify_executable(&executable)
@@ -2418,17 +2668,21 @@ pub fn roblox_custom_preset_add(
     presets.push(preset.clone());
     presets.sort_by(|left, right| right.added_at.cmp(&left.added_at));
     save_custom_presets(&dir, &presets)?;
-    invalidate_install_scan_for(&app);
+    invalidate_install_scan_for(app);
     custom_preset_installation(&preset)
         .ok_or_else(|| "The saved Roblox preset could not be resolved.".to_string())
 }
 
 #[tauri::command]
-pub fn roblox_custom_preset_remove(
+pub async fn roblox_custom_preset_remove(
     app: AppHandle,
     installation_id: String,
 ) -> Result<bool, String> {
-    let dir = accounts::store_dir(&app)?;
+    crate::run_blocking(move || custom_preset_remove_blocking(&app, &installation_id)).await
+}
+
+fn custom_preset_remove_blocking(app: &AppHandle, installation_id: &str) -> Result<bool, String> {
+    let dir = accounts::store_dir(app)?;
     let mut presets = load_custom_presets(&dir)?;
     let before = presets.len();
     presets.retain(|preset| preset.id != installation_id);
@@ -2436,14 +2690,12 @@ pub fn roblox_custom_preset_remove(
         return Ok(false);
     }
     save_custom_presets(&dir, &presets)?;
-    invalidate_install_scan_for(&app);
-    if settings::load_from_dir(&dir)
-        .ok()
-        .and_then(|loaded| loaded.roblox_launch_preset_id)
-        .as_deref()
-        == Some(installation_id.as_str())
-    {
-        save_launch_selection(&dir, None, RobloxLaunchMode::Direct)?;
+    invalidate_install_scan_for(app);
+    // The removed preset can no longer be the Manager's client; forget only the
+    // selection, never the direct/protocol route the user chose.
+    let loaded = settings::load_from_dir(&dir).unwrap_or_else(|_| settings::default_settings());
+    if loaded.roblox_launch_preset_id.as_deref() == Some(installation_id) {
+        save_launch_selection(&dir, None, loaded.roblox_launch_mode)?;
     }
     Ok(true)
 }
@@ -2466,10 +2718,15 @@ const PROTOCOL_WATCH_INTERVAL_SECS: u64 = 5;
 /// Emitting on change lets the UI re-read instead of showing a binding that is
 /// no longer real.
 ///
-/// The first observation only establishes the baseline; it never emits.
+/// The first observation only establishes the baseline; it never emits. This
+/// app's own activate/restore commands record what they applied as the new
+/// baseline, so a change the user asked for is never reported back as
+/// "something else rewrote the handlers". A real external change also refreshes
+/// the cached sweep's protocol bindings before the event goes out, so the
+/// Clients deck can re-read cheaply.
 pub fn spawn_protocol_watcher(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        let mut last: Option<(Option<String>, Option<String>)> = None;
+        use tauri::Manager;
         loop {
             tokio::time::sleep(Duration::from_secs(PROTOCOL_WATCH_INTERVAL_SECS)).await;
             // Registry reads are blocking, so they stay off the async worker.
@@ -2485,12 +2742,36 @@ pub fn spawn_protocol_watcher(app: AppHandle) {
             })
             .await;
             let Ok(current) = observed else { continue };
-            if last.as_ref().is_some_and(|previous| previous != &current) {
+            let state = app.state::<AppState>();
+            let changed = {
+                let mut baseline = state
+                    .protocol_watch_baseline
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let changed = baseline.as_ref().is_some_and(|previous| previous != &current);
+                *baseline = Some(current);
+                changed
+            };
+            if changed {
+                if let Ok(dir) = accounts::store_dir(&app) {
+                    rewarm_active_schemes(&state, &dir).await;
+                }
                 let _ = app.emit(PROTOCOL_CHANGED_EVENT, ());
             }
-            last = Some(current);
         }
     });
+}
+
+/// Record the handler commands this app just applied so the watcher treats
+/// them as the known state rather than as an external change.
+fn set_protocol_baseline(state: &AppState, protocol: &RobloxProtocolState) {
+    *state
+        .protocol_watch_baseline
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((
+        protocol.roblox.command.clone(),
+        protocol.roblox_player.command.clone(),
+    ));
 }
 
 /// Everything the Clients deck reads, produced by a single installation sweep.
@@ -2507,31 +2788,47 @@ pub struct RobloxClientsSnapshot {
     pub deployments: Vec<RobloxDeployment>,
 }
 
-/// `roblox_clients_snapshot` — one sweep serving the whole Clients deck.
+/// `roblox_clients_snapshot` — everything the Clients deck reads.
+///
+/// Without `fresh`, the installation list comes from the cached sweep (memory,
+/// then the persisted copy from the last session, verified in the background),
+/// so opening the deck is instant. `fresh: true` is the explicit Refresh
+/// action: it waits for a full registry + disk walk and re-warms the cache.
 #[tauri::command]
 pub async fn roblox_clients_snapshot(
     app: AppHandle,
     state: State<'_, AppState>,
+    fresh: Option<bool>,
 ) -> Result<RobloxClientsSnapshot, String> {
     let dir = accounts::store_dir(&app)?;
-    // Off the main thread: the sweep is hundreds of milliseconds of blocking
-    // registry and disk I/O, and a plain `fn` command runs on Tauri's main
-    // thread, freezing the window for its whole duration.
-    let snapshot = tokio::task::spawn_blocking(move || {
-        let installations = scan_installations_in(&dir);
-        let protocol = protocol_state_from(&dir, &installations);
-        let deployments = list_deployments_in(&dir);
-        RobloxClientsSnapshot {
-            installations,
-            protocol,
-            deployments,
-        }
+    let installations = if fresh.unwrap_or(false) {
+        // Off the main thread: the sweep is hundreds of milliseconds of
+        // blocking registry and disk I/O.
+        let walk_dir = dir.clone();
+        let installations = tokio::task::spawn_blocking(move || scan_installations_in(&walk_dir))
+            .await
+            .map_err(|error| format!("The Roblox client scan could not complete: {error}"))?;
+        // Warmed rather than invalidated: this sweep is as fresh as one taken now.
+        warm_install_scan(&state, &dir, &installations).await;
+        Arc::new(installations)
+    } else {
+        cached_installations(&app, &state, &dir).await?
+    };
+    let read_dir = dir.clone();
+    let for_protocol = installations.clone();
+    let (protocol, deployments) = tokio::task::spawn_blocking(move || {
+        (
+            protocol_state_from(&read_dir, &for_protocol),
+            list_deployments_in(&read_dir),
+        )
     })
     .await
-    .map_err(|error| format!("The Roblox client scan could not complete: {error}"))?;
-    // Warmed rather than invalidated: this sweep is as fresh as one taken now.
-    warm_install_scan(&state, &snapshot.installations).await;
-    Ok(snapshot)
+    .map_err(|error| format!("The Roblox client state could not be read: {error}"))?;
+    Ok(RobloxClientsSnapshot {
+        installations: (*installations).clone(),
+        protocol,
+        deployments,
+    })
 }
 
 #[tauri::command]
@@ -2540,17 +2837,23 @@ pub async fn roblox_installations_scan(
     state: State<'_, AppState>,
 ) -> Result<Vec<RobloxInstallation>, String> {
     let dir = accounts::store_dir(&app)?;
-    let installations = tokio::task::spawn_blocking(move || scan_installations_in(&dir))
+    let walk_dir = dir.clone();
+    let installations = tokio::task::spawn_blocking(move || scan_installations_in(&walk_dir))
         .await
         .map_err(|error| format!("The Roblox client scan could not complete: {error}"))?;
-    warm_install_scan(&state, &installations).await;
+    warm_install_scan(&state, &dir, &installations).await;
     Ok(installations)
 }
 
 #[tauri::command]
-pub async fn roblox_protocol_state(app: AppHandle) -> Result<RobloxProtocolState, String> {
+pub async fn roblox_protocol_state(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<RobloxProtocolState, String> {
     let dir = accounts::store_dir(&app)?;
-    tokio::task::spawn_blocking(move || protocol_state_in(&dir))
+    // Two registry reads mapped onto the cached sweep; never a disk walk.
+    let installations = cached_installations(&app, &state, &dir).await?;
+    tokio::task::spawn_blocking(move || protocol_state_from(&dir, &installations))
         .await
         .map_err(|error| format!("The Roblox protocol state could not be read: {error}"))
 }
@@ -2563,23 +2866,33 @@ pub async fn roblox_protocol_activate(
 ) -> Result<RobloxProtocolState, String> {
     crate::platform::ensure_windows()?;
     let dir = accounts::store_dir(&app)?;
-    let activated = tokio::task::spawn_blocking(move || activate_protocol_in(&dir, &installation_id))
-        .await
-        .map_err(|error| format!("The Roblox protocol change could not complete: {error}"))?;
-    // A sweep records each installation's `active_schemes`, so rewriting the
-    // handlers changes what a sweep would return even though no client moved.
-    invalidate_install_scan(&state);
-    activated
+    // The cached sweep already knows every client; only the registry changes.
+    let installations = cached_installations(&app, &state, &dir).await?;
+    let write_dir = dir.clone();
+    let activated = tokio::task::spawn_blocking(move || {
+        activate_protocol_in(&write_dir, &installations, &installation_id)
+    })
+    .await
+    .map_err(|error| format!("The Roblox protocol change could not complete: {error}"))??;
+    // No client moved, so no disk walk: re-derive the bindings on the cached
+    // sweep and tell the watcher this change is ours.
+    rewarm_active_schemes(&state, &dir).await;
+    set_protocol_baseline(&state, &activated);
+    Ok(activated)
 }
 
 /// The blocking body of [`roblox_protocol_activate`]: registry snapshot, handler
 /// rewrite, and rollback on any failure.
+///
+/// Deliberately touches only the Windows registration. Which client the
+/// Manager itself launches with (`robloxLaunchMode` / `robloxLaunchPresetId`)
+/// is a separate choice made in the Clients deck; coupling the two meant that
+/// handing `roblox://` to another client silently replaced the Manager's own.
 fn activate_protocol_in(
     dir: &Path,
+    installations: &[RobloxInstallation],
     installation_id: &str,
 ) -> Result<RobloxProtocolState, String> {
-    // Kept as a list so the closing protocol read can reuse this sweep.
-    let installations = scan_installations_in(dir);
     let installation = installations
         .iter()
         .find(|installation| installation.id == installation_id)
@@ -2630,21 +2943,9 @@ fn activate_protocol_in(
         let _ = restore_protocol_registration("roblox-player", &current_player);
         return Err(error);
     }
-    if let Err(error) =
-        save_launch_selection(&dir, Some(&installation.id), RobloxLaunchMode::Protocol)
-    {
-        let _ = restore_protocol_registration("roblox", &current_roblox);
-        let _ = restore_protocol_registration("roblox-player", &current_player);
-        if let Some(previous) = existing_snapshot {
-            let _ = write_json_atomic(&protocol_snapshot_path(&dir), &previous);
-        }
-        return Err(format!(
-            "Protocol changed but settings could not be saved: {error}"
-        ));
-    }
-    // The registry changed but the installed clients did not, so the sweep taken
-    // at the top of this function still describes them.
-    Ok(protocol_state_from(dir, &installations))
+    // The registry changed but the installed clients did not, so the cached
+    // sweep still describes them.
+    Ok(protocol_state_from(dir, installations))
 }
 
 #[tauri::command]
@@ -2654,15 +2955,21 @@ pub async fn roblox_protocol_restore(
 ) -> Result<RobloxProtocolState, String> {
     crate::platform::ensure_windows()?;
     let dir = accounts::store_dir(&app)?;
-    let restored = tokio::task::spawn_blocking(move || restore_protocol_in(&dir))
+    let installations = cached_installations(&app, &state, &dir).await?;
+    let write_dir = dir.clone();
+    let restored = tokio::task::spawn_blocking(move || restore_protocol_in(&write_dir, &installations))
         .await
-        .map_err(|error| format!("The Roblox protocol restore could not complete: {error}"))?;
-    invalidate_install_scan(&state);
-    restored
+        .map_err(|error| format!("The Roblox protocol restore could not complete: {error}"))??;
+    rewarm_active_schemes(&state, &dir).await;
+    set_protocol_baseline(&state, &restored);
+    Ok(restored)
 }
 
 /// The blocking body of [`roblox_protocol_restore`].
-fn restore_protocol_in(dir: &Path) -> Result<RobloxProtocolState, String> {
+fn restore_protocol_in(
+    dir: &Path,
+    installations: &[RobloxInstallation],
+) -> Result<RobloxProtocolState, String> {
     let snapshot = load_protocol_snapshot(&dir)?
         .ok_or_else(|| "No Roblox protocol snapshot is available.".to_string())?;
     let current_roblox = protocol_key_snapshot("roblox")?;
@@ -2687,15 +2994,8 @@ fn restore_protocol_in(dir: &Path) -> Result<RobloxProtocolState, String> {
         let _ = restore_protocol_registration("roblox-player", &current_player);
         return Err(error);
     }
-    if let Err(error) = save_launch_selection(&dir, None, RobloxLaunchMode::Direct) {
-        let _ = restore_protocol_registration("roblox", &current_roblox);
-        let _ = restore_protocol_registration("roblox-player", &current_player);
-        return Err(format!(
-            "Protocols restored but settings could not be saved: {error}"
-        ));
-    }
     let _ = fs::remove_file(protocol_snapshot_path(&dir));
-    Ok(protocol_state_in(&dir))
+    Ok(protocol_state_from(dir, installations))
 }
 
 #[tauri::command]
@@ -3015,6 +3315,68 @@ mod tests {
             roblox_launch_mode: mode,
             ..Settings::default()
         }
+    }
+
+    #[test]
+    fn uninstall_entries_are_walked_only_when_a_registry_string_hints_at_roblox() {
+        assert!(uninstall_entry_hints_roblox(["Bloxstrap", "pizzaboy"]));
+        assert!(uninstall_entry_hints_roblox([r"C:\Users\x\AppData\Local\Fishstrap"]));
+        assert!(uninstall_entry_hints_roblox(["Roblox Player", "Roblox Corporation"]));
+        assert!(uninstall_entry_hints_roblox(["{GUID}", r"C:\Games\Plexity\unins000.exe"]));
+        assert!(uninstall_entry_hints_roblox(["My Bootstrap Tool"]));
+        assert!(!uninstall_entry_hints_roblox([
+            "Visual Studio Code",
+            "Microsoft Corporation",
+            r"C:\Users\x\AppData\Local\Programs\Microsoft VS Code",
+        ]));
+        assert!(!uninstall_entry_hints_roblox(std::iter::empty::<&str>()));
+    }
+
+    #[test]
+    fn install_cache_round_trips_and_drops_clients_that_vanished() {
+        let dir = std::env::temp_dir().join(format!(
+            "ram-install-cache-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let present = dir.join("RobloxPlayerBeta.exe");
+        fs::write(&present, b"stub").unwrap();
+        let gone = dir.join("Fishstrap.exe");
+
+        let mut kept = installation(
+            "official:present",
+            RobloxLauncherKind::Official,
+            &present.to_string_lossy(),
+        );
+        kept.display_name = "Roblox present".to_string();
+        let dropped = installation(
+            "fishstrap:gone",
+            RobloxLauncherKind::Fishstrap,
+            &gone.to_string_lossy(),
+        );
+        let mut store_app = installation("store", RobloxLauncherKind::MicrosoftStore, "");
+        store_app.executable = None;
+        store_app.protocol_capable = false;
+
+        save_install_cache(&dir, &[kept.clone(), dropped, store_app.clone()]);
+        let loaded = load_install_cache(&dir).expect("the persisted sweep must load");
+
+        let ids: Vec<&str> = loaded.iter().map(|entry| entry.id.as_str()).collect();
+        assert_eq!(ids, vec!["official:present", "store"]);
+        assert_eq!(loaded[0].display_name, "Roblox present");
+        assert_eq!(loaded[1].executable, None);
+
+        // A cache written by an incompatible version is ignored, not misread.
+        fs::write(
+            install_cache_path(&dir),
+            r#"{"version":999,"capturedAt":1,"installations":[]}"#,
+        )
+        .unwrap();
+        assert!(load_install_cache(&dir).is_none());
+        fs::write(install_cache_path(&dir), "not json").unwrap();
+        assert!(load_install_cache(&dir).is_none());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     const URI: &str = "roblox-player:1+launchmode:play+gameinfo:TICKET";

@@ -1,11 +1,10 @@
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type CSSProperties, type FormEvent } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
+  ArrowRight,
   AtSign,
   CheckCircle2,
-  LoaderCircle,
   Send,
-  UserRoundPlus,
   UsersRound,
   X,
   XCircle,
@@ -14,6 +13,7 @@ import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { ipc } from '@/lib/ipc';
 import { displayName } from '@/lib/filters';
+import { useTranslation } from '@/i18n/useTranslation';
 import type { Account } from '@/types/models';
 import {
   parseTargetUserId,
@@ -22,6 +22,10 @@ import {
   type FriendRequestSender,
   type FriendRequestSummary,
 } from './friendRequest';
+// `.acc-head` (the dialog head row) and `.acc-meter` (the determinate meter,
+// animated with scaleX) are shared account-dialog recipes declared once in
+// AddAccountModal.css.
+import './AddAccountModal.css';
 import './FriendRequestModal.css';
 
 /** Props for the themed batch friend-request flow. */
@@ -46,11 +50,16 @@ function senderInitial(account: Account): string {
   return Array.from(displayName(account).trim())[0]?.toLocaleUpperCase() ?? '?';
 }
 
+/** Meter fill as a `--fill` scale factor consumed by `.acc-meter__fill`. */
+function meterStyle(ratio: number): CSSProperties {
+  return { '--fill': Math.max(0, Math.min(1, ratio)) } as CSSProperties;
+}
+
 /**
  * Send a friend request from one or more selected accounts to one validated
- * Roblox profile. The visual language mirrors the control-deck launcher while
- * keeping the operation legible as a source-to-target dispatch rather than a
- * generic form dropped inside the base modal.
+ * Roblox profile. The dialog reads as a source -> target dispatch: a route
+ * strip naming who sends and who receives, the shared field recipe for the
+ * target, and a hairline-ruled per-account result list once the batch ends.
  */
 export function FriendRequestModal({
   open,
@@ -61,6 +70,7 @@ export function FriendRequestModal({
   const titleId = useId();
   const targetId = useId();
   const targetErrorId = useId();
+  const { t } = useTranslation();
   const reducedMotion = useReducedMotion() ?? false;
   const [targetInput, setTargetInput] = useState('');
   const [running, setRunning] = useState(false);
@@ -80,9 +90,7 @@ export function FriendRequestModal({
   const count = accounts.length;
   const parsedTarget = parseTargetUserId(targetInput);
   const currentPosition = progress ? progress.index + 1 : 0;
-  const progressPercent = progress?.total
-    ? (currentPosition / progress.total) * 100
-    : 0;
+  const progressRatio = progress?.total ? currentPosition / progress.total : 0;
   const send = sendRequest ?? ((cookie: string, id: string) => ipc.sendFriendRequest(cookie, id));
 
   const requestClose = (): void => {
@@ -99,7 +107,7 @@ export function FriendRequestModal({
     event.preventDefault();
     const targetUserId = parseTargetUserId(targetInput);
     if (!targetUserId) {
-      setError('Escribe un User ID o pega un perfil oficial de Roblox.');
+      setError(t('friends.invalidTarget'));
       return;
     }
 
@@ -129,228 +137,219 @@ export function FriendRequestModal({
         : 'mixed'
     : undefined;
 
+  const statusTone = running ? 'accent' : summary ? 'ok' : undefined;
+
   return (
-    <Modal open={open && count > 0} onClose={requestClose} titleId={titleId}>
-      <form className="friend-request-modal" onSubmit={(event) => void submit(event)}>
-        <header className="friend-request-modal__header">
-          <div className="friend-request-modal__beacon" aria-hidden="true">
-            <span />
-            <UserRoundPlus size={21} strokeWidth={2} />
-          </div>
-          <div className="friend-request-modal__heading">
-            <span className="friend-request-modal__eyebrow">Social dispatch / Roblox</span>
-            <h2 id={titleId}>Enviar solicitud</h2>
-            <p>
+    <Modal open={open && count > 0} onClose={requestClose} titleId={titleId} size="lg">
+      <form className="fm-root friend-request-modal" onSubmit={(event) => void submit(event)}>
+        <div className="acc-head">
+          <div className="fm-head">
+            <h2 id={titleId} className="fm-title">{t('friends.title')}</h2>
+            <p className="fm-hint">
               {count === 1
-                ? `Desde ${displayName(accounts[0])}`
-                : `Desde ${count} cuentas seleccionadas`}
+                ? t('friends.fromOne', { name: displayName(accounts[0]) })
+                : t('friends.fromMany', { count })}
             </p>
           </div>
-          <button
-            className="friend-request-modal__close"
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             type="button"
-            aria-label="Cerrar"
+            aria-label={t('friends.close')}
             disabled={running}
             onClick={requestClose}
           >
-            <X size={17} />
-          </button>
-        </header>
+            <X size={16} aria-hidden="true" />
+          </Button>
+        </div>
 
-        <div className="friend-request-modal__body">
-          <section className="friend-request-route" aria-label="Ruta de la solicitud">
-            <div className="friend-request-route__node friend-request-route__node--source">
-              <div className="friend-request-route__avatars" aria-hidden="true">
-                {accounts.slice(0, 3).map((account) => (
-                  <span key={account.id} title={displayName(account)}>
-                    {senderInitial(account)}
-                  </span>
-                ))}
-                {count > 3 ? <span>+{count - 3}</span> : null}
-              </div>
-              <span>
-                <small>{count === 1 ? 'Cuenta origen' : 'Cuentas origen'}</small>
-                <strong>{count === 1 ? displayName(accounts[0]) : `${count} remitentes`}</strong>
-              </span>
+        <section
+          className="rk-panel friend-request-route"
+          aria-label={t('friends.routeAria')}
+          data-running={running || undefined}
+        >
+          <div className="friend-request-route__node">
+            <div className="friend-request-route__avatars" aria-hidden="true">
+              {accounts.slice(0, 3).map((account) => (
+                <span key={account.id} title={displayName(account)}>
+                  {senderInitial(account)}
+                </span>
+              ))}
+              {count > 3 ? <span>+{count - 3}</span> : null}
             </div>
+            <span className="friend-request-route__copy">
+              <small>{count === 1 ? t('friends.sourceOne') : t('friends.sourceMany')}</small>
+              <strong>
+                {count === 1 ? displayName(accounts[0]) : t('friends.sendersCount', { count })}
+              </strong>
+            </span>
+          </div>
 
-            <div className="friend-request-route__connector" data-running={running || undefined} aria-hidden="true">
-              <span className="friend-request-route__line" />
-              <AnimatePresence>
-                {running ? (
-                  <motion.span
-                    className="friend-request-route__pulse"
-                    initial={{ opacity: 0, x: '-120%' }}
-                    animate={
-                      reducedMotion
-                        ? { opacity: 0.7, x: '90%' }
-                        : { opacity: [0, 1, 0], x: ['-120%', '330%'] }
-                    }
-                    exit={{ opacity: 0 }}
-                    transition={
-                      reducedMotion
-                        ? { duration: 0 }
-                        : { duration: 1.35, ease: 'easeInOut', repeat: Infinity }
-                    }
-                  />
-                ) : null}
-              </AnimatePresence>
-              <span className="friend-request-route__send"><Send size={13} /></span>
-            </div>
+          <span className="friend-request-route__arrow" aria-hidden="true">
+            {running ? <span className="rk-spin" /> : <ArrowRight size={15} />}
+          </span>
 
-            <div className="friend-request-route__node friend-request-route__node--target">
-              <span className="friend-request-route__target-icon" aria-hidden="true">
-                <AtSign size={17} />
-              </span>
-              <span>
-                <small>Perfil destino</small>
-                <strong>{parsedTarget ? `UID ${parsedTarget}` : 'Pendiente'}</strong>
-              </span>
-            </div>
-          </section>
+          <div className="friend-request-route__node">
+            <span className="friend-request-route__icon" aria-hidden="true">
+              <AtSign size={15} />
+            </span>
+            <span className="friend-request-route__copy">
+              <small>{t('friends.targetLabel')}</small>
+              <strong className="u-num">
+                {parsedTarget ? t('friends.uid', { uid: parsedTarget }) : t('friends.pending')}
+              </strong>
+            </span>
+          </div>
+        </section>
 
-          <section className="friend-request-modal__command">
-            <div className="friend-request-modal__command-heading">
-              <span className="friend-request-modal__command-icon" aria-hidden="true">
-                <UsersRound size={17} />
-              </span>
-              <span>
-                <strong>Selecciona el destinatario</strong>
-                <small>La misma persona recibirá una solicitud por cada cuenta origen.</small>
-              </span>
-            </div>
+        <div className="friend-request-modal__command">
+          <div className="friend-request-modal__lead">
+            <UsersRound size={15} aria-hidden="true" />
+            <span>
+              <strong>{t('friends.pickTitle')}</strong>
+              <small>{t('friends.pickHint')}</small>
+            </span>
+          </div>
 
-            <label className="friend-request-modal__field" htmlFor={targetId}>
-              <span>User ID o enlace de perfil</span>
-              <span
-                className="friend-request-modal__input-shell"
-                data-invalid={Boolean(error) || undefined}
+          <div className="fm-field">
+            <label htmlFor={targetId}>{t('friends.fieldLabel')}</label>
+            <input
+              id={targetId}
+              className="fm-input"
+              type="text"
+              inputMode="url"
+              value={targetInput}
+              placeholder={t('friends.fieldPlaceholder')}
+              autoComplete="off"
+              autoFocus
+              disabled={running}
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? targetErrorId : undefined}
+              onChange={(event) => handleTargetChange(event.target.value)}
+            />
+          </div>
+
+          <AnimatePresence initial={false} mode="popLayout">
+            {error ? (
+              <motion.p
+                key="input-error"
+                id={targetErrorId}
+                className="fm-error"
+                role="alert"
+                initial={reducedMotion ? false : { opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: reducedMotion ? 0 : -3 }}
               >
-                <AtSign size={16} aria-hidden="true" />
-                <input
-                  id={targetId}
-                  type="text"
-                  inputMode="url"
-                  value={targetInput}
-                  placeholder="123456789 o roblox.com/users/.../profile"
-                  autoComplete="off"
-                  autoFocus
-                  disabled={running}
-                  aria-invalid={Boolean(error)}
-                  aria-describedby={error ? targetErrorId : undefined}
-                  onChange={(event) => handleTargetChange(event.target.value)}
-                />
-                {parsedTarget ? <CheckCircle2 size={15} className="friend-request-modal__valid" aria-hidden="true" /> : null}
-              </span>
-            </label>
+                <XCircle size={14} aria-hidden="true" /> {error}
+              </motion.p>
+            ) : null}
 
-            <AnimatePresence initial={false} mode="popLayout">
-              {error ? (
-                <motion.p
-                  key="input-error"
-                  id={targetErrorId}
-                  className="friend-request-modal__error"
-                  role="alert"
-                  initial={reducedMotion ? false : { opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: reducedMotion ? 0 : -3 }}
+            {running && progress ? (
+              <motion.div
+                key="progress"
+                className="acc-meter friend-request-progress"
+                role="status"
+                aria-live="polite"
+                initial={reducedMotion ? false : { opacity: 0, y: 5 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+              >
+                <div className="friend-request-progress__copy">
+                  <span>
+                    <span className="rk-spin" aria-hidden="true" />
+                    {t('friends.sendingFrom')} <strong>{progress.account.label}</strong>
+                  </span>
+                  <small className="u-num">{currentPosition}/{progress.total}</small>
+                </div>
+                <div
+                  className="acc-meter__track"
+                  role="progressbar"
+                  aria-label={t('friends.progressAria')}
+                  aria-valuemin={1}
+                  aria-valuemax={progress.total}
+                  aria-valuenow={currentPosition}
                 >
-                  <XCircle size={14} aria-hidden="true" /> {error}
-                </motion.p>
-              ) : null}
+                  <div className="acc-meter__fill" style={meterStyle(progressRatio)} />
+                </div>
+              </motion.div>
+            ) : null}
 
-              {running && progress ? (
-                <motion.div
-                  key="progress"
-                  className="friend-request-progress"
-                  role="status"
-                  aria-live="polite"
-                  initial={reducedMotion ? false : { opacity: 0, y: 5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                >
-                  <div className="friend-request-progress__copy">
-                    <span>
-                      <LoaderCircle className="friend-request-modal__spinner" size={15} />
-                      Enviando desde <strong>{progress.account.label}</strong>
-                    </span>
-                    <small>{currentPosition}/{progress.total}</small>
-                  </div>
-                  <div
-                    className="friend-request-progress__track"
-                    role="progressbar"
-                    aria-label="Progreso del envío"
-                    aria-valuemin={1}
-                    aria-valuemax={progress.total}
-                    aria-valuenow={currentPosition}
-                  >
-                    <motion.span
-                      initial={false}
-                      animate={{ width: `${progressPercent}%` }}
-                      transition={reducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 360, damping: 34 }}
-                    />
-                  </div>
-                </motion.div>
-              ) : null}
-
-              {summary ? (
-                <motion.div
-                  key="summary"
-                  className="friend-request-summary"
-                  data-tone={summaryTone}
-                  aria-live="polite"
-                  initial={reducedMotion ? false : { opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                >
-                  <div className="friend-request-summary__heading">
-                    <span className="friend-request-summary__icon" aria-hidden="true">
-                      {summaryTone === 'success' ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
-                    </span>
-                    <span>
-                      <strong>
-                        {summaryTone === 'success'
-                          ? 'Solicitudes enviadas'
-                          : summaryTone === 'mixed'
-                            ? 'Lote completado con alertas'
-                            : 'Roblox rechazó el envío'}
-                      </strong>
-                      <small>{summary.succeeded} de {summary.total} aceptadas</small>
-                    </span>
-                  </div>
-                  <ul className="friend-request-summary__list">
-                    {summary.results.map((result) => (
-                      <li key={result.id} data-ok={result.ok || undefined}>
-                        {result.ok
-                          ? <CheckCircle2 size={14} aria-label="Aceptada" />
-                          : <XCircle size={14} aria-label="Rechazada" />}
-                        <strong>{result.label}</strong>
-                        <span>{result.ok ? 'Enviada' : result.reason ?? 'No se pudo enviar'}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
-          </section>
+            {summary ? (
+              <motion.div
+                key="summary"
+                className="rk-panel friend-request-summary"
+                data-tone={summaryTone}
+                aria-live="polite"
+                initial={reducedMotion ? false : { opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+              >
+                <div className="friend-request-summary__heading">
+                  <span className="friend-request-summary__icon" aria-hidden="true">
+                    {summaryTone === 'success' ? <CheckCircle2 size={17} /> : <XCircle size={17} />}
+                  </span>
+                  <span>
+                    <strong>
+                      {summaryTone === 'success'
+                        ? t('friends.summarySuccess')
+                        : summaryTone === 'mixed'
+                          ? t('friends.summaryMixed')
+                          : t('friends.summaryError')}
+                    </strong>
+                    <small>
+                      {t('friends.acceptedCount', { ok: summary.succeeded, total: summary.total })}
+                    </small>
+                  </span>
+                </div>
+                <ul className="friend-request-summary__list">
+                  {summary.results.map((result) => (
+                    <li key={result.id} className="rk-row" data-ok={result.ok || undefined}>
+                      <span className="rk-row__gutter">
+                        {result.ok ? (
+                          <CheckCircle2 size={14} aria-label={t('friends.acceptedAria')} />
+                        ) : (
+                          <XCircle size={14} aria-label={t('friends.rejectedAria')} />
+                        )}
+                      </span>
+                      <strong className="rk-row__title">{result.label}</strong>
+                      <span className="friend-request-summary__note">
+                        {result.ok ? t('friends.sent') : result.reason ?? t('friends.failed')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
         </div>
 
         <footer className="friend-request-modal__footer">
           <div className="friend-request-modal__status" data-running={running || undefined}>
-            <span aria-hidden="true" />
-            <small>{running ? 'Envío en curso' : summary ? 'Lote completado' : 'Listo para enviar'}</small>
+            <span className="rk-dot" data-tone={statusTone} aria-hidden="true" />
+            <small>
+              {running
+                ? t('friends.statusRunning')
+                : summary
+                  ? t('friends.statusDone')
+                  : t('friends.statusIdle')}
+            </small>
           </div>
-          <div className="friend-request-modal__actions">
+          <div className="fm-footer">
             <Button variant="secondary" type="button" onClick={requestClose} disabled={running}>
-              {summary ? 'Cerrar' : 'Cancelar'}
+              {summary ? t('friends.close') : t('friends.cancel')}
             </Button>
             <Button
               variant="primary"
               type="submit"
               disabled={running || targetInput.trim().length === 0}
             >
-              {running ? <LoaderCircle className="friend-request-modal__spinner" size={16} /> : <Send size={15} />}
-              {running ? 'Enviando…' : summary ? 'Enviar de nuevo' : 'Enviar solicitud'}
+              {running ? (
+                <span className="rk-spin" aria-hidden="true" />
+              ) : (
+                <Send size={15} aria-hidden="true" />
+              )}
+              {running ? t('friends.sending') : summary ? t('friends.resend') : t('friends.submit')}
             </Button>
           </div>
         </footer>

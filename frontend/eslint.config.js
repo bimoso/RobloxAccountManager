@@ -16,6 +16,7 @@ const PAGES = [
   'Accounts',
   'Charts',
   'Credits',
+  'Games',
   'Generator',
   'Logs',
   'Packages',

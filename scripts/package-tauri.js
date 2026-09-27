@@ -309,16 +309,19 @@ fs.mkdirSync(distDir, { recursive: true });
 // 3b. Clean ONLY this pipeline's own prior outputs so dist/ ends up with
 // exactly the intended set. We deliberately scope removals to these three
 // packaging outputs and never wipe unrelated files in dist/.
-const distRobloxAccountManager = path.join(distDir, 'RobloxAccountManager.exe');
+// The app ships as RAM.exe. The pre-rename RobloxAccountManager.exe is also
+// removed, so an old shortcut cannot keep launching a stale build.
+const distRobloxAccountManager = path.join(distDir, 'RAM.exe');
+const distLegacyExe = path.join(distDir, 'RobloxAccountManager.exe');
 const distNativeExe = path.join(distDir, 'RobloxNative.exe');
 const distNativeCs = path.join(distDir, 'RobloxNative.cs');
-for (const stale of [distRobloxAccountManager, distNativeExe, distNativeCs]) {
+for (const stale of [distRobloxAccountManager, distLegacyExe, distNativeExe, distNativeCs]) {
   if (fs.existsSync(stale)) {
     fs.rmSync(stale, { force: true });
   }
 }
 
-// 3c. Copy the release binary -> dist/RobloxAccountManager.exe (Req 12.1). Fail if the
+// 3c. Copy the release binary -> dist/RAM.exe (Req 12.1). Fail if the
 // cargo build did not produce it.
 if (!fs.existsSync(releaseBinary)) {
   fail('release binary not found at ' + releaseBinary + '. Did cargo build succeed for target ' + RUST_TARGET + '?');

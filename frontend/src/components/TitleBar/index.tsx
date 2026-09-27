@@ -1,52 +1,46 @@
 // components/TitleBar/index.tsx
 //
-// Custom application title bar (task 29.1).
+// The custom window title bar.
 //
-// Reproduces the retired Legacy_Frontend `#titlebar`: window controls
-// (minimize / maximize / close), a
-// light/dark theme toggle, the detected Roblox version badge, and a
-// running-instance counter — plus the EN/ES interface-language switcher.
+// Left: the RAM mark and wordmark, in a cell exactly as wide as the navigation
+// rail below it (it follows the rail when it collapses). Centre: the command
+// palette trigger, styled as the app's one search field. Right: the live
+// instance counter, the detected Roblox version, the EN/ES switcher, the theme
+// toggle and the Windows caption buttons.
 //
-// - Window controls delegate to `window.api` through `lib/ipc.ts`
-//   (`minimize` / `maximize` / `close`), the same IPC_Commands the
-//   Legacy_Frontend wires to its titlebar buttons.
-// - The theme toggle calls `themeStore.toggleTheme`, which flips between the
-//   active theme and light/dark exactly as specified (Requirements 3.7, 3.8):
-//   from `"light"` it goes to `"dark"`, from any other theme it goes to
-//   `"light"`, without touching the persisted value of the other 10 themes.
-// - The language switcher is a compact segmented control bound to the shared
-//   `languageStore`; the active option carries a sliding gradient thumb
-//   (framer-motion `layoutId`) and switching cross-fades the whole UI through
-//   a view transition (see `stores/languageStore.ts`).
-// - The Roblox version is read once on mount via `roblox_get_version`
-//   (`ipc.getRobloxVersion`), mirroring `detectRobloxVersion()`.
-// - The running-instance count subscribes to the `roblox://count` IPC_Event
-//   (`ipc.onRobloxCount`) for live pushes and seeds an initial value with
-//   `getRunningCount`. The badge is hidden at 0 and turns "live" (green dot)
-//   when > 0, matching `setRunningBadges()`.
+// - Window controls delegate to window.api through lib/ipc.ts.
+// - The theme toggle calls themeStore.toggleTheme (light <-> dark, the other ten
+//   palettes keep their persisted value).
+// - The language switcher is bound to languageStore; the active option carries
+//   a sliding thumb (framer-motion layoutId).
+// - The Roblox version is read once on mount; the running-instance count seeds
+//   from getRunningCount and follows the roblox://count event.
 
 import { useEffect, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Maximize2, Minus, Moon, Orbit, Sun, X } from 'lucide-react';
+import { Minus, Moon, Search, Square, Sun, X } from 'lucide-react';
 import { ipc } from '../../lib/ipc';
 import { useThemeStore } from '../../stores/themeStore';
 import { LANGUAGES } from '../../i18n';
 import { useTranslation } from '../../i18n/useTranslation';
+import { RamLogo, RamWordmark } from '../Brand';
 import './TitleBar.css';
 
 /** Placeholder shown before the Roblox version resolves / when undetected. */
 const VERSION_PLACEHOLDER = '-';
 
-/**
- * The custom window title bar rendered at the top of the app shell.
- *
- * Renders the brand, the detected Roblox version, the running-instance
- * counter, the language switcher, the theme toggle, and the minimize /
- * maximize / close controls. It owns only presentational, title-bar-local
- * state (version string and running count); the theme and language live in
- * their shared stores.
- */
-export function TitleBar(): JSX.Element {
+/** Props for {@link TitleBar}. */
+export interface TitleBarProps {
+  /**
+   * Opens the Command_Palette. When omitted the trigger is not rendered, so a
+   * bare <TitleBar /> (as mounted in tests) shows no control that would do
+   * nothing if pressed.
+   */
+  onOpenPalette?: () => void;
+}
+
+/** The custom window title bar rendered at the top of the app shell. */
+export function TitleBar({ onOpenPalette }: TitleBarProps = {}): JSX.Element {
   const theme = useThemeStore((state) => state.theme);
   const toggleTheme = useThemeStore((state) => state.toggleTheme);
   const { t, language, setLanguage } = useTranslation();
@@ -55,7 +49,7 @@ export function TitleBar(): JSX.Element {
   const [version, setVersion] = useState<string>(VERSION_PLACEHOLDER);
   const [runningCount, setRunningCount] = useState<number>(0);
 
-  // Detect the installed Roblox version once on mount (Legacy: detectRobloxVersion).
+  // Detect the installed Roblox version once on mount.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -77,7 +71,7 @@ export function TitleBar(): JSX.Element {
   }, []);
 
   // Keep the running-instance counter current: seed with getRunningCount, then
-  // follow the roblox://count event for live pushes (Legacy: onRobloxCount).
+  // follow the roblox://count event for live pushes.
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
@@ -89,8 +83,7 @@ export function TitleBar(): JSX.Element {
           setRunningCount(initial);
         }
       } catch {
-        // Background seed is best-effort; the event subscription below still
-        // updates the count when the backend pushes it.
+        // Best-effort seed; the event subscription below still updates it.
       }
 
       try {
@@ -113,113 +106,125 @@ export function TitleBar(): JSX.Element {
     };
   }, []);
 
-  // Legacy parity: from light the icon offers "dark_mode"; otherwise "light_mode".
   const ThemeIcon = theme === 'light' ? Moon : Sun;
   const isLive = runningCount > 0;
+  const hasVersion = version !== VERSION_PLACEHOLDER;
 
   return (
-    <div id="titlebar" className="ram-titlebar">
-      <div className="ram-titlebar__brand">
-        <span className="ram-titlebar__logo" aria-hidden="true">
-          <Orbit size={16} strokeWidth={2.2} />
-        </span>
-        <span className="ram-titlebar__brand-copy">
-          <span className="ram-titlebar__name">RobloxAccountManager</span>
-          <span className="ram-titlebar__kicker">{t('titlebar.brandKicker')}</span>
-        </span>
+    <div id="titlebar" className="ram-titlebar" data-tauri-drag-region>
+      <div className="ram-titlebar__brand" data-tauri-drag-region title={t('titlebar.brandTitle')}>
+        <RamLogo size={28} />
+        <RamWordmark className="ram-titlebar__wordmark" />
       </div>
 
-      <div className="ram-titlebar__telemetry" aria-label={t('titlebar.clientStatus')}>
-        <span className="ram-titlebar__version" title={t('titlebar.versionTitle')}>
-          <span>{t('titlebar.client')}</span>
-          <code>{version}</code>
-        </span>
-        {isLive ? (
-          <span
-            className="ram-titlebar__running is-live"
-            title={t('titlebar.runningTitle')}
+      <div className="ram-titlebar__center" data-tauri-drag-region>
+        {onOpenPalette ? (
+          <button
+            type="button"
+            className="rk-cmdbar"
+            onClick={onOpenPalette}
+            aria-label={t('cmdk.openAria')}
+            aria-keyshortcuts="Control+K"
           >
-            {t('titlebar.running', { count: runningCount })}
-          </span>
+            <Search size={14} strokeWidth={2} aria-hidden="true" />
+            <span className="rk-cmdbar__label">{t('cmdk.open')}</span>
+            <span className="rk-cmdbar__keys" aria-hidden="true">
+              <kbd className="rk-key">Ctrl</kbd>
+              <kbd className="rk-key">K</kbd>
+            </span>
+          </button>
         ) : null}
       </div>
 
-      <div className="ram-titlebar__drag" aria-hidden="true" />
+      <div className="ram-titlebar__tools">
+        <div className="ram-titlebar__telemetry" aria-label={t('titlebar.clientStatus')}>
+          {isLive ? (
+            <span className="ram-titlebar__live" title={t('titlebar.runningTitle')}>
+              <span className="rk-dot rk-dot--live" data-tone="ok" aria-hidden="true" />
+              {t('titlebar.running', { count: runningCount })}
+            </span>
+          ) : null}
+          <span
+            className="ram-titlebar__version"
+            data-known={hasVersion ? 'true' : undefined}
+            title={t('titlebar.versionTitle')}
+          >
+            <span>{t('titlebar.client')}</span>
+            <code className="u-num">{version}</code>
+          </span>
+        </div>
 
-      <div
-        className="ram-titlebar__lang"
-        role="group"
-        aria-label={t('lang.switcherAria')}
-      >
-        {LANGUAGES.map((lang) => {
-          const active = lang === language;
-          const label = t(`lang.${lang}`);
-          return (
-            <button
-              key={lang}
-              type="button"
-              className={`ram-titlebar__lang-opt${active ? ' active' : ''}`}
-              aria-pressed={active}
-              aria-label={label}
-              title={label}
-              onClick={() => setLanguage(lang)}
-            >
-              {active ? (
-                <motion.span
-                  className="ram-titlebar__lang-thumb"
-                  layoutId="titlebar-lang-thumb"
-                  transition={
-                    reducedMotion
-                      ? { duration: 0 }
-                      : { type: 'spring', stiffness: 520, damping: 40, mass: 0.6 }
-                  }
-                  aria-hidden="true"
-                />
-              ) : null}
-              <span className="ram-titlebar__lang-code">{lang.toUpperCase()}</span>
-            </button>
-          );
-        })}
-      </div>
+        <div className="ram-titlebar__lang" role="group" aria-label={t('lang.switcherAria')}>
+          {LANGUAGES.map((lang) => {
+            const active = lang === language;
+            const label = t(lang === 'en' ? 'lang.en' : 'lang.es');
+            return (
+              <button
+                key={lang}
+                type="button"
+                className={'ram-titlebar__lang-opt' + (active ? ' active' : '')}
+                aria-pressed={active}
+                aria-label={label}
+                title={label}
+                onClick={() => setLanguage(lang)}
+              >
+                {active ? (
+                  <motion.span
+                    className="ram-titlebar__lang-thumb"
+                    layoutId="titlebar-lang-thumb"
+                    transition={
+                      reducedMotion
+                        ? { duration: 0 }
+                        : { type: 'spring', stiffness: 520, damping: 40, mass: 0.6 }
+                    }
+                    aria-hidden="true"
+                  />
+                ) : null}
+                <span className="ram-titlebar__lang-code">{lang.toUpperCase()}</span>
+              </button>
+            );
+          })}
+        </div>
 
-      <button
-        type="button"
-        className="ram-titlebar__btn"
-        onClick={toggleTheme}
-        title={t('titlebar.toggleTheme')}
-        aria-label={t('titlebar.toggleThemeAria')}
-      >
-        <ThemeIcon aria-hidden="true" size={16} strokeWidth={1.9} />
-      </button>
-
-      <div className="ram-titlebar__controls">
         <button
           type="button"
           className="ram-titlebar__btn"
-          onClick={() => void ipc.minimize()}
-          title={t('titlebar.minimize')}
-          aria-label={t('titlebar.minimize')}
+          onClick={toggleTheme}
+          title={t('titlebar.toggleTheme')}
+          aria-label={t('titlebar.toggleThemeAria')}
         >
-          <Minus aria-hidden="true" size={15} strokeWidth={1.8} />
+          <ThemeIcon aria-hidden="true" size={16} strokeWidth={1.9} />
         </button>
-        <button
-          type="button"
-          className="ram-titlebar__btn"
-          onClick={() => void ipc.maximize()}
-          title={t('titlebar.maximize')}
-          aria-label={t('titlebar.maximize')}
-        >
-          <Maximize2 aria-hidden="true" size={13} strokeWidth={1.8} />
-        </button>
-        <button
-          type="button"
-          className="ram-titlebar__btn is-close"
-          onClick={() => void ipc.close()}
-          title={t('titlebar.close')}
-          aria-label={t('titlebar.close')}
-        >
-          <X aria-hidden="true" size={15} strokeWidth={1.8} />
-        </button>
+
+        <div className="ram-titlebar__controls">
+          <button
+            type="button"
+            className="ram-titlebar__cap"
+            onClick={() => void ipc.minimize()}
+            title={t('titlebar.minimize')}
+            aria-label={t('titlebar.minimize')}
+          >
+            <Minus aria-hidden="true" size={16} strokeWidth={1.5} />
+          </button>
+          <button
+            type="button"
+            className="ram-titlebar__cap"
+            onClick={() => void ipc.maximize()}
+            title={t('titlebar.maximize')}
+            aria-label={t('titlebar.maximize')}
+          >
+            <Square aria-hidden="true" size={12.5} strokeWidth={1.6} />
+          </button>
+          <button
+            type="button"
+            className="ram-titlebar__cap is-close"
+            onClick={() => void ipc.close()}
+            title={t('titlebar.close')}
+            aria-label={t('titlebar.close')}
+          >
+            <X aria-hidden="true" size={17} strokeWidth={1.5} />
+          </button>
+        </div>
       </div>
     </div>
   );

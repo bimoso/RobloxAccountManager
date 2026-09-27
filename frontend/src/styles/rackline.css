@@ -1,0 +1,689 @@
+/* ============================================================================
+ * rackline.css — the shared primitive layer
+ *
+ * Every page is assembled from the pieces in this file so ten very different
+ * screens read as one product. A page composes .rk-* primitives and adds only
+ * what is specific to it. These rules load BEFORE page stylesheets (see
+ * main.tsx), so a page can refine any primitive at equal specificity.
+ *
+ * Naming: .rk-<block>__<element>, --<modifier>, and [data-*] for state. State
+ * the browser already models (:hover, :focus-visible, aria-selected,
+ * aria-disabled) is read from the DOM, never mirrored into a class.
+ * ==========================================================================*/
+
+/* ── Page frame ──────────────────────────────────────────────────────────────
+ * A flex column: any number of header strips (head, stats, toolbars) stack at
+ * their natural height and the body takes the rest. The body is the page's
+ * only scroll port, so a page can never produce two scrollbars.
+ * ==========================================================================*/
+.rk-page {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rk-page > * {
+  flex: 0 0 auto;
+}
+
+.rk-page > .rk-page__body {
+  flex: 1 1 auto;
+}
+
+.rk-page__head {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-4);
+  padding: 22px var(--page-x) var(--sp-4);
+}
+
+.rk-page__titles {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.rk-page__head h1,
+.rk-page__head h2 {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  color: var(--t1);
+  font-family: var(--font-head);
+  font-size: var(--fs-xl);
+  font-stretch: 96%;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.rk-page__sub {
+  max-width: 72ch;
+  color: var(--t3);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+}
+
+.rk-page__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* Breadcrumbs above page titles only repeated the sidebar. */
+.rk-page__head .rk-eyebrow {
+  display: none;
+}
+
+/* A small kicker label (above a panel title, in an empty state). */
+.rk-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--t3);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-semibold);
+  letter-spacing: 0.01em;
+}
+
+.rk-eyebrow b {
+  color: var(--ac-text);
+  font-weight: var(--w-semibold);
+}
+
+/* The toolbar strip under the header: search, filters, view toggles. */
+.rk-toolbar {
+  display: flex;
+  min-height: var(--row);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--page-x) var(--sp-3);
+}
+
+.rk-toolbar__spacer {
+  flex: 1 1 auto;
+}
+
+/* A dropdown is width:100% in forms; in a toolbar it sizes to its content. */
+.rk-toolbar .ui-dropdown {
+  width: auto;
+  min-width: 150px;
+  flex: 0 1 auto;
+}
+
+/* The single scroll port. */
+.rk-page__body {
+  min-height: 0;
+  /* Pages are responsive, so only the vertical axis scrolls. Clipping x also
+     keeps the sliding hover rail (alive.css) from ever adding a horizontal
+     scrollbar after a resize. */
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.rk-page__body--pad {
+  padding: var(--sp-1) var(--page-x) var(--sp-6);
+}
+
+/* ── Search field ────────────────────────────────────────────────────────────
+ * One recipe for every search box in the app.
+ * ==========================================================================*/
+.rk-search {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  height: var(--row);
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  border-radius: var(--r);
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--t3);
+  transition:
+    box-shadow var(--dur-quick) var(--ease-out),
+    background var(--dur-quick) var(--ease-out);
+}
+
+.rk-search:hover {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.rk-search:focus-within {
+  background: var(--card);
+  box-shadow:
+    inset 0 0 0 1px var(--ac3),
+    var(--focus-ring);
+  color: var(--ac-text);
+}
+
+.rk-search input {
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 auto;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--t1);
+  font-size: var(--fs-md);
+}
+
+.rk-search input::placeholder {
+  color: var(--t3);
+}
+
+.rk-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* ── The row atom ────────────────────────────────────────────────────────────
+ * A status gutter, a flexible middle and trailing actions. Rows grow with
+ * their content (a title plus a description never collides with the next row)
+ * and are separated by a soft hairline. Hover is drawn by the sliding rail in
+ * alive.css; a row outside a rail host paints its own soft fill.
+ * ==========================================================================*/
+.rk-row {
+  position: relative;
+  display: grid;
+  min-height: var(--row);
+  align-items: center;
+  grid-template-columns: var(--cols, var(--gutter) minmax(0, 1fr) auto);
+  column-gap: var(--sp-2);
+  padding: 7px var(--sp-3) 7px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: transparent;
+  color: var(--t2);
+  font-size: var(--fs-md);
+  text-align: left;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
+}
+
+.rk-row:last-child {
+  border-bottom-color: transparent;
+}
+
+.rk-row:hover {
+  background: var(--hover-fill);
+  color: var(--t1);
+}
+
+.rk-row:active {
+  background: var(--press-fill);
+}
+
+.rk-row[aria-selected='true'] {
+  background: var(--sel-fill);
+  color: var(--t1);
+}
+
+.rk-row[aria-selected='true']:hover {
+  background: var(--sel-fill-hi);
+}
+
+.rk-row[aria-disabled='true'] {
+  opacity: 0.45;
+}
+
+.rk-row:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: -2px;
+  border-radius: var(--r-sm);
+}
+
+/* Kept for call sites that ask for it explicitly; every row now stacks. */
+.rk-row--stack {
+  min-height: var(--row-xl);
+}
+
+/* The status gutter: a small dot carrying the row's tone. */
+.rk-row__gutter {
+  display: grid;
+  width: var(--gutter);
+  height: 100%;
+  min-height: 18px;
+  color: var(--t3);
+  place-items: center;
+}
+
+.rk-row__tick {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tone, color-mix(in srgb, var(--t3) 55%, transparent));
+}
+
+.rk-row__main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rk-row__title {
+  overflow: hidden;
+  margin: 0;
+  color: var(--t1);
+  font-size: var(--fs-md);
+  font-weight: var(--w-semibold);
+  letter-spacing: -0.005em;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rk-row__meta {
+  overflow: hidden;
+  color: var(--t3);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Trailing actions reveal on hover / keyboard focus. */
+.rk-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  opacity: 0;
+  transition: opacity var(--dur-micro) var(--ease-out);
+}
+
+.rk-row:hover .rk-row__actions,
+.rk-row:focus-within .rk-row__actions {
+  opacity: 1;
+}
+
+/* ── Table ───────────────────────────────────────────────────────────────────
+ * A sticky header and its rows share one --cols declaration so the columns
+ * line up. Rows are inset from the canvas edge so hover pills have air.
+ * ==========================================================================*/
+.rk-table {
+  display: flex;
+  flex-direction: column;
+  padding: 0 calc(var(--page-x) - 12px) var(--sp-6);
+}
+
+.rk-table__head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  height: 34px;
+  align-items: center;
+  grid-template-columns: var(--cols);
+  column-gap: var(--sp-2);
+  padding-right: var(--sp-3);
+  border-bottom: 1px solid var(--line);
+  background: var(--canvas);
+  color: var(--t3);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-semibold);
+  letter-spacing: 0.01em;
+}
+
+.rk-table__head > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Column labels come from sentence-case copy that is sometimes shared with
+   inline text ("experiences"); a heading always starts with a capital. */
+.rk-table__head > *::first-letter {
+  text-transform: uppercase;
+}
+
+.rk-table__cell {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rk-table__cell--num {
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* ── Chip ────────────────────────────────────────────────────────────────────
+ * One status pill for the whole app. Tone is data (data-tone), not a class.
+ * ==========================================================================*/
+.rk-chip {
+  display: inline-flex;
+  height: 24px;
+  max-width: 100%;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--tone-fill, var(--hover-fill));
+  box-shadow: inset 0 0 0 1px var(--tone-line, var(--line));
+  color: var(--tone-text, var(--t2));
+  font-family: var(--font);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-semibold);
+  letter-spacing: 0;
+  line-height: 1;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.rk-chip > svg {
+  flex: 0 0 auto;
+}
+
+.rk-chip--sm {
+  height: 21px;
+  gap: 5px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.rk-chip[data-tone='ok'] {
+  --tone-line: color-mix(in srgb, var(--green) 30%, transparent);
+  --tone-fill: var(--ok-fill);
+  --tone-text: var(--green);
+}
+
+.rk-chip[data-tone='warn'] {
+  --tone-line: color-mix(in srgb, var(--warn) 30%, transparent);
+  --tone-fill: var(--warn-fill);
+  --tone-text: var(--warn);
+}
+
+.rk-chip[data-tone='danger'] {
+  --tone-line: color-mix(in srgb, var(--red) 30%, transparent);
+  --tone-fill: var(--red-fill);
+  --tone-text: var(--red);
+}
+
+.rk-chip[data-tone='accent'] {
+  --tone-line: var(--ac3);
+  --tone-fill: var(--ac2);
+  --tone-text: var(--ac-text);
+}
+
+/* ── Status dot ──────────────────────────────────────────────────────────── */
+.rk-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--tone, var(--t3));
+}
+
+.rk-dot[data-tone='ok'] {
+  --tone: var(--green);
+}
+
+.rk-dot[data-tone='warn'] {
+  --tone: var(--warn);
+}
+
+.rk-dot[data-tone='danger'] {
+  --tone: var(--red);
+}
+
+.rk-dot[data-tone='accent'] {
+  --tone: var(--ac);
+}
+
+.rk-dot--live {
+  animation: rk-pulse 1.9s var(--ease-out) infinite;
+}
+
+@keyframes rk-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--tone, var(--green)) 55%, transparent);
+  }
+  60% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
+
+/* ── Keycap ──────────────────────────────────────────────────────────────── */
+.rk-key {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--hover-fill);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    inset 0 -1px 0 var(--line);
+  color: var(--t3);
+  font-family: var(--font);
+  font-size: var(--fs-micro);
+  font-weight: var(--w-semibold);
+  line-height: 1;
+  place-items: center;
+  white-space: nowrap;
+}
+
+.rk-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* ── Section header ──────────────────────────────────────────────────────── */
+.rk-section {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  height: 36px;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--page-x);
+  background: var(--canvas);
+  color: var(--t3);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-semibold);
+  letter-spacing: 0.01em;
+}
+
+/* ── Panel ───────────────────────────────────────────────────────────────────
+ * A soft card for form-shaped content (Settings, Generator, dialogs).
+ * ==========================================================================*/
+.rk-panel {
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.rk-panel__head {
+  display: flex;
+  min-height: 56px;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.rk-panel__title {
+  margin: 0;
+  color: var(--t1);
+  font-size: var(--fs-lg);
+  font-weight: var(--w-semibold);
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.rk-panel__body {
+  padding: var(--sp-4);
+}
+
+/* ── Stat tiles ──────────────────────────────────────────────────────────── */
+.rk-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  padding: 0 var(--page-x) var(--sp-4);
+}
+
+.rk-stat {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.rk-stat__label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--t3);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-medium);
+  white-space: nowrap;
+}
+
+.rk-stat__value {
+  overflow: hidden;
+  color: var(--t1);
+  font-family: var(--font-head);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Grid view ───────────────────────────────────────────────────────────── */
+.rk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(236px, 1fr));
+  gap: var(--sp-3);
+  padding: var(--sp-1) var(--page-x) var(--sp-6);
+}
+
+/* ── Empty state ─────────────────────────────────────────────────────────── */
+.rk-empty {
+  display: flex;
+  min-height: 240px;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  padding: var(--sp-8) var(--sp-6);
+  text-align: center;
+}
+
+.rk-empty__icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  margin-bottom: var(--sp-1);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 30% 20%, var(--ac2), transparent 70%),
+    var(--card);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    var(--elev-1);
+  color: var(--ac-text);
+  place-items: center;
+}
+
+.rk-empty__title {
+  margin: 0;
+  color: var(--t1);
+  font-family: var(--font-head);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.rk-empty__text {
+  max-width: 48ch;
+  margin: 0;
+  color: var(--t3);
+  font-size: var(--fs-md);
+  line-height: var(--lh);
+}
+
+/* ── Segmented control ───────────────────────────────────────────────────── */
+.rk-seg {
+  display: inline-flex;
+  min-width: 0;
+  height: var(--row);
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r);
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.rk-seg > button {
+  display: inline-flex;
+  height: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--t3);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--w-semibold);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out),
+    box-shadow var(--dur-micro) var(--ease-out);
+}
+
+.rk-seg > button:hover {
+  color: var(--t1);
+}
+
+.rk-seg > button[aria-pressed='true'],
+.rk-seg > button[aria-selected='true'],
+.rk-seg > button.active {
+  background: var(--card-hi);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    var(--elev-1);
+  color: var(--t1);
+}
+
+.rk-seg > button:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: -1px;
+}

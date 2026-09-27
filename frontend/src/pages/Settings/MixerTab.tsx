@@ -36,12 +36,18 @@ import { useAccountStore } from '@/stores/accountStore';
 import { useToastStore } from '@/stores/toastStore';
 import { useTranslation } from '@/i18n/useTranslation';
 import type { Account } from '@/types/models';
+import './Settings.css';
 
 const VOLUME_PREVIEW_DEBOUNCE_MS = 90;
 
+/**
+ * Paint the filled portion of a range track. One hard stop, accent to surface —
+ * the old two-accent gradient made the same value read as a different level
+ * depending on where the track happened to be.
+ */
 function sliderFill(value: number, min: number, max: number): string {
   const pct = max > min ? ((value - min) / (max - min)) * 100 : 0;
-  return `linear-gradient(90deg, var(--ac) 0%, var(--acB) ${pct}%, var(--s4) ${pct}%, var(--s4) 100%)`;
+  return `linear-gradient(90deg, var(--ac) ${pct}%, var(--surf-3) ${pct}%)`;
 }
 
 /**
@@ -325,128 +331,132 @@ export function MixerTab(): JSX.Element {
   const gfxDisabled = manualQualityDisabled(gfxAuto);
 
   return (
-    <div className="settings-mixer">
-      <header className="settings-mixer-intro">
-        <div className="settings-mixer-intro-icon" aria-hidden="true">
-          <SlidersHorizontal size={20} strokeWidth={1.8} />
-        </div>
-        <div className="settings-mixer-intro-copy">
-          <span className="settings-eyebrow">{t('mixer.eyebrow')}</span>
+    <div className="set-stack settings-mixer">
+      <header className="set-tabhead">
+        <span className="set-icon" data-tone="accent" aria-hidden="true">
+          <SlidersHorizontal size={15} strokeWidth={1.9} />
+        </span>
+        <div className="set-tabhead__text">
+          <span className="rk-eyebrow">{t('mixer.eyebrow')}</span>
           <h2>{t('mixer.title')}</h2>
           <p>{t('mixer.subtitle')}</p>
         </div>
-        <div className="settings-mixer-live" aria-label={t('mixer.runningAria', { count: runningCount })}>
-          <Activity size={13} aria-hidden="true" />
-          <span>{runningCount}</span>
+        <span
+          className="rk-chip"
+          data-tone={runningCount > 0 ? 'ok' : 'neutral'}
+          aria-label={t('mixer.runningAria', { count: runningCount })}
+        >
+          <Activity size={11} aria-hidden="true" />
+          <span className="u-num">{runningCount}</span>
           {t('mixer.running')}
-        </div>
+        </span>
       </header>
 
-      <div className="settings-mixer-grid">
-        <section className="settings-mixer-control" aria-labelledby="mixer-graphics-title">
-          <div className="settings-mixer-control-head">
-            <span className="settings-mixer-control-icon" aria-hidden="true">
-              <MonitorUp size={17} />
-            </span>
-            <div>
-              <span className="settings-eyebrow">{t('mixer.rendering')}</span>
-              <h3 id="mixer-graphics-title">{t('mixer.graphicsTitle')}</h3>
-            </div>
-            <label className="settings-mixer-toggle" htmlFor="mix-gfx-auto">
-              <span>{t('mixer.auto')}</span>
-              <Switch
-                id="mix-gfx-auto"
-                aria-label={t('mixer.autoAria')}
-                checked={gfxAuto}
-                disabled={gfxSaving}
-                onChange={onGfxAutoToggle}
-              />
-            </label>
+      <section className="rk-panel set-panel" aria-labelledby="mixer-graphics-title">
+        <div className="rk-panel__head">
+          <span className="set-icon" aria-hidden="true">
+            <MonitorUp size={15} />
+          </span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('mixer.rendering')}</span>
+            <h3 id="mixer-graphics-title" className="rk-panel__title">{t('mixer.graphicsTitle')}</h3>
           </div>
-          <p>{t('mixer.graphicsHint')}</p>
-          <div className="settings-mixer-slider-row">
-            <input
-              id="mix-gfx"
-              className="settings-mixer-slider"
-              type="range"
-              min={GRAPHICS_QUALITY_MIN}
-              max={GRAPHICS_QUALITY_MAX}
-              step={1}
-              value={gfxValue}
-              disabled={gfxDisabled || gfxSaving}
-              aria-label={t('mixer.graphicsAria')}
-              style={{
-                background: sliderFill(gfxValue, GRAPHICS_QUALITY_MIN, GRAPHICS_QUALITY_MAX),
-              }}
-              onChange={(event) => setGfxValue(Number(event.target.value))}
-              onMouseUp={onGfxCommit}
-              onKeyUp={onGfxCommit}
-              onTouchEnd={onGfxCommit}
+          <label className="set-headtoggle" htmlFor="mix-gfx-auto">
+            <span>{t('mixer.auto')}</span>
+            <Switch
+              id="mix-gfx-auto"
+              aria-label={t('mixer.autoAria')}
+              checked={gfxAuto}
+              disabled={gfxSaving}
+              onChange={onGfxAutoToggle}
             />
-            <output className="settings-mixer-value" htmlFor="mix-gfx">
-              {gfxDisabled ? 'AUTO' : String(gfxValue).padStart(2, '0')}
-            </output>
-          </div>
-        </section>
-
-        <section className="settings-mixer-control" aria-labelledby="mixer-fps-title">
-          <div className="settings-mixer-control-head">
-            <span className="settings-mixer-control-icon" aria-hidden="true">
-              <Gauge size={17} />
-            </span>
-            <div>
-              <span className="settings-eyebrow">{t('mixer.framePacing')}</span>
-              <h3 id="mixer-fps-title">{t('mixer.fpsTitle')}</h3>
-            </div>
-            <label className="settings-mixer-toggle" htmlFor="mix-fps-unl">
-              <span>{t('mixer.unlimited')}</span>
-              <Switch
-                id="mix-fps-unl"
-                aria-label={t('mixer.unlimitedAria')}
-                checked={fpsUnlimited}
-                disabled={fpsSaving}
-                onChange={onFpsUnlimitedToggle}
-              />
-            </label>
-          </div>
-          <p>{t('mixer.fpsHint')}</p>
-          <div className="settings-mixer-slider-row">
-            <input
-              id="mix-fps"
-              className="settings-mixer-slider"
-              type="range"
-              min={FPS_MIN}
-              max={FPS_MAX}
-              step={1}
-              value={fpsValue}
-              disabled={fpsUnlimited || fpsSaving}
-              aria-label={t('mixer.fpsAria')}
-              style={{ background: sliderFill(fpsValue, FPS_MIN, FPS_MAX) }}
-              onChange={(event) => setFpsValue(Number(event.target.value))}
-              onMouseUp={onFpsCommit}
-              onKeyUp={onFpsCommit}
-              onTouchEnd={onFpsCommit}
-            />
-            <output className="settings-mixer-value" htmlFor="mix-fps">
-              {fpsUnlimited ? '∞' : fpsValue}
-            </output>
-          </div>
-        </section>
-      </div>
-
-      <section className="settings-mixer-volume" aria-labelledby="mixer-volume-title">
-        <span className="settings-mixer-control-icon" aria-hidden="true">
-          <Volume2 size={17} />
-        </span>
-        <div className="settings-mixer-volume-copy">
-          <span className="settings-eyebrow">{t('mixer.liveControl')}</span>
-          <h3 id="mixer-volume-title">{t('mixer.volumeTitle')}</h3>
-          <p>{t('mixer.volumeHint')}</p>
+          </label>
         </div>
-        <div className="settings-mixer-slider-row settings-mixer-slider-row--volume">
+        <p className="set-hint">{t('mixer.graphicsHint')}</p>
+        <div className="set-slider-row">
+          <input
+            id="mix-gfx"
+            className="set-slider"
+            type="range"
+            min={GRAPHICS_QUALITY_MIN}
+            max={GRAPHICS_QUALITY_MAX}
+            step={1}
+            value={gfxValue}
+            disabled={gfxDisabled || gfxSaving}
+            aria-label={t('mixer.graphicsAria')}
+            style={{
+              background: sliderFill(gfxValue, GRAPHICS_QUALITY_MIN, GRAPHICS_QUALITY_MAX),
+            }}
+            onChange={(event) => setGfxValue(Number(event.target.value))}
+            onMouseUp={onGfxCommit}
+            onKeyUp={onGfxCommit}
+            onTouchEnd={onGfxCommit}
+          />
+          <output className="u-num" htmlFor="mix-gfx">
+            {gfxDisabled ? 'AUTO' : String(gfxValue).padStart(2, '0')}
+          </output>
+        </div>
+      </section>
+
+      <section className="rk-panel set-panel" aria-labelledby="mixer-fps-title">
+        <div className="rk-panel__head">
+          <span className="set-icon" aria-hidden="true">
+            <Gauge size={15} />
+          </span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('mixer.framePacing')}</span>
+            <h3 id="mixer-fps-title" className="rk-panel__title">{t('mixer.fpsTitle')}</h3>
+          </div>
+          <label className="set-headtoggle" htmlFor="mix-fps-unl">
+            <span>{t('mixer.unlimited')}</span>
+            <Switch
+              id="mix-fps-unl"
+              aria-label={t('mixer.unlimitedAria')}
+              checked={fpsUnlimited}
+              disabled={fpsSaving}
+              onChange={onFpsUnlimitedToggle}
+            />
+          </label>
+        </div>
+        <p className="set-hint">{t('mixer.fpsHint')}</p>
+        <div className="set-slider-row">
+          <input
+            id="mix-fps"
+            className="set-slider"
+            type="range"
+            min={FPS_MIN}
+            max={FPS_MAX}
+            step={1}
+            value={fpsValue}
+            disabled={fpsUnlimited || fpsSaving}
+            aria-label={t('mixer.fpsAria')}
+            style={{ background: sliderFill(fpsValue, FPS_MIN, FPS_MAX) }}
+            onChange={(event) => setFpsValue(Number(event.target.value))}
+            onMouseUp={onFpsCommit}
+            onKeyUp={onFpsCommit}
+            onTouchEnd={onFpsCommit}
+          />
+          <output className="u-num" htmlFor="mix-fps">
+            {fpsUnlimited ? '∞' : fpsValue}
+          </output>
+        </div>
+      </section>
+
+      <section className="rk-panel set-panel" aria-labelledby="mixer-volume-title">
+        <div className="rk-panel__head">
+          <span className="set-icon" aria-hidden="true">
+            <Volume2 size={15} />
+          </span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('mixer.liveControl')}</span>
+            <h3 id="mixer-volume-title" className="rk-panel__title">{t('mixer.volumeTitle')}</h3>
+          </div>
+        </div>
+        <p className="set-hint">{t('mixer.volumeHint')}</p>
+        <div className="set-slider-row">
           <input
             id="mix-vol"
-            className="settings-mixer-slider"
+            className="set-slider"
             type="range"
             min={VOLUME_MIN}
             max={VOLUME_MAX}
@@ -461,32 +471,36 @@ export function MixerTab(): JSX.Element {
             onKeyUp={onVolumeCommit}
             onBlur={onVolumeCommit}
           />
-          <output className="settings-mixer-value" htmlFor="mix-vol">{volume}%</output>
+          <output className="u-num" htmlFor="mix-vol">{volume}%</output>
         </div>
       </section>
 
-      <section className="settings-mixer-relaunch" aria-labelledby="mixer-relaunch-title">
-        <div className="settings-mixer-relaunch-mark" aria-hidden="true">
-          <RotateCw size={19} />
+      <section className="rk-panel set-panel" aria-labelledby="mixer-relaunch-title">
+        <div className="rk-panel__head">
+          <span className="set-icon" aria-hidden="true">
+            <RotateCw size={15} />
+          </span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('mixer.applyChanges')}</span>
+            <h3 id="mixer-relaunch-title" className="rk-panel__title">{t('mixer.relaunchTitle')}</h3>
+          </div>
         </div>
-        <div>
-          <span className="settings-eyebrow">{t('mixer.applyChanges')}</span>
-          <h3 id="mixer-relaunch-title">{t('mixer.relaunchTitle')}</h3>
-          <p>
-            {runningCount === 0
-              ? t('mixer.relaunchNone')
-              : t(runningCount === 1 ? 'mixer.relaunchOne' : 'mixer.relaunchMany', { count: runningCount })}
-          </p>
+        <p className="set-hint">
+          {runningCount === 0
+            ? t('mixer.relaunchNone')
+            : t(runningCount === 1 ? 'mixer.relaunchOne' : 'mixer.relaunchMany', { count: runningCount })}
+        </p>
+        <div className="set-actions">
+          <Button
+            variant="primary"
+            onClick={() => void onApplyAndRelaunch()}
+            disabled={relaunching || runningCount === 0}
+            aria-label={t('mixer.relaunchAria')}
+          >
+            <RotateCw size={14} aria-hidden="true" />
+            {relaunching ? t('mixer.relaunching') : t('mixer.applyRelaunch')}
+          </Button>
         </div>
-        <Button
-          variant="primary"
-          onClick={() => void onApplyAndRelaunch()}
-          disabled={relaunching || runningCount === 0}
-          aria-label={t('mixer.relaunchAria')}
-        >
-          <RotateCw size={14} aria-hidden="true" />
-          {relaunching ? t('mixer.relaunching') : t('mixer.applyRelaunch')}
-        </Button>
       </section>
     </div>
   );

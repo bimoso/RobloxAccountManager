@@ -53,6 +53,13 @@ export interface LoadClientsSnapshotOptions {
    * (a preset added, a deployment installed) invalidated the previous result.
    */
   force?: boolean;
+  /**
+   * Ask the backend for a full registry + disk walk instead of its cached
+   * sweep. Only the explicit Refresh action wants this; every other read is
+   * answered from the backend cache, which verifies itself in the background
+   * and announces differences through `onRobloxInstallationsChanged`.
+   */
+  fresh?: boolean;
 }
 
 /**
@@ -78,16 +85,16 @@ export function peekClientsSnapshot(): RobloxClientsSnapshot | undefined {
 export async function loadClientsSnapshot(
   options: LoadClientsSnapshotOptions = {},
 ): Promise<RobloxClientsSnapshot> {
-  const { maxAgeMs = CLIENTS_SNAPSHOT_MAX_AGE_MS, force = false } = options;
+  const { maxAgeMs = CLIENTS_SNAPSHOT_MAX_AGE_MS, force = false, fresh = false } = options;
 
-  if (!force) {
+  if (!force && !fresh) {
     const cached = snapshotCache.get();
     if (cached !== undefined && snapshotCache.isFresh(maxAgeMs)) return cached;
     const pending = inFlight.get();
     if (pending !== undefined) return pending;
   }
 
-  const request = ipc.getRobloxClientsSnapshot().then((snapshot) => {
+  const request = ipc.getRobloxClientsSnapshot(fresh).then((snapshot) => {
     snapshotCache.set(snapshot);
     return snapshot;
   });

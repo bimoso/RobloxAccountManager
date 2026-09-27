@@ -1,0 +1,99 @@
+/* ============================================================================
+ * shell.css — the RAM window chrome
+ *
+ *   ┌──────────────────────────────────────────────────────────┐
+ *   │ #titlebar  (on the frame)                                │
+ *   ├──────────┬───────────────────────────────────────────────┤
+ *   │ #sidebar │ ╭───────────────────────────────────────────╮ │
+ *   │ (frame)  │ │ .app-content — the raised canvas          │ │
+ *   │          │ │ (PageRouter mounts here)                  │ │
+ *   │          │ ╰───────────────────────────────────────────╯ │
+ *   └──────────┴───────────────────────────────────────────────┘
+ *
+ * The frame is the darkest surface. The canvas is the single raised panel,
+ * rounded and softly lit, so the eye always knows where the work is. --rail-w
+ * is declared here and read by both the rail and the title bar's brand cell,
+ * which is how the two stay aligned when the rail collapses.
+ * ==========================================================================*/
+
+.app-shell {
+  --rail-w: var(--rail);
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  overflow: clip;
+  background: var(--frame);
+  color: var(--t1);
+}
+
+.app-shell[data-rail='collapsed'] {
+  --rail-w: var(--rail-collapsed);
+}
+
+.app-shell > #titlebar {
+  flex: 0 0 var(--tb);
+}
+
+.app-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: transparent;
+}
+
+.app-body > #sidebar {
+  flex: 0 0 var(--rail-w);
+  width: var(--rail-w);
+  min-width: 0;
+  transition:
+    flex-basis var(--dur-fast) var(--ease-out),
+    width var(--dur-fast) var(--ease-out);
+}
+
+/* ── The canvas ──────────────────────────────────────────────────────────── */
+.app-content {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  margin: 0 var(--inset) var(--inset) 0;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background: var(--canvas);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent) inset,
+    0 18px 50px -30px var(--scrim);
+}
+
+/* A faint light along the canvas's top edge, tinted by the accent. */
+.app-content::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 12%;
+  left: 12%;
+  z-index: 3;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--ac) 45%, transparent) 30%,
+    color-mix(in srgb, var(--acB) 35%, transparent) 70%,
+    transparent
+  );
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.app-content > * {
+  position: relative;
+  z-index: 1;
+}
+

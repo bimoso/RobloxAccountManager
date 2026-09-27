@@ -1,8 +1,13 @@
 // pages/Charts/index.tsx
 //
-// Live Roblox discovery board. The API/cache behaviour remains deliberately
-// page-local; this component only adds a clearer operational hierarchy around
-// the same three chart feeds and the existing local name search.
+// Live Roblox discovery board, rebuilt on the RACKLINE primitives: the page
+// frame is `.rk-page`, the stat strip is `.rk-stats`, the filters live in
+// `.rk-toolbar`, and the ranking itself is a `.rk-table` of 32px rows sharing
+// one `--cols` declaration with its sticky header.
+//
+// The API/cache behaviour remains deliberately page-local; this component only
+// changes how the same three chart feeds and the existing local name search are
+// presented.
 
 import {
   useCallback,
@@ -13,12 +18,7 @@ import {
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
-import {
-  AnimatePresence,
-  LayoutGroup,
-  motion,
-  useReducedMotion,
-} from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
   Activity,
   BarChart3,
@@ -40,6 +40,7 @@ import {
 import { fetchChartGames } from './chartsApi';
 import { searchGames } from './searchGames';
 import { CHART_TABS, type ChartSortId, type Game } from './types';
+import { Button } from '@/components/Button';
 import { ipc } from '@/lib/ipc';
 import { createKeyedSessionCache } from '@/lib/sessionCache';
 import { useLaunchIntentStore } from '@/stores/launchIntentStore';
@@ -51,6 +52,7 @@ import './Charts.css';
 
 type LoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 type ReachFilter = 'all' | 'established' | 'massive';
+type LiveTone = 'ok' | 'accent' | 'danger';
 
 interface TabPresentation {
   icon: LucideIcon;
@@ -99,6 +101,9 @@ const compactNumber = new Intl.NumberFormat('en', {
 
 const EMPTY_GAMES: Game[] = [];
 
+/** How many hairline placeholder rows the loading state draws. */
+const SKELETON_ROWS = 9;
+
 /**
  * Per-tab games cache that survives page unmounts, so re-entering Charts (or
  * returning to a tab) paints the last listing instantly instead of showing the
@@ -135,7 +140,6 @@ export default function ChartsPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState<ChartSortId>(CHART_TABS[0].id);
   const [query, setQuery] = useState('');
   const [reachFilter, setReachFilter] = useState<ReachFilter>('all');
-  const [searchFocused, setSearchFocused] = useState(false);
   const [gamesByTab, setGamesByTab] = useState<
     Partial<Record<ChartSortId, Game[]>>
   >(cachedGamesByTab);
@@ -219,16 +223,13 @@ export default function ChartsPage(): JSX.Element {
   // flip `status` would paint the empty state for one frame between tabs.
   const isLoading = activeGames === undefined && status !== 'error';
   const isError = activeGames === undefined && status === 'error';
-  const liveState = isLoading ? 'syncing' : isError ? 'error' : 'live';
+  const liveTone: LiveTone = isLoading ? 'accent' : isError ? 'danger' : 'ok';
   const liveLabel = isLoading
     ? t('charts.syncing')
     : isError
       ? t('charts.offline')
       : t('charts.live');
   const filtersActive = trimmedQuery.length > 0 || reachFilter !== 'all';
-  const showPodium = !filtersActive && visibleGames.length > 0;
-  const podiumGames = showPodium ? visibleGames.slice(0, 3) : [];
-  const streamGames = showPodium ? visibleGames.slice(3) : visibleGames;
 
   const handleTabChange = (tab: ChartSortId): void => {
     if (tab === activeTab) return;
@@ -284,328 +285,281 @@ export default function ChartsPage(): JSX.Element {
   };
 
   return (
-    <section className="charts-page" aria-labelledby="charts-title">
-      <motion.header
-        className="charts-header"
-        initial={{ opacity: 0, y: reducedMotion ? 0 : -6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: reducedMotion ? 0 : 0.28, ease: 'easeOut' }}
-      >
-        <div className="charts-heading">
-          <span className="charts-eyebrow">{t('charts.eyebrow')}</span>
+    <section className="rk-page charts-page" aria-labelledby="charts-title">
+      <header className="rk-page__head">
+        <div className="rk-page__titles">
           <h1 id="charts-title">{t('charts.title')}</h1>
-          <p>{t('charts.subtitle')}</p>
+          <span className="rk-page__sub">{t('charts.subtitle')}</span>
         </div>
-        <div
-          className="charts-live"
-          data-state={liveState}
-          aria-live="polite"
-        >
-          <span className="charts-live__signal" aria-hidden="true" />
-          {liveLabel}
+        <div className="rk-page__actions">
+          <span className="rk-chip" data-tone={liveTone} aria-live="polite">
+            <span
+              className={isLoading ? 'rk-dot' : 'rk-dot rk-dot--live'}
+              data-tone={liveTone}
+              aria-hidden="true"
+            />
+            {liveLabel}
+          </span>
         </div>
-      </motion.header>
+      </header>
 
-      <div className="charts-vitals" aria-label={t('charts.summaryAria')}>
-        <div className="charts-vital">
-          <span className="charts-vital__icon"><BarChart3 size={16} /></span>
-          <span className="charts-vital__copy">
-            <small>{t('charts.indexed')}</small>
-            <strong>{isLoading ? '—' : sourceGames.length}</strong>
+      <div className="rk-stats" aria-label={t('charts.summaryAria')}>
+        <div className="rk-stat">
+          <span className="rk-stat__label">
+            <BarChart3 size={11} aria-hidden="true" /> {t('charts.indexed')}
           </span>
-          <span className="charts-vital__unit">{t('charts.experiences')}</span>
-        </div>
-        <div className="charts-vital">
-          <span className="charts-vital__icon"><Users size={16} /></span>
-          <span className="charts-vital__copy">
-            <small>{t('charts.concurrentReach')}</small>
-            <strong>{isLoading ? '—' : formatPlayers(totalConcurrent)}</strong>
+          <span className="rk-stat__value">
+            <strong className="u-num">{isLoading ? '—' : sourceGames.length}</strong>
+            <small>{t('charts.experiences')}</small>
           </span>
-          <span className="charts-vital__unit">{t('charts.players')}</span>
         </div>
-        <div className="charts-vital charts-vital--leader">
-          <span className="charts-vital__icon"><Trophy size={16} /></span>
-          <span className="charts-vital__copy">
-            <small>{t('charts.currentLeader')}</small>
+        <div className="rk-stat">
+          <span className="rk-stat__label">
+            <Users size={11} aria-hidden="true" /> {t('charts.concurrentReach')}
+          </span>
+          <span className="rk-stat__value">
+            <strong className="u-num">{isLoading ? '—' : formatPlayers(totalConcurrent)}</strong>
+            <small>{t('charts.players')}</small>
+          </span>
+        </div>
+        <div className="rk-stat charts-stat--leader">
+          <span className="rk-stat__label">
+            <Trophy size={11} aria-hidden="true" /> {t('charts.currentLeader')}
+          </span>
+          <span className="rk-stat__value">
             <strong title={sourceGames[0]?.name || undefined}>
               {isLoading ? t('charts.readingSignal') : sourceGames[0]?.name || t('charts.noSignal')}
             </strong>
+            <TrendingUp size={13} className="charts-stat__trend" aria-hidden="true" />
           </span>
-          <TrendingUp size={15} className="charts-vital__trend" />
         </div>
       </div>
 
-      <div className="charts-command">
-        <div className="charts-command__ranking">
-          <LayoutGroup id="charts-ranking-tabs">
-            <div className="charts-tab-bar" role="tablist" aria-label={t('charts.tablistAria')}>
-              {CHART_TABS.map((tab, index) => {
-                const presentation = TAB_PRESENTATION[tab.id];
-                const TabIcon = presentation.icon;
-                const active = tab.id === activeTab;
-                return (
-                  <motion.button
-                    key={tab.id}
-                    ref={(node) => { tabRefs.current[index] = node; }}
-                    id={`charts-tab-${tab.id}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    aria-controls="charts-panel"
-                    tabIndex={active ? 0 : -1}
-                    className={`charts-tab-btn${active ? ' active' : ''}`}
-                    onClick={() => handleTabChange(tab.id)}
-                    onKeyDown={(event) => handleTabKeyDown(event, index)}
-                    whileTap={reducedMotion ? undefined : { scale: 0.985 }}
-                    transition={{ type: 'spring', stiffness: 520, damping: 34 }}
-                  >
-                    {active ? (
-                      <motion.span
-                        className="charts-tab-btn__glide"
-                        layoutId="charts-active-ranking"
-                        transition={
-                          reducedMotion
-                            ? { duration: 0 }
-                            : { type: 'spring', stiffness: 430, damping: 38 }
-                        }
-                      />
-                    ) : null}
-                    <TabIcon size={15} aria-hidden="true" />
-                    <span>{t(`charts.tab.${tab.id}`)}</span>
-                    <small>{presentation.code}</small>
-                  </motion.button>
-                );
-              })}
-            </div>
-          </LayoutGroup>
-          <div className="charts-mode-note">
-            <Radio size={13} aria-hidden="true" />
-            <span>{t(`charts.tabDesc.${activeTab}`)}</span>
-          </div>
+      <div className="rk-toolbar charts-toolbar">
+        <div
+          className="rk-seg charts-tabs"
+          role="tablist"
+          aria-label={t('charts.tablistAria')}
+        >
+          {CHART_TABS.map((tab, index) => {
+            const presentation = TAB_PRESENTATION[tab.id];
+            const TabIcon = presentation.icon;
+            const active = tab.id === activeTab;
+            return (
+              <button
+                key={tab.id}
+                ref={(node) => { tabRefs.current[index] = node; }}
+                id={`charts-tab-${tab.id}`}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                aria-controls="charts-panel"
+                tabIndex={active ? 0 : -1}
+                onClick={() => handleTabChange(tab.id)}
+                onKeyDown={(event) => handleTabKeyDown(event, index)}
+              >
+                <TabIcon size={13} aria-hidden="true" />
+                <span>{t(`charts.tab.${tab.id}`)}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="charts-note">
+          <Radio size={12} aria-hidden="true" />
+          <span>{t(`charts.tabDesc.${activeTab}`)}</span>
+        </div>
+      </div>
+
+      <div className="rk-toolbar charts-toolbar">
+        <div className="rk-search charts-search" role="search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            type="search"
+            aria-label={t('charts.searchAria')}
+            placeholder={t('charts.searchPlaceholder')}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <AnimatePresence initial={false}>
+            {query.length > 0 ? (
+              <motion.button
+                className="charts-search__clear"
+                type="button"
+                aria-label={t('charts.clearSearch')}
+                onClick={() => setQuery('')}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: reducedMotion ? 0 : 0.08 }}
+              >
+                <X size={13} />
+              </motion.button>
+            ) : null}
+          </AnimatePresence>
         </div>
 
-        <div className="charts-toolbar">
-          <motion.div
-            className="charts-search"
-            role="search"
-            animate={{ scale: searchFocused && !reducedMotion ? 1.004 : 1 }}
-            transition={{ type: 'spring', stiffness: 500, damping: 36 }}
-          >
-            <Search size={17} aria-hidden="true" />
-            <input
-              type="search"
-              aria-label={t('charts.searchAria')}
-              placeholder={t('charts.searchPlaceholder')}
-              value={query}
-              onFocus={() => setSearchFocused(true)}
-              onBlur={() => setSearchFocused(false)}
-              onChange={(event) => setQuery(event.target.value)}
-            />
-            <AnimatePresence initial={false}>
-              {query.length > 0 ? (
-                <motion.button
-                  className="charts-search__clear"
-                  type="button"
-                  aria-label={t('charts.clearSearch')}
-                  onClick={() => setQuery('')}
-                  initial={{ opacity: 0, scale: reducedMotion ? 1 : 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: reducedMotion ? 1 : 0.8 }}
-                >
-                  <X size={14} />
-                </motion.button>
-              ) : null}
-            </AnimatePresence>
-            <span className="charts-search__count" aria-live="polite">
-              {visibleGames.length}/{sourceGames.length}
-            </span>
-          </motion.div>
+        <span className="charts-count u-num" aria-live="polite">
+          {visibleGames.length}/{sourceGames.length}
+        </span>
 
-          <div className="charts-reach" aria-label={t('charts.reachAria')}>
-            <span className="charts-reach__label">
-              <Filter size={14} aria-hidden="true" /> {t('charts.reach')}
-            </span>
-            {REACH_FILTERS.map((filter) => (
-              <motion.button
-                type="button"
-                key={filter.id}
-                className={filter.id === reachFilter ? 'active' : undefined}
-                aria-pressed={filter.id === reachFilter}
-                onClick={() => setReachFilter(filter.id)}
-                whileTap={reducedMotion ? undefined : { scale: 0.97 }}
-              >
-                {reachFilterLabel(filter.id, t)}
-              </motion.button>
-            ))}
-          </div>
+        <div className="rk-seg charts-reach" aria-label={t('charts.reachAria')}>
+          <span className="charts-reach__label">
+            <Filter size={12} aria-hidden="true" /> {t('charts.reach')}
+          </span>
+          {REACH_FILTERS.map((filter) => (
+            <button
+              type="button"
+              key={filter.id}
+              aria-pressed={filter.id === reachFilter}
+              onClick={() => setReachFilter(filter.id)}
+            >
+              {reachFilterLabel(filter.id, t)}
+            </button>
+          ))}
         </div>
       </div>
 
       <div
-        className="charts-scroll"
+        className="rk-page__body"
         id="charts-panel"
         role="tabpanel"
         aria-labelledby={`charts-tab-${activeTab}`}
       >
-        <AnimatePresence mode="sync" initial={false}>
-          {isLoading ? (
-            <ChartsSkeleton key={`loading-${activeTab}`} />
-          ) : isError ? (
-            <ChartMessage
-              key={`error-${activeTab}`}
-              tone="error"
-              icon={RefreshCw}
-              eyebrow={t('charts.errorEyebrow')}
-              title={t('charts.errorTitle')}
-              copy={t('charts.errorCopy')}
-              action={t('charts.retry')}
-              onAction={() => void loadTab(activeTab)}
-              reducedMotion={reducedMotion}
-            />
-          ) : visibleGames.length === 0 ? (
-            <ChartMessage
-              key={`empty-${activeTab}-${filtersActive ? 'filtered' : 'feed'}`}
-              tone="quiet"
-              icon={filtersActive ? Search : Gamepad2}
-              eyebrow={filtersActive ? t('charts.noMatchEyebrow') : t('charts.standbyEyebrow')}
-              title={
-                filtersActive
-                  ? t('charts.noMatchTitle')
-                  : t('charts.standbyTitle')
-              }
-              copy={
-                filtersActive
-                  ? t('charts.noMatchCopy')
-                  : t('charts.standbyCopy')
-              }
-              action={filtersActive ? t('charts.clearFilters') : t('charts.refresh')}
-              onAction={filtersActive ? clearFilters : () => void loadTab(activeTab)}
-              reducedMotion={reducedMotion}
-            />
-          ) : (
-            <motion.div
-              className="charts-board"
-              key={`board-${activeTab}`}
-              initial={{ opacity: 0, y: reducedMotion ? 0 : 7 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: reducedMotion ? 0 : -4 }}
-              transition={{ duration: reducedMotion ? 0 : 0.22, ease: 'easeOut' }}
-            >
-              <div className="charts-stream-head">
-                <div>
-                  <span>{t('charts.rankingStream')}</span>
-                  <strong>
-                    {filtersActive ? t('charts.filteredDiscovery') : t('charts.liveLeaderboard')}
-                  </strong>
-                </div>
-                <span className="charts-stream-head__rule" aria-hidden="true" />
-                <small>{t('charts.visibleCount', { count: visibleGames.length })}</small>
-              </div>
+        {isLoading ? (
+          <ChartsSkeleton />
+        ) : isError ? (
+          <ChartMessage
+            tone="error"
+            icon={RefreshCw}
+            eyebrow={t('charts.errorEyebrow')}
+            title={t('charts.errorTitle')}
+            copy={t('charts.errorCopy')}
+            action={t('charts.retry')}
+            onAction={() => void loadTab(activeTab)}
+          />
+        ) : visibleGames.length === 0 ? (
+          <ChartMessage
+            tone="quiet"
+            icon={filtersActive ? Search : Gamepad2}
+            eyebrow={filtersActive ? t('charts.noMatchEyebrow') : t('charts.standbyEyebrow')}
+            title={filtersActive ? t('charts.noMatchTitle') : t('charts.standbyTitle')}
+            copy={filtersActive ? t('charts.noMatchCopy') : t('charts.standbyCopy')}
+            action={filtersActive ? t('charts.clearFilters') : t('charts.refresh')}
+            onAction={filtersActive ? clearFilters : () => void loadTab(activeTab)}
+          />
+        ) : (
+          <div className="charts-table rk-table">
+            <div className="charts-stream-head rk-section">
+              <span>{t('charts.rankingStream')}</span>
+              <strong>
+                {filtersActive ? t('charts.filteredDiscovery') : t('charts.liveLeaderboard')}
+              </strong>
+              <span className="rk-toolbar__spacer" />
+              <small className="u-num">
+                {t('charts.visibleCount', { count: visibleGames.length })}
+              </small>
+            </div>
 
-              {podiumGames.length > 0 ? (
-                <div className="charts-podium" data-count={podiumGames.length}>
-                  {podiumGames.map(({ game, rank }, index) => (
-                    <ChartGameCard
-                      key={`${game.universeId}-${rank}`}
-                      game={game}
-                      rank={rank}
-                      peakPlayers={peakPlayers}
-                      variant={rank === 1 ? 'leader' : 'contender'}
-                      index={index}
-                      reducedMotion={reducedMotion}
-                      favorite={Boolean(game.placeId && favoriteIds.has(String(game.placeId)))}
-                      onFavorite={() => handleFavorite(game)}
-                      onOpen={() => handleOpenGame(game)}
-                      onLaunch={() => handleLaunchGame(game)}
-                    />
-                  ))}
-                </div>
-              ) : null}
+            <div className="rk-table__head" aria-hidden="true">
+              <span />
+              <span className="charts-col--rank">#</span>
+              <span />
+              <span>{t('charts.experiences')}</span>
+              <span className="charts-col--num">{t('charts.active')}</span>
+              <span>{t('charts.reach')}</span>
+              <span />
+            </div>
 
-              {streamGames.length > 0 ? (
-                <div className="charts-ranking-grid">
-                  <AnimatePresence initial={false}>
-                    {streamGames.map(({ game, rank }, index) => (
-                      <ChartGameCard
-                        key={`${game.universeId}-${rank}`}
-                        game={game}
-                        rank={rank}
-                        peakPlayers={peakPlayers}
-                        variant="row"
-                        index={index}
-                        reducedMotion={reducedMotion}
-                        favorite={Boolean(game.placeId && favoriteIds.has(String(game.placeId)))}
-                        onFavorite={() => handleFavorite(game)}
-                        onOpen={() => handleOpenGame(game)}
-                        onLaunch={() => handleLaunchGame(game)}
-                      />
-                    ))}
-                  </AnimatePresence>
-                </div>
-              ) : null}
-            </motion.div>
-          )}
-        </AnimatePresence>
+            {visibleGames.map(({ game, rank }, index) => (
+              <ChartRow
+                key={`${game.universeId}-${rank}`}
+                game={game}
+                rank={rank}
+                peakPlayers={peakPlayers}
+                index={index}
+                animateIn={!filtersActive && !reducedMotion}
+                favorite={Boolean(game.placeId && favoriteIds.has(String(game.placeId)))}
+                onFavorite={() => handleFavorite(game)}
+                onOpen={() => handleOpenGame(game)}
+                onLaunch={() => handleLaunchGame(game)}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
-interface ChartGameCardProps {
+interface ChartRowProps {
   game: Game;
   rank: number;
   peakPlayers: number;
-  variant: 'leader' | 'contender' | 'row';
   index: number;
-  reducedMotion: boolean;
+  animateIn: boolean;
   favorite: boolean;
   onFavorite: () => void;
   onOpen: () => void;
   onLaunch: () => void;
 }
 
-function ChartGameCard({
+/**
+ * One ranking entry: a 32px `.rk-row` on the table's shared `--cols` grid.
+ *
+ * The reach meter is drawn with `scaleX` from a left origin rather than an
+ * animated `width`, so a re-ranked listing never triggers a layout pass per
+ * row.
+ */
+function ChartRow({
   game,
   rank,
   peakPlayers,
-  variant,
   index,
-  reducedMotion,
+  animateIn,
   favorite,
   onFavorite,
   onOpen,
   onLaunch,
-}: ChartGameCardProps): JSX.Element {
+}: ChartRowProps): JSX.Element {
   const { t } = useTranslation();
   const [thumbFailed, setThumbFailed] = useState(false);
   const showThumb = Boolean(game.thumbUrl) && !thumbFailed;
+  const live = typeof game.playerCount === 'number' && game.playerCount > 0;
   const strength =
     typeof game.playerCount === 'number' && peakPlayers > 0
-      ? Math.max(4, (game.playerCount / peakPlayers) * 100)
-      : 4;
-  const style = {
-    '--chart-strength': `${strength}%`,
-  } as CSSProperties;
+      ? Math.max(0.04, game.playerCount / peakPlayers)
+      : 0.04;
+  const style = { '--chart-strength': String(strength) } as CSSProperties;
+  const name = game.name || t('charts.unknownGame');
 
   return (
     <motion.article
-      className={`chart-card chart-card--${variant}`}
-      aria-label={t('charts.rankAria', { rank, name: game.name || t('charts.unknownGame') })}
+      className="rk-row charts-row"
+      aria-label={t('charts.rankAria', { rank, name })}
       data-rank={rank}
+      data-live={live || undefined}
       data-place-id={game.placeId ?? undefined}
       style={style}
-      layout={reducedMotion ? false : 'position'}
-      initial={{ opacity: 0, y: reducedMotion ? 0 : 7 }}
+      initial={animateIn ? { opacity: 0, y: 3 } : false}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, scale: reducedMotion ? 1 : 0.985 }}
       transition={{
-        duration: reducedMotion ? 0 : 0.22,
-        delay: reducedMotion ? 0 : Math.min(index, 8) * 0.025,
+        duration: animateIn ? 0.15 : 0,
+        delay: animateIn ? Math.min(index, 6) * 0.04 : 0,
         ease: 'easeOut',
       }}
-      whileHover={reducedMotion ? undefined : { y: -2 }}
     >
-      <div className="chart-card__visual">
+      <span className="rk-row__gutter">
+        <span className="rk-row__tick" />
+      </span>
+
+      <span
+        className="rk-table__cell--num charts-col--rank u-num"
+        title={t('charts.chartPosition', { rank })}
+      >
+        {String(rank).padStart(2, '0')}
+      </span>
+
+      <span className="charts-row__thumb">
         {showThumb ? (
           <img
             src={game.thumbUrl}
@@ -614,90 +568,98 @@ function ChartGameCard({
             onError={() => setThumbFailed(true)}
           />
         ) : (
-          <div className="chart-card__placeholder" aria-hidden="true">
-            <Gamepad2 size={variant === 'leader' ? 38 : 24} />
-          </div>
+          <Gamepad2 size={13} aria-hidden="true" />
         )}
-        <span className="chart-card__rank">
-          <small>#</small>{String(rank).padStart(2, '0')}
-        </span>
-        {variant === 'leader' ? (
-          <span className="chart-card__leader-tag">
-            <Trophy size={12} aria-hidden="true" /> {t('charts.networkLeader')}
+      </span>
+
+      <span className="charts-row__name">
+        <span className="rk-row__title" title={name}>{name}</span>
+        {rank === 1 ? (
+          <span className="rk-chip rk-chip--sm" data-tone="accent">
+            <Trophy size={10} aria-hidden="true" /> {t('charts.networkLeader')}
           </span>
         ) : null}
-      </div>
+      </span>
 
-      <div className="chart-card__body">
-        <div className="chart-card__heading">
-          <span>{variant === 'row' ? t('charts.chartPosition', { rank }) : t('charts.discoverySignal')}</span>
-          <h2 title={game.name || t('charts.unknownGame')}>{game.name || t('charts.unknownGame')}</h2>
-        </div>
-        <div className="chart-card__reach">
-          <Users size={14} aria-hidden="true" />
-          <strong>{formatPlayers(game.playerCount)}</strong>
-          <span>{t('charts.active')}</span>
-        </div>
-        <div className="chart-card__meter" aria-hidden="true">
-          <span />
-        </div>
-        <div className="chart-card__actions" aria-label={t('charts.actionsAria', { name: game.name || t('charts.gameFallback') })}>
-          <button
-            type="button"
-            data-active={favorite || undefined}
-            disabled={!game.placeId}
-            aria-label={favorite ? t('charts.removeFavorite') : t('charts.saveFavorite')}
-            title={favorite ? t('charts.removeFavorite') : t('charts.saveToLauncher')}
-            onClick={onFavorite}
-          >
-            <Star size={13} fill={favorite ? 'currentColor' : 'none'} />
-            <span>{favorite ? t('charts.saved') : t('charts.save')}</span>
-          </button>
-          <button
-            type="button"
-            disabled={!game.placeId}
-            title={t('charts.openPage')}
-            onClick={onOpen}
-          >
-            <ExternalLink size={13} /><span>{t('charts.open')}</span>
-          </button>
-          <button
-            type="button"
-            className="chart-card__launch"
-            disabled={!game.placeId}
-            title={t('charts.chooseLaunch')}
-            onClick={onLaunch}
-          >
-            <Rocket size={13} /><span>{t('charts.launch')}</span>
-          </button>
-        </div>
-      </div>
+      <span className="rk-table__cell--num charts-col--num u-num">
+        {formatPlayers(game.playerCount)}
+      </span>
+
+      <span className="charts-row__meter" aria-hidden="true">
+        <span />
+      </span>
+
+      <span
+        className="rk-row__actions"
+        aria-label={t('charts.actionsAria', { name: game.name || t('charts.gameFallback') })}
+      >
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          className={favorite ? 'charts-fav-on' : undefined}
+          disabled={!game.placeId}
+          aria-label={favorite ? t('charts.removeFavorite') : t('charts.saveFavorite')}
+          title={favorite ? t('charts.removeFavorite') : t('charts.saveToLauncher')}
+          onClick={onFavorite}
+        >
+          <Star size={14} fill={favorite ? 'currentColor' : 'none'} aria-hidden="true" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          disabled={!game.placeId}
+          aria-label={t('charts.open')}
+          title={t('charts.openPage')}
+          onClick={onOpen}
+        >
+          <ExternalLink size={14} aria-hidden="true" />
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          className="charts-launch"
+          disabled={!game.placeId}
+          title={t('charts.chooseLaunch')}
+          onClick={onLaunch}
+        >
+          <Rocket size={13} aria-hidden="true" />
+          <span>{t('charts.launch')}</span>
+        </Button>
+      </span>
     </motion.article>
   );
 }
 
+/**
+ * Loading state: hairline placeholder rows on the ranking's own `--cols` grid,
+ * so the listing arrives into the shape it was already occupying instead of
+ * replacing a floating spinner.
+ */
 function ChartsSkeleton(): JSX.Element {
   const { t } = useTranslation();
   return (
-    <motion.div
-      className="charts-skeleton"
+    <div
+      className="charts-table charts-skeleton rk-table"
       role="status"
       aria-label={t('charts.loadingAria')}
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
     >
       <span className="sr-only">{t('charts.loading')}</span>
-      <div className="charts-skeleton__head" aria-hidden="true">
-        <span /><span />
-      </div>
-      <div className="charts-skeleton__podium" aria-hidden="true">
-        <span /><span /><span />
-      </div>
-      <div className="charts-skeleton__rows" aria-hidden="true">
-        {Array.from({ length: 6 }, (_, index) => <span key={index} />)}
-      </div>
-    </motion.div>
+      {Array.from({ length: SKELETON_ROWS }, (_, index) => (
+        <div className="rk-row charts-row" key={index} aria-hidden="true">
+          <span className="rk-row__gutter">
+            <span className="rk-row__tick" />
+          </span>
+          <span className="charts-skeleton__bar charts-skeleton__bar--rank" />
+          <span className="charts-skeleton__bar charts-skeleton__bar--thumb" />
+          <span className="charts-skeleton__bar charts-skeleton__bar--name" />
+          <span className="charts-skeleton__bar charts-skeleton__bar--num" />
+          <span className="charts-row__meter" />
+          <span />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -709,9 +671,9 @@ interface ChartMessageProps {
   copy: string;
   action: string;
   onAction: () => void;
-  reducedMotion: boolean;
 }
 
+/** Empty / failure state, built on the shared `.rk-empty` recipe. */
 function ChartMessage({
   tone,
   icon: Icon,
@@ -720,32 +682,22 @@ function ChartMessage({
   copy,
   action,
   onAction,
-  reducedMotion,
 }: ChartMessageProps): JSX.Element {
   return (
-    <motion.div
-      className="charts-message"
+    <div
+      className="rk-empty charts-empty"
       data-tone={tone}
       role={tone === 'error' ? 'alert' : 'status'}
-      initial={{ opacity: 0, y: reducedMotion ? 0 : 7 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: reducedMotion ? 0 : 0.22 }}
     >
-      <div className="charts-message__glyph" aria-hidden="true">
-        <Icon size={25} />
-        <span />
-      </div>
-      <span className="charts-message__eyebrow">{eyebrow}</span>
-      <h2>{title}</h2>
-      <p>{copy}</p>
-      <motion.button
-        type="button"
-        onClick={onAction}
-        whileTap={reducedMotion ? undefined : { scale: 0.975 }}
-      >
-        <RefreshCw size={14} aria-hidden="true" /> {action}
-      </motion.button>
-    </motion.div>
+      <span className="rk-empty__icon" aria-hidden="true">
+        <Icon size={18} />
+      </span>
+      <span className="rk-eyebrow">{eyebrow}</span>
+      <h2 className="rk-empty__title">{title}</h2>
+      <p className="rk-empty__text">{copy}</p>
+      <Button variant="secondary" onClick={onAction}>
+        <RefreshCw size={13} aria-hidden="true" /> {action}
+      </Button>
+    </div>
   );
 }

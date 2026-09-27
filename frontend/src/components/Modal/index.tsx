@@ -4,6 +4,19 @@ import { motionDuration } from '@/lib/animation';
 import './Modal.css';
 
 /**
+ * Width preset for a {@link Modal}, replacing the per-dialog width formulas.
+ *
+ * - `'sm'` — 380px, single-question prompts.
+ * - `'md'` — 480px, the standard account form.
+ * - `'lg'` — 620px, forms with two columns or a tab strip.
+ * - `'xl'` — 760px, the launch matrix and other wide tools.
+ *
+ * Omitting the prop keeps the historical behaviour, where the dialog is as
+ * wide as whatever its content declares.
+ */
+export type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
+
+/**
  * Props for the {@link Modal} component.
  */
 export interface ModalProps {
@@ -24,6 +37,11 @@ export interface ModalProps {
    * title.
    */
   titleId?: string;
+  /**
+   * Width preset for the dialog surface. When omitted the surface is sized by
+   * its content, exactly as before this prop existed.
+   */
+  size?: ModalSize;
   /** Content rendered inside the dialog surface. */
   children: React.ReactNode;
 }
@@ -55,7 +73,7 @@ const MODAL_EASE = [0.22, 1, 0.36, 1] as const;
  * `aria-labelledby` to {@link ModalProps.titleId} when given, closes on
  * `Escape`, and closes when the backdrop (outside the content) is clicked.
  */
-export function Modal({ open, onClose, titleId, children }: ModalProps): JSX.Element {
+export function Modal({ open, onClose, titleId, size, children }: ModalProps): JSX.Element {
   const reducedMotion = useReducedMotion() ?? false;
   const duration = motionDuration(MODAL_DURATION_MS, reducedMotion) / 1000;
   const closeDuration = motionDuration(MODAL_CLOSE_DURATION_MS, reducedMotion) / 1000;
@@ -85,6 +103,7 @@ export function Modal({ open, onClose, titleId, children }: ModalProps): JSX.Ele
             role="dialog"
             aria-modal="true"
             aria-labelledby={titleId}
+            data-size={size}
             initial={{ opacity: 0, scale: 0.96 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{

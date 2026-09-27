@@ -1,6 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
+import { useTranslation } from '@/i18n/useTranslation';
 import type { Account } from '@/types/models';
 import {
   computeChangedFields,
@@ -56,6 +57,7 @@ export function EditAccountModal({
   onSave,
 }: EditAccountModalProps): JSX.Element {
   const titleId = useId();
+  const { t } = useTranslation();
   const empty: EditFormValues = {
     nickname: '',
     gameTarget: '',
@@ -117,79 +119,79 @@ export function EditAccountModal({
   const label = account ? account.nickname?.trim() || account.username : '';
 
   return (
-    <Modal open={open && account !== null} onClose={onClose} titleId={titleId}>
-      <div className="editacc">
-        <div className="editacc__head">
-          <span className="editacc__eyebrow">Cuenta</span>
-          <h2 id={titleId} className="editacc__title">
-            {label ? `Editar — ${label}` : 'Editar cuenta'}
+    <Modal open={open && account !== null} onClose={onClose} titleId={titleId} size="md">
+      <div className="fm-root editacc">
+        <div className="fm-head">
+          <span className="fm-eyebrow">{t('accounts.edit.eyebrow')}</span>
+          <h2 id={titleId} className="fm-title">
+            {label ? t('accounts.edit.titleWith', { label }) : t('accounts.edit.title')}
           </h2>
         </div>
 
-        <label className="editacc__field">
-          Apodo
+        <label className="fm-field">
+          {t('accounts.edit.nickname')}
           <input
-            className="editacc__input"
+            className="fm-input"
             type="text"
             value={values.nickname}
-            placeholder="Apodo"
+            placeholder={t('accounts.edit.nicknamePlaceholder')}
             onChange={(event) => setField('nickname', event.target.value)}
           />
         </label>
 
-        <label className="editacc__field">
-          Destino
+        <label className="fm-field">
+          {t('accounts.edit.target')}
           <input
-            className="editacc__input"
+            className="fm-input"
             type="text"
             value={values.gameTarget}
-            placeholder="ID de juego o enlace de servidor privado"
+            placeholder={t('accounts.edit.targetPlaceholder')}
             onChange={(event) => setField('gameTarget', event.target.value)}
           />
         </label>
 
-        <label className="editacc__field">
-          Notas
+        <label className="fm-field">
+          {t('accounts.edit.notes')}
           <textarea
-            className="editacc__textarea"
+            className="fm-textarea"
             value={values.notes}
-            placeholder="Notas"
+            placeholder={t('accounts.edit.notesPlaceholder')}
             onChange={(event) => setField('notes', event.target.value)}
           />
         </label>
 
-        <label className="editacc__field">
-          Usuario de inicio de sesión
+        <label className="fm-field">
+          {t('accounts.edit.loginUsername')}
           <input
-            className="editacc__input"
+            className="fm-input"
             type="text"
             value={values.loginUsername}
-            placeholder="Usuario o correo (para re-login)"
+            placeholder={t('accounts.edit.loginUsernamePlaceholder')}
             autoComplete="off"
             onChange={(event) => setField('loginUsername', event.target.value)}
           />
         </label>
 
-        <label className="editacc__field">
-          Contraseña
+        <label className="fm-field">
+          {t('accounts.edit.password')}
           <input
-            className="editacc__input"
+            className="fm-input"
             type="password"
             value={values.password}
-            placeholder="Contraseña guardada (para re-login)"
+            placeholder={t('accounts.edit.passwordPlaceholder')}
             autoComplete="new-password"
             onChange={(event) => setField('password', event.target.value)}
           />
         </label>
 
-        {error && <p className="editacc__error">{error}</p>}
+        {error && <p className="fm-error">{error}</p>}
 
-        <div className="editacc__footer">
+        <div className="fm-footer">
           <Button variant="secondary" onClick={onClose} disabled={saving}>
-            Cancelar
+            {t('accounts.edit.cancel')}
           </Button>
           <Button variant="primary" onClick={() => void handleSave()} disabled={saving}>
-            Guardar
+            {t('accounts.edit.save')}
           </Button>
         </div>
       </div>

@@ -48,6 +48,13 @@ export interface BrowserOpenBatchResult {
   results: BrowserOpenBatchItemResult[];
 }
 
+/** Response of `browser_copy_cookies_bulk` (bulk Copy Cookie with one write). */
+export interface CopyCookiesBulkResult {
+  total: number;
+  copied: number;
+  failedIds: string[];
+}
+
 /** Response of `roblox_get_avatar_thumbnails` (documented shape in preload.js). */
 export interface AvatarThumbnailsResponse {
   data: Array<{ targetId: number; state: string; imageUrl: string }>;
@@ -110,6 +117,14 @@ export interface TauriApi {
   removeAccount: (id: string) => Promise<void>;
   updateAccount: (id: string, data: Partial<Account>) => Promise<Account>;
   reorderAccounts: (ids: string[]) => Promise<void>;
+  /** Result of `accounts_export_encrypted` (`null` when the dialog was cancelled). */
+  exportAccountsEncrypted: (
+    passphrase: string,
+  ) => Promise<{ path: string; count: number } | null>;
+  /** Result of `accounts_import_encrypted` (`null` when the dialog was cancelled). */
+  importAccountsEncrypted: (
+    passphrase: string,
+  ) => Promise<{ path: string; added: number; skipped: number } | null>;
 
   // ── Packages ──
   loadPackages: () => Promise<Package[]>;
@@ -157,7 +172,9 @@ export interface TauriApi {
   onAllRobloxClosed: (cb: () => void) => Promise<UnlistenFn>;
   launchRoblox: (id: string, cookie: string, target: string) => Promise<LaunchResult>;
   openExternal: (url: string) => Promise<void>;
-  getRobloxClientsSnapshot: () => Promise<RobloxClientsSnapshot>;
+  openLogsFolder: () => Promise<void>;
+  /** `fresh: true` waits for a full scan; otherwise the cached sweep answers. */
+  getRobloxClientsSnapshot: (fresh?: boolean) => Promise<RobloxClientsSnapshot>;
   scanRobloxInstallations: () => Promise<RobloxInstallation[]>;
   addRobloxCustomPreset: (path: string, displayName?: string | null) => Promise<RobloxInstallation>;
   removeRobloxCustomPreset: (installationId: string) => Promise<boolean>;
@@ -177,6 +194,7 @@ export interface TauriApi {
   ) => Promise<UnlistenFn>;
   /** Fires when the roblox:// handlers are rewritten outside this app. */
   onRobloxProtocolChanged: (cb: () => void) => Promise<UnlistenFn>;
+  onRobloxInstallationsChanged: (cb: () => void) => Promise<UnlistenFn>;
 
   // ── Settings_Store ──
   loadSettings: () => Promise<Settings>;
@@ -230,6 +248,7 @@ export interface TauriApi {
   openAccountBrowsers: (ids: string[]) => Promise<BrowserOpenBatchResult>;
   copyAccountCookie: (id: string) => Promise<unknown>;
   getWayfernStatus: () => Promise<WayfernStatus>;
+  copyAccountCookiesBulk: (ids: string[]) => Promise<CopyCookiesBulkResult>;
   installWayfern: () => Promise<WayfernStatus>;
   onWayfernProgress: (cb: (payload: WayfernProgress) => void) => Promise<UnlistenFn>;
   onBrowserSessionState: (cb: (payload: unknown) => void) => Promise<UnlistenFn>;

@@ -100,7 +100,7 @@ const FIXED_ITEMS: readonly ContextMenuItemDescriptor[] = [
     icon: Hash,
     section: 'copy',
     compact: true,
-    shortLabel: 'UID',
+    shortLabel: 'ID',
   },
   {
     id: 'copyUsername',
@@ -108,7 +108,7 @@ const FIXED_ITEMS: readonly ContextMenuItemDescriptor[] = [
     icon: AtSign,
     section: 'copy',
     compact: true,
-    shortLabel: 'USER',
+    shortLabel: 'User',
   },
   {
     id: 'copyCookie',
@@ -116,7 +116,7 @@ const FIXED_ITEMS: readonly ContextMenuItemDescriptor[] = [
     icon: Cookie,
     section: 'copy',
     compact: true,
-    shortLabel: 'COOKIE',
+    shortLabel: 'Cookie',
   },
 ];
 

@@ -18,6 +18,7 @@ import {
   CheckSquare2,
   CirclePlay,
   Cookie,
+  ArrowDownUp,
   Globe2,
   GripVertical,
   Grid2X2,
@@ -25,6 +26,7 @@ import {
   ListFilter,
   Plus,
   Rows3,
+  Rows4,
   Search,
   Square,
   StickyNote,
@@ -33,24 +35,35 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
+import { Button } from '@/components/Button';
 import { Dropdown, type DropdownOption } from '@/components/Dropdown';
 import { EmptyState } from '@/components/EmptyState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { usePageActive } from '@/components/PageRouter/pageActivity';
 import {
+  ACCOUNT_SORTS,
+  displayName,
   filterAccounts,
   listState,
   resolveInitialFilter,
-  resolveInitialView,
+  resolveInitialSort,
   searchAccounts,
   setFilter as persistFilter,
+  setSort as persistSort,
   setView as persistView,
+  sortAccounts,
 } from '@/lib/filters';
+import { getPersisted, PERSISTENCE_KEYS } from '@/lib/persistence';
 import { bulkBarVisible, selectAll, toggleSelection } from '@/lib/selection';
+import { identityStyle } from '@/lib/identity';
 import { useAccountStore } from '@/stores/accountStore';
+import { useInspectorStore } from '@/stores/inspectorStore';
+import { useShellStore } from '@/stores/shellStore';
 import { useTranslation } from '@/i18n/useTranslation';
-import type { Account, AccountFilter, AccountsView } from '@/types/models';
-import { AccountCard } from './AccountCard';
+import type { Account, AccountFilter, AccountSort, AccountsView } from '@/types/models';
+import { AccountCard, AccountRow } from './AccountCard';
 import { AccountCardMenu, type AccountCardMenuActions } from './AccountCardMenu';
+import { AccountInspector } from './AccountInspector';
 import './accounts.css';
 
 /**
@@ -93,6 +106,29 @@ const DRAG_THRESHOLD_PX = 8;
 const DRAG_GRAB_Y = 24;
 
 /**
+ * Page width, in px, below which the detail panel stops splitting the page.
+ *
+ * The panel is worth about 340–400px; taking that out of a narrower page would
+ * squeeze the roster below the width of its own rows. Below the threshold the
+ * panel floats over the roster as a sheet instead, so clicking a row always
+ * answers — at the app's default window size included.
+ */
+const INSPECTOR_MIN_PAGE_WIDTH = 1120;
+
+/**
+ * Resolve the startup view.
+ *
+ * The dense rack (`'list'`) is now the default: at the app's own 900×680
+ * minimum the card grid showed four accounts, the table shows eighteen. The
+ * card grid is not gone — it stays behind the page's view toggle, and a user
+ * who picked it keeps it, because an explicitly persisted choice still wins.
+ */
+function resolveStartupView(): AccountsView {
+  const stored = getPersisted<unknown>(PERSISTENCE_KEYS.view);
+  return stored === 'grid' || stored === 'list' ? stored : 'list';
+}
+
+/**
  * Return an element's final layout position in viewport coordinates without
  * including Framer Motion's temporary FLIP transform. Reading
  * getBoundingClientRect() while neighbours are reordering returns the visual
@@ -121,8 +157,13 @@ function baseId(selKey: string): string {
 }
 
 /**
- * The Accounts page: a liquid-glass grid/list of account cards with search,
- * filtering, multi-selection + bulk actions, and drag-to-reorder.
+ * The Accounts page: the app's flagship rack.
+ *
+ * The default presentation is a dense `.rk-table` — one hairline-ruled row per
+ * account, sharing a single `--cols` declaration with its sticky header — with
+ * search, filtering, multi-selection + bulk actions, and drag-to-reorder. The
+ * card grid stays available behind the view toggle and drag-reorder works
+ * identically in both.
  */
 export function Accounts({
   onAddAccount,
@@ -140,7 +181,18 @@ export function Accounts({
   const load = useAccountStore((state) => state.load);
   const confirmBulkDelete = useAccountStore((state) => state.confirmBulkDelete);
   const applyReorderedIds = useAccountStore((state) => state.applyReorderedIds);
+  // The inspector's focus lives in a store rather than here because the command
+  // palette can also jump straight to an account, and neither surface may
+  // import the other.
+  const inspectorOpen = useInspectorStore((state) => state.open);
+  const focusedAccountId = useInspectorStore((state) => state.focusedAccountId);
+  const inspect = useInspectorStore((state) => state.inspect);
+  const closeInspector = useInspectorStore((state) => state.close);
+  const reconcileInspector = useInspectorStore((state) => state.reconcile);
+  const density = useShellStore((state) => state.density);
+  const setDensity = useShellStore((state) => state.setDensity);
   const { t } = useTranslation();
+  const pageActive = usePageActive();
 
   // `t` is rebound per language, so the options re-derive on language change.
   const filterOptions = useMemo<ReadonlyArray<DropdownOption<AccountFilter>>>(
@@ -148,8 +200,15 @@ export function Accounts({
     [t],
   );
 
-  const [view, setViewState] = useState<AccountsView>(() => resolveInitialView());
+  // `t` is rebound per language, so the options re-derive on language change.
+  const sortOptions = useMemo<ReadonlyArray<DropdownOption<AccountSort>>>(
+    () => ACCOUNT_SORTS.map((value) => ({ value, label: t(`accounts.sort.${value}`) })),
+    [t],
+  );
+
+  const [view, setViewState] = useState<AccountsView>(() => resolveStartupView());
   const [filter, setFilterState] = useState<AccountFilter>(() => resolveInitialFilter());
+  const [sort, setSortState] = useState<AccountSort>(() => resolveInitialSort());
   const [query, setQuery] = useState('');
 
   const [selectionMode, setSelectionMode] = useState(false);
@@ -185,6 +244,40 @@ export function Accounts({
     message: '',
   });
   const confirmResolverRef = useRef<((value: boolean) => void) | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // A completed drag ends with a `click` on whatever the pointer was released
+  // over. Without this the gesture that reorders a row would also inspect it.
+  const draggedRef = useRef(false);
+
+  // ── Room for the detail panel ──
+  // Measured off the page itself, not the window: the shell's rail and the
+  // status line mean the viewport is a poor proxy for how much width the roster
+  // actually has. jsdom has no ResizeObserver, so the default keeps the panel
+  // available under test.
+  // The first guess comes from the window so the very first click already
+  // opens the right kind of panel; the observer below then keeps it exact.
+  const [pageWideEnough, setPageWideEnough] = useState(() =>
+    typeof window === 'undefined' || typeof ResizeObserver === 'undefined'
+      ? true
+      : window.innerWidth - 240 >= INSPECTOR_MIN_PAGE_WIDTH,
+  );
+  const pageObserverRef = useRef<ResizeObserver | null>(null);
+  // The observer lives and dies with the element: the callback ref receives
+  // null on unmount and disconnects it. (A separate unmount effect would also
+  // run during StrictMode's simulated remount, killing the observer for good
+  // while the ref never re-attaches.)
+  const measurePage = useCallback((node: HTMLDivElement | null): void => {
+    pageObserverRef.current?.disconnect();
+    pageObserverRef.current = null;
+    if (!node || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[entries.length - 1]?.contentRect.width ?? 0;
+      if (width > 0) setPageWideEnough(width >= INSPECTOR_MIN_PAGE_WIDTH);
+    });
+    observer.observe(node);
+    pageObserverRef.current = observer;
+  }, []);
 
   useEffect(() => {
     if (accounts.length === 0) {
@@ -194,6 +287,12 @@ export function Accounts({
   }, []);
 
   const sourceAccounts = baseAccounts ?? accounts;
+
+  // A deleted account must not leave the panel rendering a ghost: the store
+  // drops a focus it can no longer resolve as soon as the list changes.
+  useEffect(() => {
+    reconcileInspector(sourceAccounts.map((account) => account.id));
+  }, [sourceAccounts, reconcileInspector]);
 
   // Stable, unique selection key per account. `Account.id` is unique for new
   // writes, but legacy/corrupt stores can still contain repeated ids; keying
@@ -217,8 +316,8 @@ export function Accounts({
   );
 
   const visibleAccounts = useMemo(
-    () => searchAccounts(filterAccounts(sourceAccounts, filter), query),
-    [sourceAccounts, filter, query],
+    () => sortAccounts(searchAccounts(filterAccounts(sourceAccounts, filter), query), sort),
+    [sourceAccounts, filter, query, sort],
   );
   const state = useMemo(
     () => listState(sourceAccounts.length, visibleAccounts.length),
@@ -248,14 +347,63 @@ export function Accounts({
     [dragKey, visibleAccounts, keyFor],
   );
 
+  // ── The inspector's subject ──
+  // Resolved from the live list on every render rather than copied into state,
+  // so an edit made in a modal (or a cookie expiring under the poller) is
+  // reflected in the panel immediately.
+  const focusedAccount = useMemo(
+    () =>
+      focusedAccountId === null
+        ? null
+        : sourceAccounts.find((account) => account.id === focusedAccountId) ?? null,
+    [sourceAccounts, focusedAccountId],
+  );
+
+  // Previous/next walk the CURRENTLY FILTERED, CURRENTLY SORTED list, so
+  // stepping through the panel follows the order the user is looking at.
+  const focusedIndex = useMemo(
+    () =>
+      focusedAccountId === null
+        ? -1
+        : visibleAccounts.findIndex((account) => account.id === focusedAccountId),
+    [visibleAccounts, focusedAccountId],
+  );
+  const previousAccount = focusedIndex > 0 ? visibleAccounts[focusedIndex - 1] : null;
+  const nextAccount =
+    focusedIndex >= 0 && focusedIndex + 1 < visibleAccounts.length
+      ? visibleAccounts[focusedIndex + 1]
+      : null;
+
+  // Wide pages split the roster and the panel; narrower ones float the panel
+  // over the roster as a sheet.
+  const inspectorSplit = inspectorOpen && pageWideEnough;
+  const inspectorOverlay = inspectorOpen && !pageWideEnough;
+  const launchOne = cardActions.onLaunch;
+
+  /** Plain-click activation: inspect the row, unless the click ended a drag. */
+  const handleInspect = useCallback(
+    (account: Account) => (): void => {
+      if (draggedRef.current) {
+        draggedRef.current = false;
+        return;
+      }
+      inspect(account.id);
+    },
+    [inspect],
+  );
+
   const handleSelectView = (next: AccountsView): void => {
     setViewState(next);
     persistView(next);
   };
-
   const handleSelectFilter = (next: AccountFilter): void => {
     setFilterState(next);
     persistFilter(next);
+  };
+
+  const handleSelectSort = (next: AccountSort): void => {
+    setSortState(next);
+    persistSort(next);
   };
 
   const exitSelectionMode = useCallback((): void => {
@@ -327,11 +475,109 @@ export function Accounts({
     [selectedAccounts],
   );
 
+  // ── Accounts hotkeys ──
+  // One listener with focus guards (useHotkey's contract is a single combo
+  // with no input guards, so it does not fit): `/` focuses search; Ctrl+A
+  // selects every filtered account; Enter opens the launch handoff for the
+  // selection (or, with no selection, launches the account in the detail
+  // panel); Delete runs the bulk delete flow (same ConfirmDialog as the dock);
+  // Esc closes the panel, then clears the selection; ↑/↓ walk the panel through
+  // the visible roster.
+  useEffect(() => {
+    // The router keeps this page mounted after the user leaves it; a parked
+    // roster must not answer keys meant for the page on screen.
+    if (!pageActive) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      // Keys aimed at an open dropdown, menu or dialog belong to it.
+      if (
+        target?.closest?.('[role="combobox"], [role="listbox"], [role="menu"], [role="dialog"]') ||
+        document.querySelector('.modal-backdrop, .command-menu, .rk-cmdk__scrim')
+      ) {
+        return;
+      }
+
+      if (event.key === '/') {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        if (inspectorOpen) {
+          event.preventDefault();
+          closeInspector();
+        } else if (selectionMode) {
+          event.preventDefault();
+          exitSelectionMode();
+        }
+        return;
+      }
+
+      if (inspectorOpen && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+        const step = event.key === 'ArrowDown' ? nextAccount : previousAccount;
+        event.preventDefault();
+        if (step) inspect(step.id);
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        handleSelectAll();
+        return;
+      }
+
+      if (selectedAccounts.length === 0) {
+        if (event.key === 'Enter' && inspectorOpen && focusedAccount && launchOne) {
+          event.preventDefault();
+          launchOne(focusedAccount);
+        }
+        return;
+      }
+
+      if (event.key === 'Enter' && onLaunchSelected) {
+        event.preventDefault();
+        onLaunchSelected(selectedAccounts);
+        return;
+      }
+
+      if (event.key === 'Delete') {
+        event.preventDefault();
+        void handleDeleteSelected();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    pageActive,
+    handleSelectAll,
+    selectedAccounts,
+    onLaunchSelected,
+    handleDeleteSelected,
+    inspectorOpen,
+    closeInspector,
+    selectionMode,
+    exitSelectionMode,
+    nextAccount,
+    previousAccount,
+    inspect,
+    focusedAccount,
+    launchOne,
+  ]);
+
   // ── Pointer-based drag reorder ──
-  // Free "pick up and drop anywhere" reordering: the grabbed card follows the
-  // cursor (a floating clone) while the other cards live-reorder around it, and
-  // the new order is persisted on release. Disabled during selection mode so the
-  // two gestures never conflict.
+  // Free "pick up and drop anywhere" reordering: the grabbed entry follows the
+  // cursor (a floating clone) while the others live-reorder around it, and the
+  // new order is persisted on release. Works identically for a table row and a
+  // grid tile. Disabled during selection mode so the two gestures never
+  // conflict.
   // The two validity modes are stable *sorts*, not simple filters. Allowing a
   // manual cross-group reorder while one is active would make the clone land
   // and then snap back as the sort is reapplied, so keep those views explicitly
@@ -354,6 +600,9 @@ export function Accounts({
   // untouched.
   const handlePointerDown = useCallback(
     (account: Account) => (event: ReactPointerEvent<HTMLDivElement>): void => {
+      // A fresh press starts a fresh gesture: whatever the last one was, the
+      // click that follows this one is the user's, not the drag's.
+      draggedRef.current = false;
       if (!dragEnabled || event.button !== 0) return;
       const target = event.target as HTMLElement;
       // Never hijack a press on an interactive control (launch, menu, checkbox).
@@ -499,6 +748,9 @@ export function Accounts({
       const d = dragRef.current;
       const finalOrder = orderKeysRef.current;
       const wasActive = d?.active ?? false;
+      // Swallow the click this release is about to synthesise, so dropping a
+      // row into a new slot does not also open the panel on it.
+      draggedRef.current = wasActive;
       dragRef.current = null;
       document.body.classList.remove('acc-dragging');
       setDragPending(false);
@@ -643,118 +895,174 @@ export function Accounts({
   ]);
 
   const header = (
-    <div className="acc-header">
-      <div className="acc-header__copy">
-        <span className="acc-eyebrow">{t('accounts.eyebrow')}</span>
-        <h2 className="acc-title">
+    <header className="rk-page__head">
+      <div className="rk-page__titles">
+        <h1>
           {t('accounts.title')}
           {sourceAccounts.length > 0 && (
-            <span className="acc-title__count">{sourceAccounts.length}</span>
+            <span className="acc-title__count u-num">{sourceAccounts.length}</span>
           )}
-        </h2>
-        <p>{t('accounts.subtitle')}</p>
+        </h1>
+        <span className="rk-page__sub">{t('accounts.subtitle')}</span>
       </div>
-      <div className="acc-header__actions">
+      <div className="rk-page__actions">
         {state === 'has-items' && (
-          <button
-            type="button"
-            className={`acc-btn acc-btn--sm${selectionMode ? ' acc-btn--accent' : ''}`}
+          <Button
+            variant={selectionMode ? 'primary' : 'secondary'}
+            size="sm"
             aria-pressed={selectionMode}
+            title={selectionMode ? undefined : t('accounts.selectHint')}
             onClick={handleToggleSelectionMode}
           >
             {selectionMode ? (
-              <X size={16} aria-hidden="true" />
+              <X size={15} aria-hidden="true" />
             ) : (
-              <CheckSquare2 size={16} aria-hidden="true" />
+              <CheckSquare2 size={15} aria-hidden="true" />
             )}
             {selectionMode ? t('accounts.cancelSelection') : t('accounts.select')}
-          </button>
+          </Button>
         )}
         {onAddAccount && (
-          <button type="button" className="acc-btn acc-btn--accent acc-btn--sm" onClick={onAddAccount}>
-            <Plus size={16} aria-hidden="true" />
+          <Button variant="primary" size="sm" onClick={onAddAccount}>
+            <Plus size={16} strokeWidth={2.4} aria-hidden="true" />
             {t('accounts.add')}
-          </button>
+          </Button>
         )}
-        <div className="acc-viewtoggle" role="group" aria-label={t('accounts.viewAria')}>
-          <button
-            type="button"
-            className={view === 'grid' ? 'active' : ''}
-            aria-pressed={view === 'grid'}
-            onClick={() => handleSelectView('grid')}
-          >
-            <Grid2X2 size={15} aria-hidden="true" />
-            {t('accounts.grid')}
-          </button>
-          <button
-            type="button"
-            className={view === 'list' ? 'active' : ''}
-            aria-pressed={view === 'list'}
-            onClick={() => handleSelectView('list')}
-          >
-            <Rows3 size={16} aria-hidden="true" />
-            {t('accounts.list')}
-          </button>
-        </div>
       </div>
-    </div>
+    </header>
   );
 
+  /** An icon-only bulk action; the accessible name comes from `aria-label`. */
   const iconAction = (
     label: string,
     Icon: LucideIcon,
     onClick: () => void,
-    danger = false,
   ): JSX.Element => (
-    <button
-      type="button"
-      className={`acc-selbar__ico${danger ? ' danger' : ''}`}
+    <Button
+      variant="ghost"
+      size="sm"
+      iconOnly
       aria-label={label}
       title={label}
       onClick={onClick}
     >
-      <Icon size={18} aria-hidden="true" />
-    </button>
+      <Icon size={15} aria-hidden="true" />
+    </Button>
   );
 
-  const bulkBar = bulkBarVisible(selectedIds) ? (
-    <div className="acc-selbar" role="toolbar" aria-label={t('accounts.bulkAria')}>
-      <div className="acc-selbar__chip">
-        <span>
-          {selectedIds.size === 1
-            ? t('accounts.oneSelected')
-            : t('accounts.manySelected', { count: selectedIds.size })}
-        </span>
-        <button
-          type="button"
-          className="acc-selbar__x"
-          aria-label={t('accounts.clearSelection')}
-          title={t('accounts.clearSelection')}
-          onClick={handleClearSelection}
+  /**
+   * A bulk action whose tooltip names the keyboard binding it already has.
+   * `aria-label` supplies the whole accessible name, so "Select all" stays
+   * "Select all".
+   */
+  const boundAction = (
+    label: string,
+    Icon: LucideIcon,
+    cap: string,
+    onClick: () => void,
+    variant: 'ghost' | 'danger' = 'ghost',
+  ): JSX.Element => (
+    <Button
+      variant={variant}
+      size="sm"
+      iconOnly
+      aria-label={label}
+      title={`${label} · ${cap}`}
+      onClick={onClick}
+    >
+      <Icon size={15} aria-hidden="true" />
+    </Button>
+  );
+
+  // The selection dock floats over the bottom of the roster: stacked faces of
+  // what is selected, the count, and every bulk verb. It only animates in —
+  // removal is immediate, so clearing a selection never leaves a ghost toolbar
+  // around for a frame of exit animation.
+  const dockVisible = bulkBarVisible(selectedIds);
+  const dockFaces = selectedAccounts.slice(0, 4);
+  const bulkBar = dockVisible ? (
+    <motion.div
+      className="acc-dock"
+      role="toolbar"
+      aria-label={t('accounts.bulkAria')}
+      initial={reducedMotion ? false : { opacity: 0, y: 18, scale: 0.97 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={
+        reducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 520, damping: 36, mass: 0.7 }
+      }
+    >
+      <span className="acc-dock__faces" aria-hidden="true">
+        {dockFaces.map((account) => {
+          const url = avatarUrls?.[account.id];
+          return (
+            <span
+              key={keyFor(account)}
+              className="acc-dock__face acc-avatar"
+              style={identityStyle(account.userId || account.id)}
+            >
+              {url ? <img src={url} alt="" /> : (displayName(account)[0] ?? '?').toUpperCase()}
+            </span>
+          );
+        })}
+        {selectedAccounts.length > dockFaces.length ? (
+          <span className="acc-dock__face acc-dock__face--more u-num">
+            +{selectedAccounts.length - dockFaces.length}
+          </span>
+        ) : null}
+      </span>
+      <span className="acc-dock__count">
+        {selectedIds.size === 1
+          ? t('accounts.oneSelected')
+          : t('accounts.manySelected', { count: selectedIds.size })}
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        iconOnly
+        aria-label={t('accounts.clearSelection')}
+        title={`${t('accounts.clearSelection')} · Esc`}
+        onClick={handleClearSelection}
+      >
+        <X size={14} aria-hidden="true" />
+      </Button>
+
+      <span className="acc-dock__div" aria-hidden="true" />
+
+      {onLaunchSelected && (
+        <Button
+          variant="primary"
+          size="sm"
+          aria-label={t('accounts.launch')}
+          title={`${t('accounts.launch')} · Enter`}
+          onClick={() => runBulk(onLaunchSelected)}
         >
-          <X size={15} aria-hidden="true" />
-        </button>
-      </div>
-
-      <span className="acc-selbar__div" aria-hidden="true" />
-
-      {onLaunchSelected && iconAction(t('accounts.launch'), CirclePlay, () => runBulk(onLaunchSelected))}
+          <CirclePlay size={15} aria-hidden="true" />
+          {t('accounts.launch')}
+        </Button>
+      )}
       {onKillSelected && iconAction(t('accounts.stop'), Square, () => runBulk(onKillSelected))}
       {onFriendRequestSelected &&
         iconAction(t('accounts.sendFriendRequest'), UserPlus, () =>
           runBulk(onFriendRequestSelected),
         )}
-      {onNotesSelected && iconAction(t('accounts.addNotes'), StickyNote, () => runBulk(onNotesSelected))}
+      {onNotesSelected &&
+        iconAction(t('accounts.addNotes'), StickyNote, () => runBulk(onNotesSelected))}
       {onCopyCookiesSelected &&
         iconAction(t('accounts.copyCookies'), Cookie, () => runBulk(onCopyCookiesSelected))}
       {onOpenBrowsersSelected &&
         iconAction(t('accounts.openBrowsers'), Globe2, () => runBulk(onOpenBrowsersSelected))}
 
-      <span className="acc-selbar__div" aria-hidden="true" />
+      <span className="acc-dock__div" aria-hidden="true" />
 
-      {iconAction(t('accounts.selectAll'), ListChecks, handleSelectAll)}
-      {iconAction(t('accounts.deleteSelected'), Trash2, () => void handleDeleteSelected(), true)}
-    </div>
+      {boundAction(t('accounts.selectAll'), ListChecks, 'Ctrl+A', handleSelectAll)}
+      {boundAction(
+        t('accounts.deleteSelected'),
+        Trash2,
+        t('accounts.keyDelete'),
+        () => void handleDeleteSelected(),
+        'danger',
+      )}
+    </motion.div>
   ) : null;
 
   const confirmDialogElement = (
@@ -770,177 +1078,337 @@ export function Accounts({
   );
 
   const toolbar = (
-    <div className="acc-toolbar">
-      <div className="acc-search">
-        <Search className="acc-search__icon" size={17} aria-hidden="true" />
+    <div className="rk-toolbar acc-toolbar">
+      <div className="rk-search acc-search">
+        <Search className="acc-search__icon" size={15} aria-hidden="true" />
         <input
+          ref={searchInputRef}
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t('accounts.searchPlaceholder')}
           aria-label={t('accounts.searchAria')}
         />
-        <AnimatePresence initial={false}>
-          {query ? (
-            <motion.button
-              key="clear-account-query"
-              type="button"
-              className="acc-search__clear"
-              aria-label={t('accounts.clearSearch')}
-              title={t('accounts.clearSearch')}
-              initial={reducedMotion ? false : { opacity: 0, scale: 0.72 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: reducedMotion ? 1 : 0.72 }}
-              transition={
-                reducedMotion
-                  ? { duration: 0 }
-                  : { type: 'spring', stiffness: 560, damping: 34, mass: 0.44 }
-              }
-              onClick={() => setQuery('')}
-              whileTap={reducedMotion ? undefined : { scale: 0.9 }}
-            >
-              <X size={12} strokeWidth={2.35} aria-hidden="true" />
-            </motion.button>
-          ) : null}
-        </AnimatePresence>
+        {/* The clear button and the `/` keycap share one box, so revealing one
+            never nudges the field's contents. */}
+        <span className="acc-search__tail">
+          <AnimatePresence initial={false}>
+            {query ? (
+              <motion.button
+                key="clear-account-query"
+                type="button"
+                className="acc-search__clear"
+                aria-label={t('accounts.clearSearch')}
+                title={t('accounts.clearSearch')}
+                initial={reducedMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: reducedMotion ? 0 : 0.08 }}
+                onClick={() => setQuery('')}
+                whileTap={{ opacity: 0.82 }}
+              >
+                <X size={12} strokeWidth={2.35} aria-hidden="true" />
+              </motion.button>
+            ) : null}
+          </AnimatePresence>
+          {query ? null : (
+            <kbd className="rk-key" aria-hidden="true" title={t('accounts.searchAria')}>
+              /
+            </kbd>
+          )}
+        </span>
         <motion.span
-          className="acc-search__count"
+          className="acc-search__count u-num"
           aria-hidden="true"
-          title={t('accounts.visibleOf', { visible: visibleAccounts.length, total: sourceAccounts.length })}
+          title={t('accounts.visibleOf', {
+            visible: visibleAccounts.length,
+            total: sourceAccounts.length,
+          })}
           key={`${visibleAccounts.length}-${sourceAccounts.length}`}
-          initial={reducedMotion ? false : { opacity: 0.55, y: 2 }}
+          initial={reducedMotion ? false : { opacity: 0.55, y: -4 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: reducedMotion ? 0 : 0.16 }}
+          transition={{ duration: reducedMotion ? 0 : 0.15 }}
         >
           {visibleAccounts.length}/{sourceAccounts.length}
         </motion.span>
         <span className="sr-only" aria-live="polite" aria-atomic="true">
-          {t('accounts.visibleOf', { visible: visibleAccounts.length, total: sourceAccounts.length })}
+          {t('accounts.visibleOf', {
+            visible: visibleAccounts.length,
+            total: sourceAccounts.length,
+          })}
         </span>
       </div>
-      <div className="acc-filter">
-        <ListFilter className="acc-filter__icon" size={16} aria-hidden="true" />
-        <Dropdown
-          options={filterOptions}
-          value={filter}
-          onChange={handleSelectFilter}
-          aria-label={t('accounts.filterAria')}
-        />
+      <Dropdown
+        options={filterOptions}
+        value={filter}
+        onChange={handleSelectFilter}
+        aria-label={t('accounts.filterAria')}
+        icon={<ListFilter size={15} />}
+      />
+      <Dropdown
+        options={sortOptions}
+        value={sort}
+        onChange={handleSelectSort}
+        aria-label={t('accounts.sortAria')}
+        icon={<ArrowDownUp size={15} />}
+      />
+      <span className="rk-toolbar__spacer" />
+      {view === 'list' ? (
+        <button
+          type="button"
+          className="acc-density"
+          aria-pressed={density === 'compact'}
+          aria-label={t('accounts.density.compact')}
+          title={t('accounts.density.compact')}
+          onClick={() => setDensity(density === 'compact' ? 'comfortable' : 'compact')}
+        >
+          <Rows4 size={16} aria-hidden="true" />
+        </button>
+      ) : null}
+      <div className="rk-seg acc-viewtoggle" role="group" aria-label={t('accounts.viewAria')}>
+        <button
+          type="button"
+          className={view === 'list' ? 'active' : ''}
+          aria-pressed={view === 'list'}
+          onClick={() => handleSelectView('list')}
+          title={t('accounts.list')}
+        >
+          <Rows3 size={14} aria-hidden="true" />
+          <span className="acc-viewtoggle__label">{t('accounts.list')}</span>
+        </button>
+        <button
+          type="button"
+          className={view === 'grid' ? 'active' : ''}
+          aria-pressed={view === 'grid'}
+          onClick={() => handleSelectView('grid')}
+          title={t('accounts.grid')}
+        >
+          <Grid2X2 size={14} aria-hidden="true" />
+          <span className="acc-viewtoggle__label">{t('accounts.grid')}</span>
+        </button>
       </div>
     </div>
   );
 
   if (state === 'empty') {
     return (
-      <div className="acc-page">
+      <div className="rk-page acc-page acc-page--flat">
         {header}
-        <EmptyState
-          message={t('accounts.emptyMessage')}
-          actionLabel={onAddAccount ? t('accounts.addAccount') : undefined}
-          onAction={onAddAccount}
-        />
+        <div className="rk-page__body">
+          <EmptyState
+            icon={<UserPlus size={22} />}
+            title={t('accounts.emptyTitle')}
+            message={t('accounts.emptyMessage')}
+            actionLabel={onAddAccount ? t('accounts.addAccount') : undefined}
+            actionVariant="primary"
+            onAction={onAddAccount}
+          />
+        </div>
       </div>
     );
   }
 
   if (state === 'no-results') {
     return (
-      <div className="acc-page">
+      <div className="rk-page acc-page">
         {header}
-        {toolbar}
-        <EmptyState message={t('accounts.noResults')} />
+        <div className="acc-toolstack">{toolbar}</div>
+        <div className="rk-page__body">
+          <EmptyState
+            icon={<Search size={22} />}
+            message={t('accounts.noResults')}
+            actionLabel={t('accounts.clearFilters')}
+            onAction={() => {
+              setQuery('');
+              handleSelectFilter('all');
+            }}
+          />
+        </div>
       </div>
     );
   }
 
+  const entries = (
+    <AnimatePresence initial={false} mode="popLayout">
+      {displayAccounts.map((account) => {
+        const selKey = keyFor(account);
+        const isDragging = dragKey === selKey;
+        const wrapClasses = [
+          'acc-cardwrap',
+          view === 'list' ? 'acc-cardwrap--row' : '',
+          dragEnabled ? 'draggable' : '',
+          reorderLockedByFilter ? 'sort-locked' : '',
+          isDragging ? 'dragging' : '',
+          dragSettling && isDragging ? 'settling' : '',
+        ]
+          .filter(Boolean)
+          .join(' ');
+        return (
+          <motion.div
+            layout={reducedMotion ? false : 'position'}
+            layoutId={`account-${selKey}`}
+            initial={reducedMotion ? false : { opacity: 0, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{
+              layout: reducedMotion
+                ? { duration: 0 }
+                : { type: 'spring', stiffness: 430, damping: 38, mass: 0.72 },
+              opacity: { duration: reducedMotion ? 0 : 0.15 },
+              y: reducedMotion ? { duration: 0 } : { duration: 0.15 },
+            }}
+            key={selKey}
+            data-selkey={selKey}
+            className={wrapClasses}
+            role="listitem"
+            aria-roledescription={
+              reorderLockedByFilter
+                ? t('accounts.drag.autoOrder')
+                : t('accounts.drag.reorderable')
+            }
+            title={reorderLockedByFilter ? t('accounts.drag.lockedTitle') : undefined}
+            style={{
+              ...(isDragging && dragSize.h > 0 ? { height: dragSize.h } : {}),
+            }}
+            draggable={false}
+            onPointerDown={dragEnabled ? handlePointerDown(account) : undefined}
+            onClickCapture={(event) => {
+              // Ctrl/⌘+click starts (or extends) a selection straight from the
+              // roster, the way file lists work, without hunting for "Select".
+              if (selectionMode || !(event.ctrlKey || event.metaKey)) return;
+              if ((event.target as HTMLElement).closest('button, a, input')) return;
+              event.preventDefault();
+              event.stopPropagation();
+              setSelectionMode(true);
+              setSelectedIds((current) => toggleSelection(current, selKey));
+            }}
+          >
+            {isDragging ? (
+              <motion.div
+                className="acc-drop-slot"
+                initial={reducedMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: reducedMotion ? 0 : 0.15 }}
+              >
+                <span className="acc-drop-slot__icon">
+                  <GripVertical size={14} aria-hidden="true" />
+                </span>
+                <span>
+                  <strong>
+                    {dragSettling
+                      ? t('accounts.drag.settling')
+                      : t('accounts.drag.newPosition')}
+                  </strong>
+                  <small>
+                    {dragSettling ? t('accounts.drag.done') : t('accounts.drag.release')}
+                  </small>
+                </span>
+              </motion.div>
+            ) : (
+              <AccountCardMenu
+                account={account}
+                avatarUrl={avatarUrls?.[account.id]}
+                view={view}
+                selected={selectionMode ? selectedIds.has(selKey) : undefined}
+                onSelectToggle={selectionMode ? () => handleToggleCard(selKey) : undefined}
+                /* In selection mode a plain click toggles the checkbox (the
+                   presentation handles that); outside it, it inspects. */
+                onClick={handleInspect(account)}
+                {...cardActions}
+              />
+            )}
+          </motion.div>
+        );
+      })}
+    </AnimatePresence>
+  );
+
   return (
-    <div className="acc-page">
+    <div
+      className="rk-page acc-page"
+      ref={measurePage}
+      data-density={view === 'list' ? density : undefined}
+      data-docked={dockVisible ? 'true' : undefined}
+    >
       {header}
-      {toolbar}
-      {bulkBar}
-      <div className="acc-scroll">
-        <div className={`acc-grid${view === 'list' ? ' list' : ''}`} role="list">
-          <AnimatePresence initial={false} mode="popLayout">
-            {displayAccounts.map((account) => {
-              const selKey = keyFor(account);
-              const isDragging = dragKey === selKey;
-              const wrapClasses = [
-                'acc-cardwrap',
-                dragEnabled ? 'draggable' : '',
-                reorderLockedByFilter ? 'sort-locked' : '',
-                isDragging ? 'dragging' : '',
-                dragSettling && isDragging ? 'settling' : '',
-              ]
-                .filter(Boolean)
-                .join(' ');
-              return (
-                <motion.div
-                  layout={reducedMotion ? false : 'position'}
-                  layoutId={`account-${selKey}`}
-                  initial={reducedMotion ? false : { opacity: 0, y: 7, scale: 0.988 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{
-                    layout: reducedMotion
-                      ? { duration: 0 }
-                      : { type: 'spring', stiffness: 430, damping: 38, mass: 0.72 },
-                    opacity: { duration: reducedMotion ? 0 : 0.16 },
-                    y: reducedMotion
-                      ? { duration: 0 }
-                      : { type: 'spring', stiffness: 500, damping: 38, mass: 0.62 },
-                    scale: reducedMotion
-                      ? { duration: 0 }
-                      : { type: 'spring', stiffness: 500, damping: 38, mass: 0.62 },
-                  }}
-                  key={selKey}
-                  data-selkey={selKey}
-                  className={wrapClasses}
-                  role="listitem"
-                  aria-roledescription={
-                    reorderLockedByFilter
-                      ? t('accounts.drag.autoOrder')
-                      : t('accounts.drag.reorderable')
-                  }
-                  title={
-                    reorderLockedByFilter
-                      ? t('accounts.drag.lockedTitle')
-                      : undefined
-                  }
-                  style={{
-                    ...(isDragging && dragSize.h > 0 ? { height: dragSize.h } : {}),
-                  }}
-                  draggable={false}
-                  onPointerDown={dragEnabled ? handlePointerDown(account) : undefined}
-                >
-                  {isDragging ? (
-                    <motion.div
-                      className="acc-drop-slot"
-                      initial={reducedMotion ? false : { opacity: 0, scale: 0.96 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ duration: reducedMotion ? 0 : 0.16 }}
-                    >
-                      <span className="acc-drop-slot__icon">
-                        <GripVertical size={17} aria-hidden="true" />
-                      </span>
-                      <span>
-                        <strong>{dragSettling ? t('accounts.drag.settling') : t('accounts.drag.newPosition')}</strong>
-                        <small>{dragSettling ? t('accounts.drag.done') : t('accounts.drag.release')}</small>
-                      </span>
-                    </motion.div>
-                  ) : (
-                    <AccountCardMenu
-                      account={account}
-                      avatarUrl={avatarUrls?.[account.id]}
-                      selected={selectionMode ? selectedIds.has(selKey) : undefined}
-                      onSelectToggle={selectionMode ? () => handleToggleCard(selKey) : undefined}
-                      {...cardActions}
-                    />
-                  )}
-                </motion.div>
-              );
-            })}
-          </AnimatePresence>
+      <div className="acc-toolstack">{toolbar}</div>
+
+      {/*
+       * The split. With the panel closed this is the page's single scroll port
+       * exactly as before; with it open the port stops scrolling and hands the
+       * job to the two columns, so a long note never drags the roster with it.
+       */}
+      <div className="rk-page__body acc-body" data-split={inspectorSplit ? 'true' : undefined}>
+        <div className="acc-roster">
+          {view === 'list' ? (
+            <div className="rk-table acc-table">
+              <div className="rk-table__head">
+                <span>{t('accounts.col.account')}</span>
+                <span>{t('accounts.col.status')}</span>
+                <span>{t('accounts.col.activity')}</span>
+                <span className="acc-table__head-actions">{t('contextmenu.actions')}</span>
+              </div>
+              <div className="acc-table__rows" role="list">
+                {entries}
+              </div>
+            </div>
+          ) : (
+            <div className="rk-grid acc-grid" role="list">
+              {entries}
+            </div>
+          )}
         </div>
+
+        {inspectorSplit && (
+          <AccountInspector
+            mode="split"
+            account={focusedAccount}
+            avatarUrl={focusedAccount ? avatarUrls?.[focusedAccount.id] : undefined}
+            onClose={closeInspector}
+            onPrev={previousAccount ? () => inspect(previousAccount.id) : undefined}
+            onNext={nextAccount ? () => inspect(nextAccount.id) : undefined}
+            actions={cardActions}
+          />
+        )}
       </div>
+
+      {bulkBar}
+
+      {/* Narrow pages float the panel over the roster as a sheet. */}
+      <AnimatePresence>
+        {inspectorOverlay ? (
+          <motion.div
+            key="acc-sheet"
+            className="acc-sheet"
+            initial={reducedMotion ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0, transition: { duration: reducedMotion ? 0 : 0.16 } }}
+            transition={{ duration: reducedMotion ? 0 : 0.18 }}
+          >
+            <div className="acc-sheet__scrim" onClick={closeInspector} aria-hidden="true" />
+            <motion.div
+              className="acc-sheet__panel"
+              initial={reducedMotion ? false : { x: 36 }}
+              animate={{ x: 0 }}
+              exit={reducedMotion ? undefined : { x: 28 }}
+              transition={
+                reducedMotion
+                  ? { duration: 0 }
+                  : { type: 'spring', stiffness: 460, damping: 40, mass: 0.8 }
+              }
+            >
+              <AccountInspector
+                mode="overlay"
+                account={focusedAccount}
+                avatarUrl={focusedAccount ? avatarUrls?.[focusedAccount.id] : undefined}
+                onClose={closeInspector}
+                onPrev={previousAccount ? () => inspect(previousAccount.id) : undefined}
+                onNext={nextAccount ? () => inspect(nextAccount.id) : undefined}
+                actions={cardActions}
+              />
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       {/*
        * Keep the floating card outside every transformed page/layout ancestor.
@@ -953,29 +1421,18 @@ export function Accounts({
             {draggedAccount && (
               <motion.div
                 key={`drag-${dragKey}`}
-                className={`acc-drag-clone${dragSettling ? ' settling' : ''}`}
+                className={`acc-drag-clone${view === 'list' ? ' acc-drag-clone--row' : ''}${
+                  dragSettling ? ' settling' : ''
+                }`}
                 aria-hidden="true"
-                initial={reducedMotion ? false : { opacity: 0, scale: 0.985, rotate: 0 }}
-                animate={{
-                  opacity: dragSettling ? 0.88 : 1,
-                  scale: dragSettling ? 1 : 1.018,
-                  rotate: dragSettling ? 0 : 0.35,
-                }}
+                initial={reducedMotion ? false : { opacity: 0 }}
+                animate={{ opacity: dragSettling ? 0.9 : 1 }}
                 exit={
                   reducedMotion
                     ? undefined
-                    : {
-                        opacity: 0,
-                        scale: 0.995,
-                        rotate: 0,
-                        transition: { duration: 0.12, ease: [0.4, 0, 1, 1] },
-                      }
+                    : { opacity: 0, transition: { duration: 0.12, ease: [0.4, 0, 1, 1] } }
                 }
-                transition={
-                  reducedMotion
-                    ? { duration: 0 }
-                    : { type: 'spring', stiffness: 420, damping: 32, mass: 0.72 }
-                }
+                transition={{ duration: reducedMotion ? 0 : 0.15 }}
                 style={{
                   x: cloneX,
                   y: cloneY,
@@ -983,14 +1440,29 @@ export function Accounts({
                   height: dragSize.h,
                 }}
               >
-                <div className="acc-drag-grip" aria-hidden="true">
-                  <GripVertical size={15} />
-                  <span>{dragSettling ? 'Colocando' : 'Moviendo'}</span>
-                </div>
-                <AccountCard
-                  account={draggedAccount}
-                  avatarUrl={avatarUrls?.[draggedAccount.id]}
-                />
+                <span className="acc-drag-grip" aria-hidden="true">
+                  <GripVertical size={13} />
+                  {dragSettling ? t('accounts.drag.settling') : null}
+                </span>
+                {/*
+                 * The clone is a second rendering of an entry the roster is
+                 * already showing, so it must not claim the account's shared
+                 * identity tile — two elements carrying one `layoutId` fight
+                 * over it, and the clone would drag the panel's avatar with it.
+                 */}
+                {view === 'list' ? (
+                  <AccountRow
+                    account={draggedAccount}
+                    avatarUrl={avatarUrls?.[draggedAccount.id]}
+                    sharedIdentity={false}
+                  />
+                ) : (
+                  <AccountCard
+                    account={draggedAccount}
+                    avatarUrl={avatarUrls?.[draggedAccount.id]}
+                    sharedIdentity={false}
+                  />
+                )}
               </motion.div>
             )}
           </AnimatePresence>,

@@ -26,7 +26,7 @@
  *          state distinct from the empty state (8.6).
  */
 
-import type { Account, AccountFilter, AccountsView } from '../types/models';
+import type { Account, AccountFilter, AccountSort, AccountsView } from '../types/models';
 import {
   PERSISTENCE_KEYS,
   getPersisted,
@@ -268,9 +268,68 @@ export function resolveInitialFilter(): AccountFilter {
  * @param filter - The filter the user selected.
  */
 export function setFilter(filter: AccountFilter): void {
+
   if (filter === 'all') {
     removePersisted(PERSISTENCE_KEYS.filter);
     return;
   }
   setPersisted(PERSISTENCE_KEYS.filter, filter);
+}
+/** The three valid account orderings. */
+export const ACCOUNT_SORTS: readonly AccountSort[] = ['manual', 'name', 'lastUsed'];
+
+/**
+ * Type guard: whether a value is one of the valid account orderings.
+ *
+ * @param value - Raw value read back from persistence.
+ */
+export function isAccountSort(value: unknown): value is AccountSort {
+  return typeof value === 'string' && (ACCOUNT_SORTS as readonly string[]).includes(value);
+}
+
+/**
+ * Resolves the initial accounts ordering from local storage, falling back to
+ * `manual` (the backend order) when nothing valid is persisted.
+ */
+export function resolveInitialSort(): AccountSort {
+  const stored = getPersisted<unknown>(PERSISTENCE_KEYS.accountsSort);
+  return isAccountSort(stored) ? stored : 'manual';
+}
+
+/**
+ * Persists the selected accounts ordering to local storage.
+ *
+ * @param sort - The ordering the user selected.
+ */
+export function setSort(sort: AccountSort): void {
+  setPersisted(PERSISTENCE_KEYS.accountsSort, sort);
+}
+
+/**
+ * Orders accounts for display. Pure: returns a fresh array, never mutates
+ * `accounts`.
+ *
+ * - `manual` → the store's current order untouched (drag-reorder).
+ * - `name` → case-insensitive `localeCompare` of the card's display name.
+ * - `lastUsed` → most recent first; never-used accounts (`null`) last.
+ *
+ * @param accounts - The accounts to order.
+ * @param sort - The selected ordering.
+ */
+export function sortAccounts(accounts: Account[], sort: AccountSort): Account[] {
+  if (sort === 'manual') {
+    return [...accounts];
+  }
+
+  const sorted = [...accounts];
+  if (sort === 'name') {
+    sorted.sort((a, b) => displayName(a).localeCompare(displayName(b), undefined, { sensitivity: 'base' }));
+    return sorted;
+  }
+
+  // `lastUsed`: descending by timestamp, nulls (never used) at the end.
+  const stamp = (value: string | null): number =>
+    value === null ? Number.NEGATIVE_INFINITY : new Date(value).getTime();
+  sorted.sort((a, b) => stamp(b.lastUsed) - stamp(a.lastUsed));
+  return sorted;
 }

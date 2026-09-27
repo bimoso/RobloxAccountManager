@@ -164,7 +164,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           $requiredFiles = @(
-            'dist/RobloxAccountManager.exe',
+            'dist/RAM.exe',
             'dist/RobloxNative.exe',
             'dist/RobloxNative.cs'
           )
@@ -177,7 +177,7 @@ jobs:
             }
           }
 
-          $bundleName = "RobloxAccountManager-$env:RELEASE_TAG-windows-x64"
+          $bundleName = "RAM-$env:RELEASE_TAG-windows-x64"
           $releaseDir = 'release'
           $bundleDir = Join-Path $releaseDir $bundleName
           New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
@@ -232,16 +232,16 @@ jobs:
           RELEASE_TAG: ${{ needs.build.outputs.tag }}
           RELEASE_PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: |
-          archive="release/RobloxAccountManager-${RELEASE_TAG}-windows-x64.zip"
+          archive="release/RAM-${RELEASE_TAG}-windows-x64.zip"
           checksums="release/SHA256SUMS.txt"
-          notes="Portable Windows x64 build. Extract the complete ZIP and keep RobloxAccountManager.exe, RobloxNative.exe, and RobloxNative.cs together."
+          notes="RAM (Roblox Account Manager) portable Windows x64 build. Extract the complete ZIP and keep RAM.exe, RobloxNative.exe, and RobloxNative.cs together."
 
           arguments=(
             release create "$RELEASE_TAG"
             "$archive" "$checksums"
             --repo "$GITHUB_REPOSITORY"
             --target "$GITHUB_SHA"
-            --title "RobloxAccountManager $RELEASE_TAG"
+            --title "RAM $RELEASE_TAG"
             --generate-notes
             --notes "$notes"
           )

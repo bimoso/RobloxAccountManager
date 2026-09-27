@@ -1,42 +1,55 @@
+/* ============================================================================
+ * Dropdown — the compact listbox.
+ *
+ * The trigger is the shared field recipe (--row tall, --r radius, a soft inset
+ * hairline on --field) so a filter sits on the same line as the inputs beside
+ * it. The popup floats: frosted card, --r-lg radius, rows at --row-sm.
+ * ==========================================================================*/
+
 .ui-dropdown {
   width: 100%;
   min-width: 0;
 }
 
 .ui-dropdown__trigger {
-  width: 100%;
-  min-height: 42px;
   display: flex;
+  width: 100%;
+  height: var(--row);
   align-items: center;
-  gap: 8px;
-  padding: 0 11px 0 12px;
-  border: 1px solid color-mix(in srgb, var(--bd2) 86%, transparent);
-  border-radius: 12px;
-  background:
-    linear-gradient(135deg, color-mix(in srgb, white 4%, transparent), transparent 48%),
-    color-mix(in srgb, var(--s2) 88%, transparent);
-  color: var(--t2);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
+  gap: var(--sp-2);
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  border: 0;
+  border-radius: var(--r);
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--t1);
   font: inherit;
-  font-size: 12px;
-  font-weight: 610;
+  font-size: var(--fs-md);
+  font-weight: var(--w-medium);
   text-align: left;
   cursor: pointer;
-  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+  transition:
+    box-shadow var(--dur-quick) var(--ease-out),
+    background-color var(--dur-quick) var(--ease-out),
+    color var(--dur-quick) var(--ease-out);
 }
 
-.ui-dropdown__trigger:hover,
+.ui-dropdown__trigger:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
 .ui-dropdown__trigger[aria-expanded='true'] {
-  border-color: color-mix(in srgb, var(--ac) 56%, var(--bd2));
-  background-color: color-mix(in srgb, var(--ac) 5%, var(--s2));
-  color: var(--t1);
+  background: var(--card);
+  box-shadow:
+    inset 0 0 0 1px var(--ac3),
+    var(--focus-ring);
 }
 
 .ui-dropdown__trigger:focus-visible {
   outline: 0;
   box-shadow:
-    0 0 0 3px var(--ring, var(--ac2)),
-    inset 0 1px 0 color-mix(in srgb, white 7%, transparent);
+    inset 0 0 0 1px var(--ac3),
+    var(--focus-ring);
 }
 
 .ui-dropdown__trigger:disabled {
@@ -52,35 +65,42 @@
   white-space: nowrap;
 }
 
+.ui-dropdown__trigger.has-icon {
+  padding-left: 10px;
+}
+
+.ui-dropdown__icon {
+  display: grid;
+  flex: 0 0 auto;
+  color: var(--t3);
+  place-items: center;
+}
+
 .ui-dropdown__chevrons {
   flex: 0 0 auto;
   color: var(--t3);
-  transition: color 150ms ease, transform 220ms var(--spring);
+  transition: color var(--dur-quick) var(--ease-out);
 }
 
 .ui-dropdown__trigger[aria-expanded='true'] .ui-dropdown__chevrons {
-  color: var(--acB);
-  transform: rotate(180deg);
+  color: var(--ac-text);
 }
 
 .ui-dropdown__menu {
   position: fixed;
-  z-index: 1120;
-  max-height: min(292px, calc(100vh - 16px));
+  z-index: var(--z-dropdown);
+  max-height: min(300px, calc(100vh - var(--sp-4)));
   overflow: auto;
-  padding: 4px;
-  border: 1px solid color-mix(in srgb, var(--bd2) 80%, transparent);
-  border-radius: 12px;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--glass-hi) 20%, transparent), transparent 40%),
-    color-mix(in srgb, var(--glass-shell, var(--s1)) 95%, var(--bg));
+  padding: 5px;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--glass-hi) 72%, transparent),
-    0 20px 44px -20px rgba(0, 0, 0, 0.82);
-  -webkit-backdrop-filter: blur(22px) saturate(145%);
-  backdrop-filter: blur(22px) saturate(145%);
+    inset 0 0 0 1px var(--line-strong),
+    var(--elev-2);
   outline: 0;
   transform-origin: top center;
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
 }
 
 .ui-dropdown__menu[data-open-above='true'] {
@@ -88,22 +108,24 @@
 }
 
 .ui-dropdown__option {
-  width: 100%;
-  height: 32px;
   display: flex;
+  width: 100%;
+  height: var(--row-sm);
   align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 10px;
+  gap: var(--sp-2);
+  padding: 0 6px 0 10px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--t2);
   font: inherit;
-  font-size: 11px;
-  font-weight: 560;
+  font-size: var(--fs-md);
+  font-weight: var(--w-medium);
   text-align: left;
   cursor: pointer;
-  transition: color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+  transition:
+    color var(--dur-micro) var(--ease-out),
+    background-color var(--dur-micro) var(--ease-out);
 }
 
 .ui-dropdown__option > span:first-child {
@@ -115,13 +137,12 @@
 }
 
 .ui-dropdown__option.is-active {
-  background: color-mix(in srgb, var(--s3) 72%, transparent);
+  background: var(--hover-fill);
   color: var(--t1);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bd2) 44%, transparent);
 }
 
 .ui-dropdown__option.is-selected {
-  color: color-mix(in srgb, var(--acB) 78%, white);
+  color: var(--t1);
 }
 
 .ui-dropdown__option:disabled {
@@ -130,21 +151,13 @@
 }
 
 .ui-dropdown__check {
+  display: inline-flex;
   width: 20px;
   height: 20px;
-  display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  background: color-mix(in srgb, var(--ac) 15%, transparent);
-  color: var(--acB);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ui-dropdown__trigger,
-  .ui-dropdown__chevrons,
-  .ui-dropdown__option {
-    transition: none;
-  }
+  background: var(--ac2);
+  color: var(--ac-text);
 }

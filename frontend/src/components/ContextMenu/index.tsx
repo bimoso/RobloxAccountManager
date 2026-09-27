@@ -62,6 +62,11 @@ export interface ContextMenuProps {
   subtitle?: string;
   /** Small uppercase context label above the title. */
   eyebrow?: string;
+  /**
+   * Label for the dense utility rail (the grouped copy actions). Supplied by
+   * the caller so it can be translated; defaults to the historical literal.
+   */
+  compactSectionLabel?: string;
 }
 
 /** Item paired with its position in the original flat command list. */
@@ -106,7 +111,8 @@ export function ContextMenu({
   onClose,
   title,
   subtitle,
-  eyebrow = 'Comandos',
+  eyebrow,
+  compactSectionLabel = 'Copiar',
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -280,17 +286,12 @@ export function ContextMenu({
       aria-label={title ? t('contextmenu.actionsFor', { title }) : t('contextmenu.actions')}
       className="command-menu"
       data-context-menu-portal="true"
-      initial={reducedMotion ? false : { opacity: 0, scale: 0.975, y: -2 }}
+      initial={reducedMotion ? false : { opacity: 0, scale: 0.985, y: -6 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={
         reducedMotion
           ? { opacity: 0, transition: { duration: 0 } }
-          : {
-              opacity: 0,
-              scale: 0.985,
-              y: -1,
-              transition: { duration: 0.1, ease: [0.4, 0, 1, 1] },
-            }
+          : { opacity: 0, transition: { duration: 0.1, ease: [0.4, 0, 1, 1] } }
       }
       aria-hidden={isPresent ? undefined : true}
       transition={
@@ -308,11 +309,11 @@ export function ContextMenu({
       {(title || subtitle) && (
         <div className="command-menu__header">
           <div className="command-menu__heading">
-            <span className="command-menu__eyebrow">{eyebrow}</span>
+            <span className="command-menu__eyebrow">{eyebrow ?? t('contextmenu.actions')}</span>
             {title && <strong title={title}>{title}</strong>}
             {subtitle && <span className="command-menu__subtitle" title={subtitle}>{subtitle}</span>}
           </div>
-          <kbd aria-label={t('contextmenu.escClose')}>ESC</kbd>
+          <kbd className="rk-key" aria-label={t('contextmenu.escClose')}>ESC</kbd>
         </div>
       )}
 
@@ -326,7 +327,9 @@ export function ContextMenu({
               role="none"
               data-section={section.id}
             >
-              {compact && <span className="command-menu__section-label">Copiar</span>}
+              {compact && (
+                <span className="command-menu__section-label">{compactSectionLabel}</span>
+              )}
               <div className={compact ? 'command-menu__utilities' : 'command-menu__rows'} role="none">
                 {section.items.map(({ item, index }) => {
                   const Icon = item.icon;
@@ -346,8 +349,8 @@ export function ContextMenu({
                       ].filter(Boolean).join(' ')}
                       disabled={item.disabled}
                       onClick={() => handleSelect(item)}
-                      whileTap={reducedMotion || item.disabled ? undefined : { scale: 0.975 }}
-                      transition={{ type: 'spring', stiffness: 560, damping: 38, mass: 0.48 }}
+                      whileTap={item.disabled ? undefined : { opacity: 0.82 }}
+                      transition={{ duration: reducedMotion ? 0 : 0.08 }}
                     >
                       {Icon && <Icon size={compact ? 14 : 15} strokeWidth={2} aria-hidden="true" />}
                       <span>{compact ? item.shortLabel ?? item.label : item.label}</span>

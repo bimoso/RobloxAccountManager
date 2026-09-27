@@ -2952,6 +2952,70 @@ pub fn copy_account_cookie_with(
     CopyCookieResult::ok()
 }
 
+/// The result of [`copy_cookies_bulk_with`] — the bulk sibling of
+/// [`CopyCookieResult`]. `failed_ids` names every requested id whose cookie
+/// could not be included (unknown id, empty cookie, or a failed clipboard
+/// round-trip) so the Renderer_UI can report exactly which accounts to retry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CopyCookiesBulkResult {
+    pub total: usize,
+    pub copied: usize,
+    pub failed_ids: Vec<String>,
+}
+
+/// Bulk Copy-Cookie: join every selected account's decrypted `.ROBLOSECURITY`
+/// cookie into ONE newline-separated clipboard write (with the same read-back
+/// verification as [`copy_account_cookie_with`]) instead of clobbering the
+/// clipboard N times.
+///
+/// Per-account lookup/decryption failures (unknown id, empty cookie) land in
+/// `failed_ids` without aborting the batch. A failed write or read-back marks
+/// every cookie-bearing id failed too — the clipboard content is then not the
+/// batch, so nothing may be reported as copied.
+pub fn copy_cookies_bulk_with(
+    dir: &Path,
+    account_ids: &[String],
+    clipboard: &dyn Clipboard,
+) -> CopyCookiesBulkResult {
+    let total = account_ids.len();
+    let accounts = load_accounts(dir).unwrap_or_default();
+
+    let mut plaintexts: Vec<String> = Vec::new();
+    let mut matched_ids: Vec<String> = Vec::new();
+    let mut failed_ids: Vec<String> = Vec::new();
+    for id in account_ids {
+        match accounts.iter().find(|a| &a.id == id) {
+            Some(account) if !account.cookie.is_empty() => {
+                plaintexts.push(account.cookie.clone());
+                matched_ids.push(id.clone());
+            }
+            _ => failed_ids.push(id.clone()),
+        }
+    }
+
+    let copied = if plaintexts.is_empty() {
+        0
+    } else {
+        let joined = plaintexts.join("\n");
+        let verified = clipboard.write_text(&joined).is_ok()
+            && clipboard.read_text().ok().as_deref() == Some(joined.as_str());
+        if verified {
+            plaintexts.len()
+        } else {
+            // The batch never made it onto the clipboard intact: report every
+            // cookie-bearing id as failed alongside the per-id failures.
+            failed_ids.extend(matched_ids);
+            0
+        }
+    };
+
+    CopyCookiesBulkResult {
+        total,
+        copied,
+        failed_ids,
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Task 13.7: command layer + events (Requirements 10.1, 10.2)
 //
@@ -4006,6 +4070,43 @@ pub async fn browser_copy_cookie(
             donut_token.as_deref(),
         );
     }
+
+    Ok(result)
+}
+
+/// `browser:copyCookiesBulk` — copy many accounts' cookies to the system
+/// clipboard in one newline-separated write with read-back verification.
+/// Companion to [`browser_copy_cookie`] for the Accounts bulk bar; per-account
+/// failures are reported through [`CopyCookiesBulkResult::failed_ids`] without
+/// aborting the batch.
+#[tauri::command]
+pub async fn browser_copy_cookies_bulk(
+    app: AppHandle,
+    account_ids: Vec<String>,
+) -> Result<CopyCookiesBulkResult, String> {
+    let dir = match accounts::store_dir(&app) {
+        Ok(dir) => dir,
+        Err(e) => return crate::logging::log_command_result("browser_copy_cookies_bulk", Err(e)),
+    };
+    let donut_token = get_donut_token(&dir);
+
+    let clipboard = TauriClipboard::new(&app);
+    let result = copy_cookies_bulk_with(&dir, &account_ids, &clipboard);
+
+    // One redaction-safe summary line for the whole batch (no secrets in meta).
+    logging::log_browser(
+        &app,
+        if result.copied == result.total { "info" } else { "warn" },
+        "Bulk Copy Cookie finished.",
+        json!({
+            "total": result.total,
+            "copied": result.copied,
+            "failedIds": result.failed_ids,
+        }),
+        None,
+        None,
+        donut_token.as_deref(),
+    );
 
     Ok(result)
 }

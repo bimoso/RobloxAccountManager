@@ -30,6 +30,11 @@ export interface BloxGenSettingsPanelProps {
  *
  * The key stays masked by default and is persisted only after explicit save.
  * Generator consumes the same persistence key but never renders an editor.
+ *
+ * RACKLINE: the surface is the shared `.rk-panel` (one hairline, one surface,
+ * no shadow — it rests on the rack rather than floating above it), the
+ * configured/not-configured badge is the shared `.rk-chip` with a data tone,
+ * and the credential field uses the one field recipe.
  */
 export function BloxGenSettingsPanel({
   className,
@@ -54,6 +59,7 @@ export function BloxGenSettingsPanel({
   const valid = isValidBloxGenApiKey(trimmed);
   const dirty = trimmed !== savedKey.trim();
   const showError = touched && !valid;
+  const configured = isValidBloxGenApiKey(savedKey);
 
   const save = (): void => {
     setTouched(true);
@@ -68,80 +74,86 @@ export function BloxGenSettingsPanel({
 
   return (
     <section
-      className={['bloxgen-settings', className].filter(Boolean).join(' ')}
+      className={['bloxgen-settings', 'rk-panel', className].filter(Boolean).join(' ')}
       aria-labelledby={`${inputId}-title`}
     >
-      <div className="bloxgen-settings__heading">
+      <div className="rk-panel__head bloxgen-settings__head">
         <span className="bloxgen-settings__icon" aria-hidden="true">
-          <KeyRound size={17} strokeWidth={1.8} />
+          <KeyRound size={15} />
         </span>
-        <div>
-          <span className="bloxgen-settings__eyebrow">{t('bloxgen.eyebrow')}</span>
-          <h3 id={`${inputId}-title`}>{t('bloxgen.title')}</h3>
+        <div className="bloxgen-settings__titles">
+          <span className="rk-eyebrow">{t('bloxgen.eyebrow')}</span>
+          <h3 id={`${inputId}-title`} className="rk-panel__title">
+            {t('bloxgen.title')}
+          </h3>
         </div>
-        <span
-          className="bloxgen-settings__status"
-          data-state={isValidBloxGenApiKey(savedKey) ? 'ready' : 'missing'}
-        >
-          {isValidBloxGenApiKey(savedKey) ? <Check size={13} /> : <KeyRound size={13} />}
-          {isValidBloxGenApiKey(savedKey) ? t('bloxgen.configured') : t('bloxgen.notConfigured')}
+        <span className="rk-chip" data-tone={configured ? 'ok' : 'neutral'}>
+          {configured ? <Check size={11} aria-hidden="true" /> : <KeyRound size={11} aria-hidden="true" />}
+          {configured ? t('bloxgen.configured') : t('bloxgen.notConfigured')}
         </span>
       </div>
 
-      <p className="bloxgen-settings__copy">
-        {t('bloxgen.copy')}
-      </p>
-
-      <label className="bloxgen-settings__label" htmlFor={inputId}>
-        {t('bloxgen.keyLabel')}
-      </label>
-      <div className="bloxgen-settings__field" data-invalid={showError || undefined}>
-        <input
-          id={inputId}
-          type={visible ? 'text' : 'password'}
-          autoComplete="off"
-          spellCheck={false}
-          value={draft}
-          placeholder="BLOX-…"
-          aria-invalid={showError}
-          aria-describedby={`${inputId}-help`}
-          onBlur={() => setTouched(true)}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            if (touched) setTouched(true);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') save();
-          }}
-        />
-        <button
-          type="button"
-          className="bloxgen-settings__reveal"
-          aria-label={visible ? t('bloxgen.hide') : t('bloxgen.show')}
-          aria-pressed={visible}
-          onClick={() => setVisible((current) => !current)}
-        >
-          {visible ? <EyeOff size={17} /> : <Eye size={17} />}
-        </button>
-      </div>
-
-      <div className="bloxgen-settings__footer">
-        <p id={`${inputId}-help`} data-invalid={showError || undefined}>
-          {showError
-            ? t('bloxgen.invalid')
-            : isValidBloxGenApiKey(savedKey)
-              ? maskBloxGenApiKey(savedKey)
-              : t('bloxgen.format')}
+      <div className="rk-panel__body bloxgen-settings__body">
+        <p className="bloxgen-settings__copy">
+          {t('bloxgen.copy')}
         </p>
-        <Button
-          variant="secondary"
-          className="bloxgen-settings__save"
-          disabled={!dirty || !valid}
-          onClick={save}
-        >
-          <Save size={15} aria-hidden="true" />
-          {t('bloxgen.save')}
-        </Button>
+
+        <label className="fm-label bloxgen-settings__label" htmlFor={inputId}>
+          {t('bloxgen.keyLabel')}
+        </label>
+        <div className="bloxgen-settings__field" data-invalid={showError || undefined}>
+          <input
+            id={inputId}
+            type={visible ? 'text' : 'password'}
+            autoComplete="off"
+            spellCheck={false}
+            value={draft}
+            placeholder="BLOX-…"
+            aria-invalid={showError}
+            aria-describedby={`${inputId}-help`}
+            onBlur={() => setTouched(true)}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              if (touched) setTouched(true);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') save();
+            }}
+          />
+          <button
+            type="button"
+            className="bloxgen-settings__reveal"
+            aria-label={visible ? t('bloxgen.hide') : t('bloxgen.show')}
+            aria-pressed={visible}
+            onClick={() => setVisible((current) => !current)}
+          >
+            {visible ? <EyeOff size={15} /> : <Eye size={15} />}
+          </button>
+        </div>
+
+        <div className="bloxgen-settings__footer">
+          <p
+            id={`${inputId}-help`}
+            className="bloxgen-settings__help"
+            data-invalid={showError || undefined}
+          >
+            {showError
+              ? t('bloxgen.invalid')
+              : configured
+                ? maskBloxGenApiKey(savedKey)
+                : t('bloxgen.format')}
+          </p>
+          <Button
+            variant="secondary"
+            size="lg"
+            className="bloxgen-settings__save"
+            disabled={!dirty || !valid}
+            onClick={save}
+          >
+            <Save size={14} aria-hidden="true" />
+            {t('bloxgen.save')}
+          </Button>
+        </div>
       </div>
     </section>
   );

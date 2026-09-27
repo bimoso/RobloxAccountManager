@@ -36,9 +36,10 @@
  * the individual stores and `lib/persistence.ts`; this component only ensures
  * those stores are mounted and their startup hooks fire.
  */
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { TitleBar } from './components/TitleBar';
 import { Sidebar } from './components/Sidebar';
+import { CommandPalette } from './components/CommandPalette';
 import { PageRouter } from './components/PageRouter';
 import { LaunchModalHost } from './components/LaunchModalHost';
 import { EncryptionGate } from './components/EncryptionGate';
@@ -48,14 +49,15 @@ import { useAccountStore } from './stores/accountStore';
 import { useLogStore } from './stores/logStore';
 import { initTheme } from './stores/themeStore';
 import { initLanguage } from './stores/languageStore';
+import { useShellStore } from './stores/shellStore';
 import { NAV_PAGES, useNavigationStore, type PageId } from './stores/navigationStore';
 import { usePresencePolling } from './hooks/usePresencePolling';
 import { useHotkey } from './hooks/useHotkey';
 import { ipc } from './lib/ipc';
 import { loadClientsSnapshot } from './lib/clientsSnapshotCache';
 import { schedulePrefetch } from './lib/prefetch';
+import { installAliveSurface } from './lib/aliveSurface';
 import './App.css';
-import './styles/liquid-glass.css';
 
 /**
  * How many sidebar entries get a Ctrl+<digit> shortcut.
@@ -95,6 +97,37 @@ function PageHotkey({ pageId, ordinal }: PageHotkeyProps): null {
 export default function App(): JSX.Element {
   const accessGranted = useEncryptionGateStore((state) => state.accessGranted);
   const accounts = useAccountStore((state) => state.accounts);
+  const railCollapsed = useShellStore((state) => state.railCollapsed);
+  const toggleRail = useShellStore((state) => state.toggleRail);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const openPalette = useCallback(() => setPaletteOpen(true), []);
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+  // Ctrl+K / Cmd+K is the one binding every command palette answers to, so it
+  // is bound unconditionally rather than behind the encryption gate: reaching
+  // for it and getting nothing is worse than a palette with an empty roster.
+  useHotkey({ key: 'k', ctrlOrMeta: true }, openPalette);
+  // Ctrl+B collapses the navigation rail to icons and back.
+  useHotkey({ key: 'b', ctrlOrMeta: true }, toggleRail);
+
+  // ── Living surface (styles/alive.css) ──
+  // One delegated pointer listener drives the hover rail and the specular
+  // sheen for every surface in the app. Installed here rather than per page so
+  // no page can forget it, and torn down on unmount so a StrictMode
+  // double-mount leaves nothing behind.
+  useEffect(() => installAliveSurface(shellRef.current), []);
+
+  // How much of the roster is actually running, as 0..1. This drives the
+  // ambient aura: idle app, calm and dark; instances up, it warms and breathes.
+  // It is a readout, not wallpaper — the previous shell animated regardless of
+  // whether anything was happening.
+  const liveRatio = useMemo(() => {
+    if (accounts.length === 0) return 0;
+    const live = accounts.filter(
+      (account) => (account.launchedInstanceCount ?? 0) > 0,
+    ).length;
+    return live / accounts.length;
+  }, [accounts]);
 
   // ── Startup sequence (once) ──
   // Apply the persisted theme, run the Encryption_Gate init (enc_status before
@@ -174,24 +207,23 @@ export default function App(): JSX.Element {
   }, [accessGranted]);
 
   // ── Real-time presence polling (Req 26) ──
-  // Poll presence for every loaded account, authenticating with the first
-  // account's cookie. `usePresencePolling` no-ops on an empty id list, so
-  // polling only starts once accounts are loaded and access is granted.
+  // Poll presence for every loaded account, rotating through the loaded
+  // cookies when a poll fails. `usePresencePolling` no-ops on an empty id or
+  // cookie list, so polling only starts once accounts are loaded and access
+  // is granted.
   const userIds = accounts.map((account) => account.userId);
-  const cookie = accounts[0]?.cookie ?? '';
-  const pollUserIds = accessGranted && cookie ? userIds : [];
-  usePresencePolling(pollUserIds, cookie);
+  const cookies = accounts.map((account) => account.cookie).filter(Boolean);
+  const pollUserIds = accessGranted && cookies.length > 0 ? userIds : [];
+  usePresencePolling(pollUserIds, cookies);
 
   return (
-    <div className="app-shell">
-      <div className="ambient-backdrop" aria-hidden="true">
-        <span className="ambient-backdrop__orb ambient-backdrop__orb--violet" />
-        <span className="ambient-backdrop__orb ambient-backdrop__orb--cyan" />
-        <span className="ambient-backdrop__orb ambient-backdrop__orb--blue" />
-        <span className="ambient-backdrop__mesh" />
-        <span className="ambient-backdrop__constellation" />
-      </div>
-      <TitleBar />
+    <div
+      className="app-shell"
+      ref={shellRef}
+      data-rail={railCollapsed ? 'collapsed' : 'expanded'}
+      style={{ '--live-ratio': liveRatio.toFixed(3) } as CSSProperties}
+    >
+      <TitleBar onOpenPalette={openPalette} />
       <div className="app-body">
         <Sidebar />
         <main className="app-content">
@@ -206,6 +238,10 @@ export default function App(): JSX.Element {
       {/* The Encryption_Gate modal overlays and blocks the entire app while it
           is open; it renders nothing once access is granted (Req 7.2–7.4). */}
       <EncryptionGate />
+
+      {/* One keystroke to every page, account, theme and app action. Rendered
+          outside the gate so Ctrl+K is never a dead key. */}
+      <CommandPalette open={paletteOpen} onClose={closePalette} />
 
       {/* Singleton toast host for IPC success/error notifications (Req 2.5–2.7). */}
       <Toast />

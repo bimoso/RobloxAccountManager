@@ -1,8 +1,8 @@
 [package]
 name = "robloxaccountmanager"
 version = "1.0.0"
-description = "RobloxAccountManager - manage multiple Roblox accounts (Tauri build)"
-authors = ["RobloxAccountManager"]
+description = "RAM (Roblox Account Manager) - manage multiple Roblox accounts (Tauri build)"
+authors = ["RAM"]
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -112,6 +112,11 @@ futures-util = "0.3"
 # without aborting the Tauri runtime task.
 md5 = "0.7"
 tokio-util = { version = "0.7", features = ["rt"] }
+
+# Native file dialogs for the encrypted backup export/import (F4). Chosen over
+# tauri-plugin-dialog so the commands need no extra capability/config entry;
+# dialogs run on `tauri::async_runtime::spawn_blocking` because rfd is blocking.
+rfd = "0.15"
 
 [target.'cfg(windows)'.dependencies]
 # Per-user Roblox/Bloxstrap/Fishstrap discovery and explicit roblox:// /

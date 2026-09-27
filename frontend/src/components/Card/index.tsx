@@ -1,4 +1,6 @@
-import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
+import type { HTMLAttributes, ReactNode } from 'react';
+import { useTranslation } from '../../i18n/useTranslation';
+import './Card.css';
 
 /**
  * Props for {@link Card}, the base surface reused by the Accounts, Packages and
@@ -34,45 +36,15 @@ export interface CardProps extends HTMLAttributes<HTMLDivElement> {
   children?: ReactNode;
 }
 
-const baseStyle: CSSProperties = {
-  position: 'relative',
-  background: 'var(--glass-2, var(--s2))',
-  border: '1px solid var(--bd)',
-  borderRadius: 'var(--r, 12px)',
-  padding: '14px',
-  color: 'var(--t1)',
-  boxSizing: 'border-box',
-  transition: 'border-color var(--dur, 180ms) var(--ease), box-shadow var(--dur, 180ms) var(--ease)',
-};
-
-const selectedStyle: CSSProperties = {
-  borderColor: 'var(--ac)',
-  boxShadow: '0 0 0 1px var(--ac), 0 0 0 4px var(--ac2)',
-};
-
-const toggleStyle: CSSProperties = {
-  position: 'absolute',
-  top: '8px',
-  right: '8px',
-  width: '20px',
-  height: '20px',
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  padding: 0,
-  borderRadius: '6px',
-  border: '1px solid var(--bd2)',
-  background: 'var(--s3)',
-  color: 'var(--t1)',
-  cursor: 'pointer',
-  lineHeight: 1,
-  fontSize: '13px',
-};
-
 /**
- * Base card surface. Provides consistent padding, radius and border styling and
- * an optional selection control. Selection state is conveyed through both the
- * accent border and the checkable control so it never depends on color alone.
+ * Base card surface: the shared `.rk-panel` primitive plus a positioning
+ * context and an optional selection control. Selection state is conveyed
+ * through both the accent border and the checkable control so it never depends
+ * on color alone.
+ *
+ * The component no longer carries an inline style object. Everything visual
+ * lives in real classes, so a page can restyle its own cards (including their
+ * transitions) without fighting element-level styles that always win.
  */
 export function Card({
   selected = false,
@@ -80,15 +52,18 @@ export function Card({
   draggable = false,
   children,
   className,
-  style,
   ...rest
 }: CardProps) {
+  const { t } = useTranslation();
+  const classes = ['rk-panel', 'rk-panel__body', 'rk-card', className]
+    .filter(Boolean)
+    .join(' ');
+
   return (
     <div
-      className={className}
+      className={classes}
       draggable={draggable}
       data-selected={selected ? 'true' : undefined}
-      style={{ ...baseStyle, ...(selected ? selectedStyle : null), ...style }}
       {...rest}
     >
       {onSelectToggle ? (
@@ -97,11 +72,7 @@ export function Card({
           className="card-check"
           role="checkbox"
           aria-checked={selected}
-          aria-label={selected ? 'Deselect' : 'Select'}
-          style={{
-            ...toggleStyle,
-            ...(selected ? { background: 'var(--ac)', borderColor: 'var(--ac)', color: '#fff' } : null),
-          }}
+          aria-label={selected ? t('accounts.card.deselect') : t('accounts.card.select')}
           onClick={(event) => {
             // The toggle control owns selection; don't let the click bubble to
             // a card-level onClick handler (e.g. "open details").

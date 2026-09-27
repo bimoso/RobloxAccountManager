@@ -26,10 +26,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { AppWindow, LayoutGrid } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Switch } from '@/components/Switch';
+import { usePageActive } from '@/components/PageRouter/pageActivity';
 import { ipc } from '@/lib/ipc';
 import { createSessionCache } from '@/lib/sessionCache';
 import { useToastStore } from '@/stores/toastStore';
 import { useTranslation } from '@/i18n/useTranslation';
+import './Settings.css';
 
 /** Default manual grid-cell size, matching the backend's 350×350 default. */
 const DEFAULT_TARGET_W = 350;
@@ -69,6 +71,7 @@ const WINDOW_COUNT_POLL_MS = 4_000;
 interface SessionAutomationSnapshot {
   autoRelaunch: boolean | null;
   replaceRunning: boolean | null;
+  clearTraces: boolean | null;
   layoutEnabled: boolean | null;
   autoLayout: boolean | null;
   savedSize: [number, number];
@@ -98,6 +101,7 @@ export function SessionAutomationCard(): JSX.Element {
   const showSuccess = useToastStore((s) => s.showSuccess);
   const showError = useToastStore((s) => s.showError);
   const { t } = useTranslation();
+  const pageActive = usePageActive();
 
   // `null` = not yet loaded; the controls stay disabled until the stored
   // values are known so a render can never contradict (or clobber) the store.
@@ -106,6 +110,7 @@ export function SessionAutomationCard(): JSX.Element {
   const cached = sessionAutomationCache.get();
   const [autoRelaunch, setAutoRelaunch] = useState<boolean | null>(cached?.autoRelaunch ?? null);
   const [replaceRunning, setReplaceRunning] = useState<boolean | null>(cached?.replaceRunning ?? null);
+  const [clearTraces, setClearTraces] = useState<boolean | null>(cached?.clearTraces ?? null);
   const [layoutEnabled, setLayoutEnabled] = useState<boolean | null>(cached?.layoutEnabled ?? null);
   const [autoLayout, setAutoLayout] = useState<boolean | null>(cached?.autoLayout ?? null);
   const [sizeText, setSizeText] = useState(
@@ -132,6 +137,7 @@ export function SessionAutomationCard(): JSX.Element {
     sessionAutomationCache.set({
       autoRelaunch,
       replaceRunning,
+      clearTraces,
       layoutEnabled,
       autoLayout,
       savedSize,
@@ -139,7 +145,7 @@ export function SessionAutomationCard(): JSX.Element {
       savedSpawnGap,
       runningCount,
     });
-  }, [autoRelaunch, replaceRunning, layoutEnabled, autoLayout, savedSize, savedPerRow, savedSpawnGap, runningCount]);
+  }, [autoRelaunch, replaceRunning, clearTraces, layoutEnabled, autoLayout, savedSize, savedPerRow, savedSpawnGap, runningCount]);
 
   // Load the stored settings once on mount.
   useEffect(() => {
@@ -150,6 +156,8 @@ export function SessionAutomationCard(): JSX.Element {
         if (cancelled) return;
         setAutoRelaunch(settings.autoRelaunch === true);
         setReplaceRunning(settings.replaceRunningInstance === true);
+        // Absent means enabled: the backend cleans unless explicitly told not to.
+        setClearTraces(settings.clearTracesOnClose !== false);
         setLayoutEnabled(settings.windowLayoutEnabled === true);
         setAutoLayout(settings.windowAutoLayout === true);
         const w = typeof settings.windowTargetWidth === 'number' ? settings.windowTargetWidth : DEFAULT_TARGET_W;
@@ -176,10 +184,12 @@ export function SessionAutomationCard(): JSX.Element {
   }, []);
 
   // Live active-window figure: poll the class-based window count while the
-  // card is mounted. Polling (rather than the `roblox://count` event) also
+  // card is on screen. Polling (rather than the `roblox://count` event) also
   // covers clients opened outside this app or before it started — the event
-  // only fires while app-launched accounts are being watched.
+  // only fires while app-launched accounts are being watched. The router keeps
+  // Settings mounted after the user leaves, so the poll pauses off screen.
   useEffect(() => {
+    if (!pageActive) return;
     let cancelled = false;
     const refresh = () => {
       void ipc.getWindowCount().then((count) => {
@@ -192,14 +202,19 @@ export function SessionAutomationCard(): JSX.Element {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [pageActive]);
 
   /**
    * Persist one boolean setting optimistically: flip the control, save, and
    * roll back on failure (the shared IPC layer already toasted the error).
    */
   const persistToggle = useCallback(async (
-    key: 'autoRelaunch' | 'replaceRunningInstance' | 'windowLayoutEnabled' | 'windowAutoLayout',
+    key:
+      | 'autoRelaunch'
+      | 'replaceRunningInstance'
+      | 'clearTracesOnClose'
+      | 'windowLayoutEnabled'
+      | 'windowAutoLayout',
     next: boolean,
     previous: boolean | null,
     apply: (value: boolean | null) => void,
@@ -317,128 +332,181 @@ export function SessionAutomationCard(): JSX.Element {
   );
 
   return (
-    <section className="settings-card settings-card--wide settings-session-card">
-      <div className="settings-card-heading">
-        <div className="settings-card-title-group">
-          <span className="settings-card-icon"><LayoutGrid size={17} /></span>
-          <div>
-            <span className="settings-eyebrow">{t('settings.session.eyebrow')}</span>
-            <h2 className="settings-card-title">{t('settings.session.title')}</h2>
-          </div>
+    <section className="rk-panel set-panel settings-session-card">
+      <div className="rk-panel__head">
+        <span className="set-icon" aria-hidden="true"><LayoutGrid size={15} /></span>
+        <div className="set-head__text">
+          <span className="rk-eyebrow">{t('settings.session.eyebrow')}</span>
+          <h2 className="rk-panel__title">{t('settings.session.title')}</h2>
         </div>
-        <span className={`settings-status-badge${runningCount > 0 ? ' settings-status-badge--on' : ''}`}>
+        <span className="rk-chip" data-tone={runningCount > 0 ? 'ok' : 'neutral'}>
           <AppWindow size={11} aria-hidden="true" /> {windowsLabel}
         </span>
       </div>
-      <p className="settings-hint">{t('settings.session.hint')}</p>
+      <p className="set-hint">{t('settings.session.hint')}</p>
 
-      <div className="settings-session-grid">
-        <div className="settings-toggle-row">
-          <span>
-            <strong>{t('settings.session.autoRelaunch')}</strong>
-            <small>{t('settings.session.autoRelaunchHint')}</small>
+      <div className="set-rows">
+        <div className="rk-row set-row">
+          <span className="rk-row__gutter">
+            <i className="rk-row__tick" data-tone={autoRelaunch ? 'ok' : undefined} />
           </span>
-          <Switch
-            checked={autoRelaunch ?? false}
-            disabled={autoRelaunch === null || saving}
-            aria-label={t('settings.session.autoRelaunch')}
-            onChange={(next) => void persistToggle(
-              'autoRelaunch',
-              next,
-              autoRelaunch,
-              setAutoRelaunch,
-              t(next ? 'settings.session.autoRelaunchOn' : 'settings.session.autoRelaunchOff'),
-            )}
-          />
-        </div>
-
-        <div className="settings-toggle-row">
-          <span>
-            <strong>{t('settings.session.replaceRunning')}</strong>
-            <small>{t('settings.session.replaceRunningHint')}</small>
+          <span className="rk-row__main">
+            <span className="rk-row__title">{t('settings.session.autoRelaunch')}</span>
+            <span className="rk-row__meta">{t('settings.session.autoRelaunchHint')}</span>
           </span>
-          <Switch
-            checked={replaceRunning ?? false}
-            disabled={replaceRunning === null || saving}
-            aria-label={t('settings.session.replaceRunning')}
-            onChange={(next) => void persistToggle(
-              'replaceRunningInstance',
-              next,
-              replaceRunning,
-              setReplaceRunning,
-              t(next ? 'settings.session.replaceRunningOn' : 'settings.session.replaceRunningOff'),
-            )}
-          />
-        </div>
-
-        <div className="settings-toggle-row">
-          <span>
-            <strong>{t('settings.session.windowLayout')}</strong>
-            <small>{windowsLabel}</small>
+          <span className="set-row__control">
+            <Switch
+              checked={autoRelaunch ?? false}
+              disabled={autoRelaunch === null || saving}
+              aria-label={t('settings.session.autoRelaunch')}
+              onChange={(next) => void persistToggle(
+                'autoRelaunch',
+                next,
+                autoRelaunch,
+                setAutoRelaunch,
+                t(next ? 'settings.session.autoRelaunchOn' : 'settings.session.autoRelaunchOff'),
+              )}
+            />
           </span>
-          <Switch
-            checked={layoutOn}
-            disabled={layoutEnabled === null || saving}
-            aria-label={t('settings.session.windowLayout')}
-            onChange={(next) => void persistToggle(
-              'windowLayoutEnabled',
-              next,
-              layoutEnabled,
-              setLayoutEnabled,
-              t(next ? 'settings.session.windowLayoutOn' : 'settings.session.windowLayoutOff'),
-            )}
-          />
         </div>
 
-        <div className={`settings-toggle-row${layoutOn ? '' : ' settings-toggle-row--muted'}`}>
-          <span>
-            <strong>{t('settings.session.autoLayout')}</strong>
-            <small>{t('settings.session.autoLayoutHint')}</small>
+        <div className="rk-row set-row">
+          <span className="rk-row__gutter">
+            <i className="rk-row__tick" data-tone={replaceRunning ? 'ok' : undefined} />
           </span>
-          <Switch
-            checked={autoLayout ?? false}
-            disabled={autoLayout === null || !layoutOn || saving}
-            aria-label={t('settings.session.autoLayout')}
-            onChange={(next) => void persistToggle(
-              'windowAutoLayout',
-              next,
-              autoLayout,
-              setAutoLayout,
-              t(next ? 'settings.session.autoLayoutOn' : 'settings.session.autoLayoutOff'),
-            )}
-          />
+          <span className="rk-row__main">
+            <span className="rk-row__title">{t('settings.session.replaceRunning')}</span>
+            <span className="rk-row__meta">{t('settings.session.replaceRunningHint')}</span>
+          </span>
+          <span className="set-row__control">
+            <Switch
+              checked={replaceRunning ?? false}
+              disabled={replaceRunning === null || saving}
+              aria-label={t('settings.session.replaceRunning')}
+              onChange={(next) => void persistToggle(
+                'replaceRunningInstance',
+                next,
+                replaceRunning,
+                setReplaceRunning,
+                t(next ? 'settings.session.replaceRunningOn' : 'settings.session.replaceRunningOff'),
+              )}
+            />
+          </span>
         </div>
-      </div>
 
-      <div className="settings-session-controls">
-        <div className="settings-session-field">
-          <label className="settings-field-label" htmlFor="session-target-size">
-            {t('settings.session.targetSize')}
-          </label>
-          <input
-            id="session-target-size"
-            className="settings-input settings-session-input"
-            type="text"
-            inputMode="numeric"
-            placeholder={`${DEFAULT_TARGET_W}x${DEFAULT_TARGET_H}`}
-            aria-label={t('settings.session.targetSizeAria')}
-            value={sizeText}
-            disabled={manualDisabled}
-            onChange={(event) => setSizeText(event.target.value)}
-            onBlur={() => void commitTargetSize()}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') event.currentTarget.blur();
-            }}
-          />
+        <div className="rk-row set-row">
+          <span className="rk-row__gutter">
+            <i className="rk-row__tick" data-tone={clearTraces ? 'ok' : undefined} />
+          </span>
+          <span className="rk-row__main">
+            <span className="rk-row__title">{t('settings.session.clearTraces')}</span>
+            <span className="rk-row__meta">{t('settings.session.clearTracesHint')}</span>
+          </span>
+          <span className="set-row__control">
+            <Switch
+              checked={clearTraces ?? false}
+              disabled={clearTraces === null || saving}
+              aria-label={t('settings.session.clearTraces')}
+              onChange={(next) => void persistToggle(
+                'clearTracesOnClose',
+                next,
+                clearTraces,
+                setClearTraces,
+                t(next ? 'settings.session.clearTracesOn' : 'settings.session.clearTracesOff'),
+              )}
+            />
+          </span>
         </div>
-        <div className="settings-session-field">
-          <label className="settings-field-label" htmlFor="session-per-row">
-            {t('settings.session.perRow')}
-          </label>
-          <div className="settings-session-inline">
+
+        <div className="rk-row set-row">
+          <span className="rk-row__gutter">
+            <i className="rk-row__tick" data-tone={layoutOn ? 'ok' : undefined} />
+          </span>
+          <span className="rk-row__main">
+            <span className="rk-row__title">{t('settings.session.windowLayout')}</span>
+            <span className="rk-row__meta">{windowsLabel}</span>
+          </span>
+          <span className="set-row__control">
+            <Switch
+              checked={layoutOn}
+              disabled={layoutEnabled === null || saving}
+              aria-label={t('settings.session.windowLayout')}
+              onChange={(next) => void persistToggle(
+                'windowLayoutEnabled',
+                next,
+                layoutEnabled,
+                setLayoutEnabled,
+                t(next ? 'settings.session.windowLayoutOn' : 'settings.session.windowLayoutOff'),
+              )}
+            />
+          </span>
+        </div>
+
+        <div className="rk-row set-row" data-muted={layoutOn ? undefined : 'true'}>
+          <span className="rk-row__gutter">
+            <i className="rk-row__tick" data-tone={layoutOn && autoLayout ? 'ok' : undefined} />
+          </span>
+          <span className="rk-row__main">
+            <span className="rk-row__title">{t('settings.session.autoLayout')}</span>
+            <span className="rk-row__meta">{t('settings.session.autoLayoutHint')}</span>
+          </span>
+          <span className="set-row__control">
+            <Switch
+              checked={autoLayout ?? false}
+              disabled={autoLayout === null || !layoutOn || saving}
+              aria-label={t('settings.session.autoLayout')}
+              onChange={(next) => void persistToggle(
+                'windowAutoLayout',
+                next,
+                autoLayout,
+                setAutoLayout,
+                t(next ? 'settings.session.autoLayoutOn' : 'settings.session.autoLayoutOff'),
+              )}
+            />
+          </span>
+        </div>
+
+        <div className="rk-row set-row" data-muted={manualDisabled ? 'true' : undefined}>
+          <span className="rk-row__gutter">
+            <i className="rk-row__tick" data-tone={manualDisabled ? undefined : 'accent'} />
+          </span>
+          <span className="rk-row__main">
+            <label className="rk-row__title" htmlFor="session-target-size">
+              {t('settings.session.targetSize')}
+            </label>
+          </span>
+          <span className="set-row__control">
+            <input
+              id="session-target-size"
+              className="fm-input set-input set-input--sm"
+              type="text"
+              inputMode="numeric"
+              placeholder={`${DEFAULT_TARGET_W}x${DEFAULT_TARGET_H}`}
+              aria-label={t('settings.session.targetSizeAria')}
+              value={sizeText}
+              disabled={manualDisabled}
+              onChange={(event) => setSizeText(event.target.value)}
+              onBlur={() => void commitTargetSize()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+              }}
+            />
+          </span>
+        </div>
+
+        <div className="rk-row set-row" data-muted={manualDisabled ? 'true' : undefined}>
+          <span className="rk-row__gutter">
+            <i className="rk-row__tick" data-tone={manualDisabled ? undefined : 'accent'} />
+          </span>
+          <span className="rk-row__main">
+            <label className="rk-row__title" htmlFor="session-per-row">
+              {t('settings.session.perRow')}
+            </label>
+          </span>
+          <span className="set-row__control">
             <input
               id="session-per-row"
-              className="settings-input settings-session-input settings-session-input--narrow"
+              className="fm-input set-input set-input--sm"
               type="number"
               min={1}
               max={20}
@@ -452,19 +520,28 @@ export function SessionAutomationCard(): JSX.Element {
                 if (event.key === 'Enter') event.currentTarget.blur();
               }}
             />
-            <span className="settings-session-unit">{t('settings.session.perRowUnit')}</span>
-          </div>
+            <span className="set-unit">{t('settings.session.perRowUnit')}</span>
+          </span>
         </div>
+
         {/* Not gated by `manualDisabled`: the spawn gap governs launching, not
             the window grid, so it applies whether or not layout is enabled. */}
-        <div className="settings-session-field">
-          <label className="settings-field-label" htmlFor="session-spawn-gap">
-            {t('settings.session.spawnGap')}
-          </label>
-          <div className="settings-session-inline">
+        <div className="rk-row set-row">
+          <span className="rk-row__gutter">
+            <i className="rk-row__tick" data-tone="accent" />
+          </span>
+          <span className="rk-row__main">
+            <label className="rk-row__title" htmlFor="session-spawn-gap">
+              {t('settings.session.spawnGap')}
+            </label>
+            <span className="rk-row__meta" id="session-spawn-gap-hint">
+              {t('settings.session.spawnGapHint')}
+            </span>
+          </span>
+          <span className="set-row__control">
             <input
               id="session-spawn-gap"
-              className="settings-input settings-session-input settings-session-input--narrow"
+              className="fm-input set-input set-input--sm"
               type="number"
               min={MIN_SPAWN_GAP_MS}
               max={MAX_SPAWN_GAP_MS}
@@ -478,23 +555,21 @@ export function SessionAutomationCard(): JSX.Element {
                 if (event.key === 'Enter') event.currentTarget.blur();
               }}
             />
-            <span className="settings-session-unit">{t('settings.session.spawnGapUnit')}</span>
-          </div>
-          <small id="session-spawn-gap-hint" className="settings-hint">
-            {t('settings.session.spawnGapHint')}
-          </small>
+            <span className="set-unit">{t('settings.session.spawnGapUnit')}</span>
+          </span>
         </div>
-        <div className="settings-session-actions">
-          <Button
-            variant="primary"
-            onClick={() => void onArrangeNow()}
-            disabled={arranging}
-            aria-label={t('settings.session.arrangeNowAria')}
-          >
-            <LayoutGrid size={14} aria-hidden="true" />
-            {t('settings.session.arrangeNow')}
-          </Button>
-        </div>
+      </div>
+
+      <div className="set-actions">
+        <Button
+          variant="primary"
+          onClick={() => void onArrangeNow()}
+          disabled={arranging}
+          aria-label={t('settings.session.arrangeNowAria')}
+        >
+          <LayoutGrid size={14} aria-hidden="true" />
+          {t('settings.session.arrangeNow')}
+        </Button>
       </div>
     </section>
   );

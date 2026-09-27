@@ -16,6 +16,7 @@
 // and its inputs, matching the exact formats the backend already understands.
 
 import type { Account } from '../../types/models';
+import { placeIdFromInput } from '../../lib/privateServers';
 
 /**
  * The four launch destination tabs offered by the modal (Requirement 15.1).
@@ -65,9 +66,7 @@ export function isValidJobId(value: string): boolean {
  * A bare numeric id and the canonical `/games/<id>` URL shape are accepted.
  */
 export function placeIdFromLaunchInput(value: string): string | undefined {
-  const place = value.trim();
-  if (/^\d+$/.test(place)) return place;
-  return place.match(/(?:^|\/)games\/(\d+)(?:[/?#]|$)/i)?.[1];
+  return placeIdFromInput(value);
 }
 
 /**

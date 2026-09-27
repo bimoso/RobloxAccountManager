@@ -178,7 +178,11 @@ pub fn save_to_dir(dir: &Path, packages: &[Value]) -> bool {
 /// reads as `[]`; see [`load_from_file`]), the only failure this command can
 /// surface is an inability to resolve the application-data directory.
 #[tauri::command]
-pub fn packages_load(app: AppHandle) -> Result<Vec<Value>, String> {
+pub async fn packages_load(app: AppHandle) -> Result<Vec<Value>, String> {
+    crate::run_blocking(move || packages_load_blocking(app)).await
+}
+
+fn packages_load_blocking(app: AppHandle) -> Result<Vec<Value>, String> {
     crate::logging::log_command_result("packages_load", (|| {
         let dir = store_dir(&app)?;
         Ok(load_from_dir(&dir))
@@ -200,7 +204,11 @@ pub fn packages_load(app: AppHandle) -> Result<Vec<Value>, String> {
 /// [`save_to_file`]). As with [`packages_load`], the only `Err` this command
 /// produces is a failure to resolve the application-data directory.
 #[tauri::command]
-pub fn packages_save(app: AppHandle, packages: Vec<Value>) -> Result<bool, String> {
+pub async fn packages_save(app: AppHandle, packages: Vec<Value>) -> Result<bool, String> {
+    crate::run_blocking(move || packages_save_blocking(app, packages)).await
+}
+
+fn packages_save_blocking(app: AppHandle, packages: Vec<Value>) -> Result<bool, String> {
     crate::logging::log_command_result("packages_save", (|| {
         let dir = store_dir(&app)?;
         Ok(save_to_dir(&dir, &packages))

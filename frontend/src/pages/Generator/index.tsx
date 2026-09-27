@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
-  ArrowRight,
   Check,
   CircleAlert,
   Clock3,
   Copy,
   History,
   KeyRound,
-  LoaderCircle,
   PackageSearch,
   Settings2,
   ShieldCheck,
@@ -68,6 +66,14 @@ const STEPS: ReadonlyArray<{
 ];
 
 type StepVisualState = 'pending' | 'active' | 'complete' | 'error';
+
+/** Chip tone for a step state — colour is signal, and it always carries text. */
+const STEP_TONE: Record<StepVisualState, 'neutral' | 'accent' | 'ok' | 'danger'> = {
+  pending: 'neutral',
+  active: 'accent',
+  complete: 'ok',
+  error: 'danger',
+};
 
 function readApiKey(): string {
   const value = getPersisted<string>(PERSISTENCE_KEYS.bloxgenApiKey);
@@ -129,6 +135,21 @@ function stepVisualState(
   return 'pending';
 }
 
+/**
+ * Short status word shown in each step's chip, so the step strip never encodes
+ * its state with colour alone.
+ *
+ * These reuse existing dictionary entries rather than introducing keys, since
+ * `i18n/en.ts` / `i18n/es.ts` are owned elsewhere this pass; the intended
+ * `gen.stepState.*` keys are reported alongside the change.
+ */
+function stepStateLabel(state: StepVisualState, t: Translator): string {
+  if (state === 'complete') return t('accounts.drag.done');
+  if (state === 'active') return t('accounts.filter.running');
+  if (state === 'error') return t('gen.result.failed');
+  return t('friends.pending');
+}
+
 function phaseLabel(phase: GeneratorPhase, t: Translator): string {
   if (phase === 'generating') return t('gen.phase.generating');
   if (phase === 'validating') return t('gen.phase.validating');
@@ -147,6 +168,12 @@ function resultDescription(entry: SafeGenHistoryEntry, t: Translator): string {
   if (entry.step === 'validate') return t('gen.resultDesc.validate');
   if (entry.step === 'add') return t('gen.resultDesc.add');
   return t('gen.resultDesc.generate');
+}
+
+function stepOrdinal(entry: SafeGenHistoryEntry): string {
+  if (entry.step === 'validate') return '02';
+  if (entry.step === 'add') return '03';
+  return '01';
 }
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -252,7 +279,27 @@ export default function Generator(): JSX.Element {
     void refreshStock(apiKey);
   }, [apiKey, refreshStock]);
 
-  const newestHistory = useMemo(() => [...history].reverse(), [history]);
+  /**
+   * Newest-first audit rows, each carrying a key that is stable for the life of
+   * the entry.
+   *
+   * The key is derived from the entry's index in the append-only `history`
+   * array — NOT from its index in this reversed view. A new generation
+   * prepends to the reversed list, which shifts every reversed index by one; a
+   * reversed-index key therefore remounted every row on each generation,
+   * replaying the entrance animation and dropping focus from a focused copy
+   * button.
+   */
+  const newestHistory = useMemo(
+    () =>
+      history
+        .map((entry, index) => ({
+          entry,
+          key: `${index}|${entry.createdAt}|${entry.username}`,
+        }))
+        .reverse(),
+    [history],
+  );
 
   // `null` means "follow stock": preselect whatever is actually available rather
   // than pinning a type that would fail immediately.
@@ -263,6 +310,7 @@ export default function Generator(): JSX.Element {
   const offeredTypes = stock ? stock.map((entry) => entry.type) : [...BLOXGEN_ACCOUNT_TYPES];
   const stockPending = stockLoading && stock === null;
   const availableCount = stock?.filter((entry) => entry.available).length ?? 0;
+  const stockTone = stockPending || !stock ? 'neutral' : availableCount > 0 ? 'ok' : 'warn';
 
   const handleSelectType = useCallback((next: BloxGenTypeSelection) => {
     setTypeSelection(next);
@@ -273,11 +321,13 @@ export default function Generator(): JSX.Element {
     setHistory((current) => {
       const next = capGenHistory(appendGenHistory(current, entry));
       void ipc.writeGenHistory(next).catch(() => {
-        // Keep the session audit visible even if disk persistence fails.
+        // Keep the session audit visible even if disk persistence fails — but
+        // say so, instead of letting the user believe it reached the disk.
+        showError(t('generator.historyPersistFailed'));
       });
       return next;
     });
-  }, []);
+  }, [showError, t]);
 
   const handleGenerate = useCallback(async () => {
     const currentKey = readApiKey();
@@ -368,276 +418,398 @@ export default function Generator(): JSX.Element {
   );
 
   return (
-    <section className="gen-page" aria-labelledby="gen-title">
-      <header className="gen-header">
-        <div>
-          <span className="gen-eyebrow">{t('gen.eyebrow')}</span>
+    <section className="rk-page gen-page" aria-labelledby="gen-title">
+      <header className="rk-page__head">
+        <div className="rk-page__titles">
           <h1 id="gen-title">{t('gen.title')}</h1>
-          <p>{t('gen.subtitle')}</p>
+          <span className="rk-page__sub">{t('gen.subtitle')}</span>
         </div>
-        <button
-          type="button"
-          className="gen-key-chip"
-          data-state={keyReady ? 'ready' : 'missing'}
-          aria-label={keyReady ? t('gen.keyChipReadyAria') : t('gen.keyChipMissingAria')}
-          onClick={() => navigate('settings')}
-        >
-          <KeyRound size={14} />
-          <span>
-            <small>{t('gen.keyChipLabel')}</small>
-            <strong>{keyReady ? maskBloxGenApiKey(apiKey) : t('gen.configureInSettings')}</strong>
-          </span>
-          <Settings2 size={14} />
-        </button>
+        <div className="rk-page__actions">
+          <button
+            type="button"
+            className="gen-key"
+            data-state={keyReady ? 'ready' : 'missing'}
+            aria-label={keyReady ? t('gen.keyChipReadyAria') : t('gen.keyChipMissingAria')}
+            onClick={() => navigate('settings')}
+          >
+            <KeyRound size={13} aria-hidden="true" />
+            <span className="gen-key__text">
+              <small>{t('gen.keyChipLabel')}</small>
+              <strong className="u-num">
+                {keyReady ? maskBloxGenApiKey(apiKey) : t('gen.configureInSettings')}
+              </strong>
+            </span>
+            <Settings2 size={13} aria-hidden="true" />
+          </button>
+        </div>
       </header>
 
-      <section className="gen-command" aria-labelledby="gen-command-title">
-        <div className="gen-command__intro">
-          <span className="gen-command__index" aria-hidden="true">01</span>
-          <div>
-            <span className="gen-command__kicker">{t('gen.securePipeline')}</span>
-            <h2 id="gen-command-title">{t('gen.commandTitle')}</h2>
-            <p>{t('gen.commandCopy')}</p>
-          </div>
-        </div>
-
-        <ol className="gen-pipeline" aria-label={t('gen.progressAria')}>
-          {STEPS.map((step, index) => {
-            const state = stepVisualState(index, phase, failure);
-            const Icon = step.Icon;
-            return (
-              <li key={step.id} data-state={state} aria-current={state === 'active' ? 'step' : undefined}>
-                <span className="gen-pipeline__node">
-                  {state === 'complete' ? <Check size={16} /> : state === 'error' ? <CircleAlert size={16} /> : <Icon size={16} />}
-                </span>
-                <span className="gen-pipeline__copy">
-                  <strong>{t(`gen.step.${step.id}`)}</strong>
-                  <small>{t(`gen.step.${step.id}Detail`)}</small>
-                </span>
-                {state === 'active' && !reducedMotion && (
-                  <motion.span
-                    className="gen-pipeline__signal"
-                    initial={{ opacity: 0, scaleX: 0.25 }}
-                    animate={{ opacity: 1, scaleX: 1 }}
-                    transition={{ type: 'spring', stiffness: 320, damping: 28 }}
-                  />
-                )}
-                {index < STEPS.length - 1 && <ArrowRight className="gen-pipeline__arrow" size={14} aria-hidden="true" />}
-              </li>
-            );
-          })}
-        </ol>
-
-        <div className="gen-types">
-          <div className="gen-types__head">
-            <span className="gen-types__icon" aria-hidden="true"><PackageSearch size={16} /></span>
-            <div>
-              <span className="gen-command__kicker" id="gen-types-title">{t('gen.type.eyebrow')}</span>
-              <strong>{t('gen.type.title')}</strong>
-            </div>
-            <span
-              className="gen-types__stock"
-              data-state={stockPending ? 'loading' : !stock ? 'unknown' : availableCount > 0 ? 'ok' : 'empty'}
-            >
-              {stockPending
-                ? t('gen.type.checkingStock')
-                : stock
-                  ? t('gen.type.inStockCount', { count: availableCount })
-                  : t('gen.type.stockUnknown')}
+      <div className="rk-toolbar gen-toolbar">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.p
+            key={`${phase}-${failure?.failedAt ?? 'none'}`}
+            className="gen-status"
+            data-state={phase}
+            role="status"
+            aria-live="polite"
+            initial={reducedMotion ? false : { opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reducedMotion ? undefined : { opacity: 0, y: -3 }}
+            transition={{ duration: reducedMotion ? 0 : 0.15 }}
+          >
+            {phase === 'success' ? (
+              <Check size={14} aria-hidden="true" />
+            ) : phase === 'error' ? (
+              <CircleAlert size={14} aria-hidden="true" />
+            ) : (
+              <ShieldCheck size={14} aria-hidden="true" />
+            )}
+            <span>
+              {phase === 'success'
+                ? t('gen.status.success')
+                : phase === 'error'
+                  ? failure?.message
+                  : keyReady
+                    ? t('gen.status.ready')
+                    : t('gen.status.needKey')}
             </span>
-          </div>
+          </motion.p>
+        </AnimatePresence>
 
-          {stockPending ? (
-            <div className="gen-types__grid" aria-hidden="true">
-              {[0, 1, 2, 3].map((slot) => <span key={slot} className="gen-type-skeleton" />)}
-            </div>
+        <span className="rk-toolbar__spacer" />
+
+        <Button
+          variant="primary"
+          className="gen-generate"
+          disabled={running}
+          onClick={() => void handleGenerate()}
+        >
+          {running ? (
+            <span className="rk-spin" aria-hidden="true" />
+          ) : keyReady ? (
+            <Sparkles size={15} aria-hidden="true" />
           ) : (
-            <div className="gen-types__grid" role="radiogroup" aria-labelledby="gen-types-title">
-              <button
-                type="button"
-                role="radio"
-                aria-checked={effectiveSelection === 'random'}
-                className="gen-type"
-                data-selected={effectiveSelection === 'random' || undefined}
-                disabled={running}
-                onClick={() => handleSelectType('random')}
-              >
-                <Shuffle size={14} aria-hidden="true" />
-                <span>
-                  <strong>{t('gen.type.random')}</strong>
-                  <small>{t('gen.type.randomHint')}</small>
+            <Settings2 size={15} aria-hidden="true" />
+          )}
+          {running ? phaseLabel(phase, t) : keyReady ? t('gen.generateAdd') : t('gen.configure')}
+        </Button>
+      </div>
+
+      <div className="rk-page__body rk-page__body--pad">
+        <div className="gen-stack">
+          {/* ── Pipeline ─────────────────────────────────────────────────── */}
+          <section className="rk-panel" aria-labelledby="gen-command-title">
+            <div className="rk-panel__head">
+              <div className="gen-panel__titles">
+                <span className="rk-eyebrow">
+                  <b>01</b> {t('gen.securePipeline')}
                 </span>
-              </button>
-              {offeredTypes.map((type) => {
-                const entry = stock?.find((candidate) => candidate.type === type);
-                const outOfStock = entry !== undefined && !entry.available;
-                return (
-                  <button
-                    key={type}
-                    type="button"
-                    role="radio"
-                    aria-checked={effectiveSelection === type}
-                    className="gen-type"
-                    data-selected={effectiveSelection === type || undefined}
-                    data-out-of-stock={outOfStock || undefined}
-                    disabled={running || outOfStock}
-                    onClick={() => handleSelectType(type)}
-                  >
-                    <span className="gen-type__dot" aria-hidden="true" />
-                    <span>
-                      <strong>{t(BLOXGEN_TYPE_LABEL_KEYS[type])}</strong>
-                      <small>
+                <h2 id="gen-command-title" className="rk-panel__title">
+                  {t('gen.commandTitle')}
+                </h2>
+                <p className="gen-panel__note">{t('gen.commandCopy')}</p>
+              </div>
+            </div>
+
+            <div className="rk-panel__body">
+              <ol className="gen-steps" aria-label={t('gen.progressAria')}>
+                {STEPS.map((step, index) => {
+                  const state = stepVisualState(index, phase, failure);
+                  const Icon = step.Icon;
+                  return (
+                    <li
+                      key={step.id}
+                      className="gen-step"
+                      data-state={state}
+                      aria-current={state === 'active' ? 'step' : undefined}
+                    >
+                      <span className="gen-step__head">
+                        <span className="gen-step__num u-num" aria-hidden="true">
+                          {String(index + 1).padStart(2, '0')}
+                        </span>
+                        <span className="gen-step__icon" aria-hidden="true">
+                          {state === 'complete' ? (
+                            <Check size={14} />
+                          ) : state === 'error' ? (
+                            <CircleAlert size={14} />
+                          ) : (
+                            <Icon size={14} />
+                          )}
+                        </span>
+                      </span>
+                      <span className="gen-step__body">
+                        <strong className="gen-step__name">{t(`gen.step.${step.id}`)}</strong>
+                        <small className="gen-step__detail">
+                          {t(`gen.step.${step.id}Detail`)}
+                        </small>
+                      </span>
+                      <span className="rk-chip rk-chip--sm" data-tone={STEP_TONE[state]}>
+                        {stepStateLabel(state, t)}
+                      </span>
+                      {/* Meter: transform only — never an animated width. */}
+                      <span className="gen-step__meter" aria-hidden="true">
+                        <span className="gen-step__fill" />
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+          </section>
+
+          {/* ── Account type picker (BloxGen stock-aware) ────────────────── */}
+          <section className="rk-panel">
+            <div className="rk-panel__head">
+              <span className="gen-panel__icon" aria-hidden="true">
+                <PackageSearch size={14} />
+              </span>
+              <div className="gen-panel__titles">
+                <span className="rk-eyebrow" id="gen-types-title">
+                  {t('gen.type.eyebrow')}
+                </span>
+                <h2 className="rk-panel__title">{t('gen.type.title')}</h2>
+              </div>
+              <span className="rk-chip u-num" data-tone={stockTone}>
+                {stockPending ? (
+                  <span className="rk-spin" aria-hidden="true" />
+                ) : (
+                  <span className="rk-dot" data-tone={stockTone} aria-hidden="true" />
+                )}
+                {stockPending
+                  ? t('gen.type.checkingStock')
+                  : stock
+                    ? t('gen.type.inStockCount', { count: availableCount })
+                    : t('gen.type.stockUnknown')}
+              </span>
+            </div>
+
+            {stockPending ? (
+              <div className="gen-types" aria-hidden="true">
+                {[0, 1, 2, 3].map((slot) => (
+                  <span key={slot} className="rk-row gen-type-skeleton">
+                    <span className="rk-row__gutter">
+                      <span className="rk-row__tick" />
+                    </span>
+                    <span className="rk-row__main">
+                      <span className="gen-type-skeleton__bar" />
+                    </span>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <div className="gen-types" role="radiogroup" aria-labelledby="gen-types-title">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={effectiveSelection === 'random'}
+                  className="rk-row gen-type gen-type--random"
+                  data-selected={effectiveSelection === 'random' || undefined}
+                  disabled={running}
+                  onClick={() => handleSelectType('random')}
+                >
+                  <span className="rk-row__gutter">
+                    <Shuffle size={13} aria-hidden="true" />
+                  </span>
+                  <span className="rk-row__main">
+                    <span className="rk-row__title">{t('gen.type.random')}</span>
+                    <span className="rk-row__meta">{t('gen.type.randomHint')}</span>
+                  </span>
+                </button>
+                {offeredTypes.map((type) => {
+                  const entry = stock?.find((candidate) => candidate.type === type);
+                  const outOfStock = entry !== undefined && !entry.available;
+                  const stockState = entry === undefined ? 'unknown' : outOfStock ? 'out' : 'in';
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      role="radio"
+                      aria-checked={effectiveSelection === type}
+                      className="rk-row gen-type"
+                      data-selected={effectiveSelection === type || undefined}
+                      data-out-of-stock={outOfStock || undefined}
+                      data-stock={stockState}
+                      disabled={running || outOfStock}
+                      onClick={() => handleSelectType(type)}
+                    >
+                      <span className="rk-row__gutter">
+                        <span className="rk-row__tick" />
+                      </span>
+                      <span className="rk-row__main">
+                        <span className="rk-row__title">{t(BLOXGEN_TYPE_LABEL_KEYS[type])}</span>
+                      </span>
+                      <span
+                        className="rk-chip rk-chip--sm"
+                        data-tone={
+                          stockState === 'in' ? 'ok' : stockState === 'out' ? 'warn' : 'neutral'
+                        }
+                      >
                         {entry === undefined
                           ? t('gen.type.stockUnknown')
                           : outOfStock
                             ? t('gen.type.outOfStock')
                             : t('gen.type.inStock')}
-                      </small>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
-          {selectionOutOfStock ? (
-            <p className="gen-types__warn" role="status">
-              <CircleAlert size={13} /> {t('gen.type.selectionDepleted')}
-            </p>
-          ) : null}
-        </div>
+            {selectionOutOfStock ? (
+              <p className="gen-warn" role="status">
+                <CircleAlert size={13} aria-hidden="true" /> {t('gen.type.selectionDepleted')}
+              </p>
+            ) : null}
+          </section>
 
-        <label className="gen-moderated">
-          <Switch
-            checked={acceptModerated}
-            onChange={handleToggleModerated}
-            aria-label="Aceptar cuentas moderadas"
-          />
-          <span>
-            <strong>Aceptar cuentas moderadas</strong>
-            <small>Añade la cuenta aunque Roblox la marque como moderada; se indica el tipo de baneo.</small>
-          </span>
-        </label>
-
-        <label className="gen-moderated">
-          <Switch
-            checked={retryCredentials}
-            onChange={handleToggleRetryCredentials}
-            aria-label="Reintentar con user y contraseña"
-          />
-          <span>
-            <strong>Reintentar con user y contraseña</strong>
-            <small>Si la cookie generada falla, inicia sesión con el user:pass de BloxGen para conseguir una cookie válida.</small>
-          </span>
-        </label>
-
-        <div className="gen-command__action">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={`${phase}-${failure?.failedAt ?? 'none'}`}
-              className="gen-status"
-              data-state={phase}
-              role="status"
-              aria-live="polite"
-              initial={reducedMotion ? false : { opacity: 0, y: 5 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={reducedMotion ? undefined : { opacity: 0, y: -3 }}
-              transition={{ duration: reducedMotion ? 0 : 0.18 }}
-            >
-              {phase === 'success' ? <Check size={15} /> : phase === 'error' ? <CircleAlert size={15} /> : <ShieldCheck size={15} />}
-              <span>
-                {phase === 'success'
-                  ? t('gen.status.success')
-                  : phase === 'error'
-                    ? failure?.message
-                    : keyReady
-                      ? t('gen.status.ready')
-                      : t('gen.status.needKey')}
+          {/* ── Run options ─────────────────────────────────────────────── */}
+          <div className="rk-panel gen-opts">
+            <label className="rk-row gen-opt">
+              <span className="rk-row__main">
+                <span className="rk-row__title">Aceptar cuentas moderadas</span>
+                <span className="rk-row__meta">
+                  Añade la cuenta aunque Roblox la marque como moderada; se indica el tipo de baneo.
+                </span>
               </span>
-            </motion.div>
-          </AnimatePresence>
+              <Switch
+                checked={acceptModerated}
+                onChange={handleToggleModerated}
+                aria-label={t('gen.moderatedAria')}
+              />
+            </label>
 
-          <Button
-            variant="primary"
-            className="gen-generate"
-            disabled={running}
-            onClick={() => void handleGenerate()}
-          >
-            {running ? <LoaderCircle className="gen-spinner" size={17} /> : keyReady ? <Sparkles size={17} /> : <Settings2 size={17} />}
-            {running ? phaseLabel(phase, t) : keyReady ? t('gen.generateAdd') : t('gen.configure')}
-          </Button>
-        </div>
-      </section>
-
-      <section className="gen-history" aria-labelledby="gen-history-title">
-        <header className="gen-history__header">
-          <div>
-            <History size={17} aria-hidden="true" />
-            <span>
-              <small>{t('gen.localAudit')}</small>
-              <h2 id="gen-history-title">{t('gen.historyTitle')}</h2>
-            </span>
-            <span className="gen-history__count">{history.length}</span>
+            <label className="rk-row gen-opt">
+              <span className="rk-row__main">
+                <span className="rk-row__title">Reintentar con user y contraseña</span>
+                <span className="rk-row__meta">
+                  Si la cookie generada falla, inicia sesión con el user:pass de BloxGen para
+                  conseguir una cookie válida.
+                </span>
+              </span>
+              <Switch
+                checked={retryCredentials}
+                onChange={handleToggleRetryCredentials}
+                aria-label={t('gen.retryAria')}
+              />
+            </label>
           </div>
-          <Button variant="ghost" className="gen-clear" disabled={clearing || history.length === 0} onClick={() => void handleClear()}>
-            <Trash2 size={14} />
-            {clearing ? t('gen.clearing') : t('gen.clear')}
-          </Button>
-        </header>
 
-        {newestHistory.length === 0 ? (
-          <div className="gen-empty">
-            <span className="gen-empty__mark" aria-hidden="true"><Sparkles size={20} /></span>
-            <div>
-              <strong>{t('gen.emptyTitle')}</strong>
-              <p>{t('gen.emptyCopy')}</p>
+          {/* ── Local audit ─────────────────────────────────────────────── */}
+          <section className="rk-panel" aria-labelledby="gen-history-title">
+            <div className="rk-panel__head">
+              <span className="gen-panel__icon" aria-hidden="true">
+                <History size={14} />
+              </span>
+              <div className="gen-panel__titles">
+                <span className="rk-eyebrow">{t('gen.localAudit')}</span>
+                <h2 id="gen-history-title" className="rk-panel__title">
+                  {t('gen.historyTitle')}
+                </h2>
+              </div>
+              <span className="rk-chip rk-chip--sm u-num">{history.length}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gen-clear"
+                disabled={clearing || history.length === 0}
+                onClick={() => void handleClear()}
+              >
+                <Trash2 size={13} aria-hidden="true" />
+                {clearing ? t('gen.clearing') : t('gen.clear')}
+              </Button>
             </div>
-          </div>
-        ) : (
-          <ul className="gen-history__list">
-            {newestHistory.map((entry, index) => {
-              const successful = entry.result === 'added' || !entry.result;
-              return (
-                <motion.li
-                  key={`${entry.createdAt}-${entry.username}-${index}`}
-                  data-result={entry.result ?? 'added'}
-                  initial={reducedMotion ? false : { opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: reducedMotion ? 0 : 0.2, delay: reducedMotion ? 0 : Math.min(index, 5) * 0.025 }}
-                >
-                  <span className="gen-history__result-icon">
-                    {successful ? <Check size={15} /> : <CircleAlert size={15} />}
-                  </span>
-                  <span className="gen-history__identity">
-                    <strong>{entry.username || t('gen.attemptNoAccount')}</strong>
-                    <small>{resultDescription(entry, t)}</small>
-                  </span>
-                  <span className="gen-history__result">
-                    <strong>{resultLabel(entry, t)}</strong>
-                    <small>{t('gen.stepBadge', { num: entry.step === 'validate' ? '02' : entry.step === 'add' ? '03' : '01' })}</small>
-                  </span>
-                  <time dateTime={entry.createdAt}>
-                    <Clock3 size={13} />
-                    {new Date(entry.createdAt).toLocaleString(undefined, {
-                      month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
-                    })}
-                  </time>
-                  <button
-                    type="button"
-                    className="gen-history__copy"
-                    disabled={!successful || !entry.username || !entry.password}
-                    aria-label={t('gen.copyAria', { name: entry.username || t('gen.copyFallbackName') })}
-                    title={successful && entry.password ? t('gen.copyTitle') : t('gen.noCredentials')}
-                    onClick={() => void handleCopy(entry)}
-                  >
-                    <Copy size={14} />
-                  </button>
-                </motion.li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+
+            {newestHistory.length === 0 ? (
+              <div className="rk-empty gen-empty">
+                <span className="rk-empty__icon" aria-hidden="true">
+                  <Sparkles size={18} />
+                </span>
+                <strong className="rk-empty__title">{t('gen.emptyTitle')}</strong>
+                <p className="rk-empty__text">{t('gen.emptyCopy')}</p>
+              </div>
+            ) : (
+              <div className="rk-table gen-table">
+                <div className="rk-table__head">
+                  <span className="gen-head--gutter" aria-hidden="true" />
+                  <span>{t('accounts.edit.eyebrow')}</span>
+                  <span className="gen-head--result" aria-hidden="true" />
+                  <span className="gen-head--step" aria-hidden="true" />
+                  <span className="gen-head--time" aria-hidden="true" />
+                  <span className="gen-head--actions" aria-hidden="true" />
+                </div>
+
+                <ul className="gen-table__rows">
+                  {newestHistory.map(({ entry, key }, index) => {
+                    const successful = entry.result === 'added' || !entry.result;
+                    return (
+                      <motion.li
+                        key={key}
+                        className="rk-row gen-row"
+                        data-result={entry.result ?? 'added'}
+                        initial={reducedMotion ? false : { opacity: 0, y: 3 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{
+                          duration: reducedMotion ? 0 : 0.15,
+                          delay: reducedMotion ? 0 : Math.min(index, 6) * 0.04,
+                        }}
+                      >
+                        <span className="rk-row__gutter">
+                          <span className="rk-row__tick" />
+                        </span>
+                        <span className="rk-row__main">
+                          <span className="rk-row__title">
+                            {entry.username || t('gen.attemptNoAccount')}
+                          </span>
+                          <span className="rk-row__meta">{resultDescription(entry, t)}</span>
+                        </span>
+                        <span className="rk-table__cell gen-cell--result">
+                          <span
+                            className="rk-chip rk-chip--sm"
+                            data-tone={successful ? 'ok' : 'danger'}
+                          >
+                            {resultLabel(entry, t)}
+                          </span>
+                        </span>
+                        <span className="rk-table__cell rk-table__cell--num gen-cell--step">
+                          {t('gen.stepBadge', { num: stepOrdinal(entry) })}
+                        </span>
+                        <time
+                          className="rk-table__cell rk-table__cell--num u-num"
+                          dateTime={entry.createdAt}
+                        >
+                          <Clock3 size={11} aria-hidden="true" />
+                          {new Date(entry.createdAt).toLocaleString(undefined, {
+                            month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                          })}
+                        </time>
+                        <span className="rk-row__actions">
+                          <button
+                            type="button"
+                            className="gen-copy"
+                            disabled={!successful || !entry.username || !entry.password}
+                            aria-label={t('gen.copyAria', {
+                              name: entry.username || t('gen.copyFallbackName'),
+                            })}
+                            title={
+                              successful && entry.password
+                                ? t('gen.copyTitle')
+                                : t('gen.noCredentials')
+                            }
+                            onClick={() => void handleCopy(entry)}
+                          >
+                            <Copy size={13} aria-hidden="true" />
+                          </button>
+                        </span>
+                      </motion.li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
     </section>
   );
 }

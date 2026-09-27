@@ -4,6 +4,8 @@ import { ipc } from '@/lib/ipc';
 import { createKeyedSessionCache } from '@/lib/sessionCache';
 import { useAccountStore } from '@/stores/accountStore';
 import { useToastStore } from '@/stores/toastStore';
+import { useTranslation } from '@/i18n/useTranslation';
+import { displayName } from '@/lib/filters';
 import type { Account } from '@/types/models';
 import { normalizeCredentialLogin } from './addAccount';
 import { reLoginAccount } from './reLogin';
@@ -64,6 +66,7 @@ export function AccountsContainer(): JSX.Element {
   const update = useAccountStore((state) => state.update);
   const showSuccess = useToastStore((state) => state.showSuccess);
   const showError = useToastStore((state) => state.showError);
+  const { t } = useTranslation();
 
   // ── Avatar resolution (batched, cached by userId across mounts) ──
   const [avatarUrls, setAvatarUrls] = useState<Record<string, string>>(() =>
@@ -145,14 +148,71 @@ export function AccountsContainer(): JSX.Element {
     (id: string, notes: string) => update(id, { notes }),
     [update],
   );
+  // ONE clipboard write for the whole batch (the old forEach clobbered the
+  // clipboard N times); per-account failures come back in failedIds.
+  const handleCopyCookies = useCallback(
+    (selected: Account[]): void => {
+      void (async () => {
+        try {
+          const result = await ipc.copyAccountCookiesBulk(
+            selected.map((account) => account.id),
+          );
+          if (result.failedIds.length === 0) {
+            showSuccess(
+              t('accounts.bulkCopy.success', {
+                copied: result.copied,
+                total: result.total,
+              }),
+            );
+            return;
+          }
+          const failedNames = selected
+            .filter((account) => result.failedIds.includes(account.id))
+            .map((account) => displayName(account));
+          showError(
+            `${t('accounts.bulkCopy.partial', {
+              copied: result.copied,
+              total: result.total,
+            })} ${failedNames.join(', ')}`,
+          );
+        } catch {
+          // The centralized IPC layer already surfaced rejected commands.
+        }
+      })();
+    },
+    [showSuccess, showError, t],
+  );
 
-  const handleCopyCookies = useCallback((selected: Account[]): void => {
-    selected.forEach((account) => void ipc.copyAccountCookie(account.id));
-  }, []);
-
-  const handleKillSelected = useCallback((selected: Account[]): void => {
-    selected.forEach((account) => void ipc.killOneRoblox(account.id));
-  }, []);
+  // Bounded-parallel kill (4 at a time): faster than the serial loop without
+  // risking process-spawn storms; failures are counted, not fatal.
+  const handleKillSelected = useCallback(
+    (selected: Account[]): void => {
+      void (async () => {
+        const settled = await mapWithConcurrency(selected, 4, (account) =>
+          ipc.killOneRoblox(account.id),
+        );
+        let ok = 0;
+        let firstFailure: Account | undefined;
+        for (let index = 0; index < selected.length; index += 1) {
+          if (settled[index]?.status === 'fulfilled') {
+            ok += 1;
+          } else if (firstFailure === undefined) {
+            firstFailure = selected[index];
+          }
+        }
+        if (ok === selected.length) {
+          showSuccess(t('accounts.kill.summary', { ok, total: selected.length }));
+          return;
+        }
+        showError(
+          firstFailure !== undefined
+            ? `${t('accounts.kill.summary', { ok, total: selected.length })} ${t('accounts.kill.firstFailed', { name: displayName(firstFailure) })}`
+            : t('accounts.kill.summary', { ok, total: selected.length }),
+        );
+      })();
+    },
+    [showSuccess, showError, t],
+  );
 
   const handleOpenBrowsers = useCallback((selected: Account[]): void => {
     void (async () => {
@@ -161,8 +221,8 @@ export function AccountsContainer(): JSX.Element {
         if (result.opened === result.total) {
           showSuccess(
             result.total === 1
-              ? 'Navegador de cuenta abierto.'
-              : `${result.opened} navegadores de cuenta abiertos.`,
+              ? t('accounts.browsers.openedOne')
+              : t('accounts.browsers.openedMany', { count: result.opened }),
           );
           return;
         }
@@ -174,7 +234,7 @@ export function AccountsContainer(): JSX.Element {
         const who = account?.nickname?.trim() || account?.username;
         const detail = firstFailure?.error?.trim();
         showError(
-          `${result.opened}/${result.total} navegadores abiertos${
+          `${t('accounts.browsers.mixed', { ok: result.opened, total: result.total })}${
             detail ? ` · ${who ? `${who}: ` : ''}${detail}` : '.'
           }`,
         );
@@ -182,7 +242,7 @@ export function AccountsContainer(): JSX.Element {
         // The centralized IPC layer already surfaced rejected commands.
       }
     })();
-  }, [showSuccess, showError]);
+  }, [showSuccess, showError, t]);
 
   // Re-login is explicit: always open the credential-login browser and refresh
   // the cookie instead of short-circuiting merely because the old cookie works.

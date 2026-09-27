@@ -30,6 +30,7 @@
 //     error is re-thrown so the drag layer can react.
 
 import { create } from 'zustand';
+import { mapWithConcurrency } from '../lib/concurrency';
 import { ipc } from '../lib/ipc';
 import { reorder as reorderIds } from '../lib/selection';
 import { normalizeErrorMessage, useToastStore } from './toastStore';
@@ -101,14 +102,18 @@ export async function runBulkDelete(
   const removedIds: string[] = [];
   let succeeded = 0;
   let failed = 0;
-  for (const id of ids) {
-    try {
-      await remove(id);
+  // Bounded parallelism (4): the backend serializes disk writes anyway, so a
+  // small ceiling removes most of the per-id round-trip latency without an
+  // unbounded fan-out. `mapWithConcurrency` returns positional results, so
+  // every id maps to its own settled entry regardless of completion order.
+  const settled = await mapWithConcurrency([...ids], 4, (id) => remove(id));
+  for (let index = 0; index < ids.length; index += 1) {
+    if (settled[index]?.status === 'fulfilled') {
       succeeded += 1;
-      removedIds.push(id);
-    } catch {
-      // Continue on partial failure (Req 10.8): count it and keep going so the
-      // remaining selected ids are still attempted.
+      removedIds.push(ids[index]);
+    } else {
+      // Continue on partial failure (Req 10.8): count it and keep going so
+      // the remaining selected ids are still attempted.
       failed += 1;
     }
   }

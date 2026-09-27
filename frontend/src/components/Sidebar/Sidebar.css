@@ -1,0 +1,356 @@
+/* ============================================================================
+ * Sidebar — the navigation rail.
+ *
+ * The rail sits directly on the window frame; only the canvas beside it is
+ * raised. Entries are soft 36px pills, the active one marked by a single
+ * sliding pill (framer-motion layoutId) with an accent icon. Collapsed, the rail
+ * keeps its icons, turns section labels into hairlines and moves every label
+ * into a tooltip while leaving it in the DOM for assistive technology.
+ * ==========================================================================*/
+
+.ram-nav {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-1) 10px var(--sp-3);
+  overflow: hidden;
+}
+
+.ram-nav__links {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding-top: var(--sp-2);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.ram-nav__section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ram-nav__section-label {
+  position: relative;
+  display: flex;
+  height: 22px;
+  align-items: center;
+  padding: 0 10px;
+  color: var(--t3);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-semibold);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.ram-nav__section-label > span {
+  transition: opacity var(--dur-quick) var(--ease-out);
+}
+
+/* ── Entries ────────────────────────────────────────────────────────────── */
+.ram-nav__item {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  width: 100%;
+  height: 36px;
+  align-items: center;
+  gap: 11px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--t2);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: var(--w-medium);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
+}
+
+.ram-nav__item:hover {
+  background: var(--hover-fill);
+  color: var(--t1);
+}
+
+.ram-nav__item:active {
+  background: var(--press-fill);
+}
+
+.ram-nav__item.active {
+  background: transparent;
+  color: var(--t1);
+}
+
+.ram-nav__item:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: -2px;
+}
+
+/* The sliding marker behind the active entry. */
+.ram-nav__pill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--r);
+  background:
+    linear-gradient(90deg, var(--ac-soft), transparent 80%),
+    var(--card);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    var(--elev-1);
+}
+
+.ram-nav__pill::before {
+  content: '';
+  position: absolute;
+  top: 9px;
+  bottom: 9px;
+  left: -10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--ac);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--ac) 70%, transparent);
+}
+
+.ram-nav__icon {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  color: var(--t3);
+  place-items: center;
+  transition:
+    color var(--dur-micro) var(--ease-out),
+    transform var(--dur-fast) var(--spring);
+}
+
+.ram-nav__item:hover .ram-nav__icon {
+  color: var(--t2);
+  transform: translateX(1px);
+}
+
+.ram-nav__item.active .ram-nav__icon {
+  color: var(--ac);
+}
+
+.ram-nav__label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity var(--dur-quick) var(--ease-out);
+}
+
+.ram-nav__badge {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  background: var(--ok-fill);
+  color: var(--green);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-semibold);
+  place-items: center;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 26%, transparent);
+}
+
+/* ── Anti-AFK seam ──────────────────────────────────────────────────────── */
+.ram-nav__afk {
+  display: flex;
+  height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 0 10px;
+  border-radius: var(--r);
+  background: var(--hover-fill);
+  color: var(--t2);
+}
+
+.ram-nav__afk-label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────── */
+.ram-nav__footer {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ram-nav__vault {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: var(--r);
+  background: var(--hover-fill);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+
+.ram-nav__vault-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: var(--r-sm);
+  background: var(--ok-fill);
+  color: var(--green);
+  place-items: center;
+}
+
+.ram-nav__vault[data-state='unverified'] .ram-nav__vault-icon {
+  background: var(--warn-fill);
+  color: var(--warn);
+}
+
+.ram-nav__vault[data-state='locked'] .ram-nav__vault-icon {
+  background: var(--hover-fill);
+  color: var(--t3);
+}
+
+.ram-nav__vault-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  line-height: 1.3;
+  transition: opacity var(--dur-quick) var(--ease-out);
+}
+
+.ram-nav__vault-text strong {
+  overflow: hidden;
+  color: var(--t1);
+  font-size: var(--fs-sm);
+  font-weight: var(--w-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ram-nav__vault-text small {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--t3);
+  font-size: var(--fs-xs);
+}
+
+.ram-nav__collapse {
+  display: flex;
+  height: 34px;
+  align-items: center;
+  gap: 11px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--t3);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--w-medium);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
+}
+
+.ram-nav__collapse:hover {
+  background: var(--hover-fill);
+  color: var(--t1);
+}
+
+.ram-nav__collapse:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.ram-nav__collapse > svg {
+  flex: 0 0 20px;
+}
+
+/* ── Collapsed ──────────────────────────────────────────────────────────── */
+.ram-nav[data-collapsed='true'] .ram-nav__label,
+.ram-nav[data-collapsed='true'] .ram-nav__vault-text,
+.ram-nav[data-collapsed='true'] .ram-nav__section-label > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  opacity: 0;
+  white-space: nowrap;
+}
+
+.ram-nav[data-collapsed='true'] .ram-nav__section-label {
+  height: 9px;
+  padding: 0;
+}
+
+.ram-nav[data-collapsed='true'] .ram-nav__section-label::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 12px;
+  left: 12px;
+  height: 1px;
+  background: var(--line);
+}
+
+.ram-nav[data-collapsed='true'] .ram-nav__section:first-child .ram-nav__section-label {
+  display: none;
+}
+
+.ram-nav[data-collapsed='true'] .ram-nav__item,
+.ram-nav[data-collapsed='true'] .ram-nav__collapse {
+  justify-content: center;
+  padding: 0;
+}
+
+.ram-nav[data-collapsed='true'] .ram-nav__pill::before {
+  left: -10px;
+}
+
+.ram-nav[data-collapsed='true'] .ram-nav__badge {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+}
+
+.ram-nav[data-collapsed='true'] .ram-nav__vault {
+  justify-content: center;
+  padding: 7px 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.ram-nav[data-collapsed='true'] .ram-nav__afk {
+  justify-content: center;
+  padding: 0;
+}
+
+.ram-nav[data-collapsed='true'] .ram-nav__afk .ram-nav__afk-label {
+  display: none;
+}

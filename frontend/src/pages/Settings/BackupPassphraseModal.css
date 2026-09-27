@@ -1,0 +1,26 @@
+/* BackupPassphraseModal — passphrase prompt for the encrypted .rambak flow.
+ *
+ * Form chrome comes from styles/form-modal.css (.fm-*) and the dialog surface
+ * from components/Modal; this file only owns the plain-text-cookie warning
+ * strip, which is the one thing in the dialog that is not a shared recipe.
+ * Same tone idiom as `.rk-chip[data-tone="warn"]`: a --warn hairline over
+ * --warn-fill, so it reads identically in all twelve palettes. */
+
+.bkpass__warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid color-mix(in srgb, var(--warn) 42%, transparent);
+  border-radius: var(--r-sm);
+  background: var(--warn-fill);
+  color: var(--warn);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+}
+
+.bkpass__warning svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}

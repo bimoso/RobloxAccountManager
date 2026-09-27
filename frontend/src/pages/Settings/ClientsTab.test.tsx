@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   cancelRobloxDeployment: vi.fn(),
   onRobloxDeploymentProgress: vi.fn(),
   onRobloxProtocolChanged: vi.fn(),
+  onRobloxInstallationsChanged: vi.fn(),
 }));
 
 vi.mock('@/lib/ipc', () => ({ ipc: mocks }));
@@ -144,6 +145,7 @@ beforeEach(() => {
   mocks.restoreRobloxProtocol.mockResolvedValue(PROTOCOL);
   mocks.onRobloxDeploymentProgress.mockResolvedValue(() => undefined);
   mocks.onRobloxProtocolChanged.mockResolvedValue(() => undefined);
+  mocks.onRobloxInstallationsChanged.mockResolvedValue(() => undefined);
   mocks.cancelRobloxDeployment.mockResolvedValue(true);
 });
 
@@ -208,6 +210,38 @@ describe('ClientsTab', () => {
     expect(mocks.activateRobloxProtocol).toHaveBeenCalledWith(FISHSTRAP.id);
     expect(mocks.saveSettings).not.toHaveBeenCalled();
     expect(await screen.findByText(/previous protocol binding/i)).toBeInTheDocument();
+    // Handing roblox:// to Fishstrap leaves the Manager's own route untouched.
+    const route = screen.getByRole('group', { name: /how ram launches sessions/i });
+    expect(within(route).getByRole('button', { name: /direct executable/i })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getAllByText('Roblox Player').length).toBeGreaterThan(0);
+  });
+
+  it('switches the Manager route independently of the Windows handlers', async () => {
+    const user = userEvent.setup();
+    render(<ClientsTab />);
+    await screen.findByText('Fishstrap client');
+    const route = screen.getByRole('group', { name: /how ram launches sessions/i });
+    await user.click(within(route).getByRole('button', { name: /windows protocol/i }));
+    await waitFor(() =>
+      expect(mocks.saveSettings).toHaveBeenCalledWith({ robloxLaunchMode: 'protocol' }),
+    );
+    expect(mocks.activateRobloxProtocol).not.toHaveBeenCalled();
+    expect(within(route).getByRole('button', { name: /windows protocol/i })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('reads the cached sweep on mount and only walks the disk on Scan', async () => {
+    const user = userEvent.setup();
+    render(<ClientsTab />);
+    await screen.findByText('Fishstrap client');
+    expect(mocks.getRobloxClientsSnapshot).toHaveBeenLastCalledWith(false);
+    await user.click(screen.getByRole('button', { name: /scan/i }));
+    await waitFor(() => expect(mocks.getRobloxClientsSnapshot).toHaveBeenLastCalledWith(true));
   });
 
   it('installs the latest deployment when the GUID field is blank', async () => {

@@ -1,0 +1,21 @@
+/* Brand — the RAM mark and wordmark. */
+
+.ram-logo {
+  display: block;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  box-shadow:
+    0 6px 16px -8px color-mix(in srgb, var(--ac) 90%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.ram-wordmark {
+  color: var(--t1);
+  font-family: var(--font-head);
+  font-size: 20px;
+  font-stretch: 82%;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  line-height: 1;
+}
+

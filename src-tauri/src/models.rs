@@ -196,6 +196,12 @@ pub struct Settings {
     /// materialize a number into every user's `settings.json` on the next save.
     #[serde(rename = "launchSpawnGapMs", skip_serializing_if = "Option::is_none")]
     pub launch_spawn_gap_ms: Option<u64>,
+    /// Remove the Roblox client's per-session traces (cookie jar, web storage,
+    /// Player logs and the per-user state folder) when an account's client
+    /// closes and before a client is spawned onto an idle machine, so two
+    /// accounts never share leftovers. Absent means enabled.
+    #[serde(rename = "clearTracesOnClose", skip_serializing_if = "Option::is_none")]
+    pub clear_traces_on_close: Option<bool>,
     /// Catch-all preserving any unrecognized/legacy field on round-trip.
     #[serde(flatten)]
     pub extra: Map<String, Value>,

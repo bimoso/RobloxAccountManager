@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react';
-import { Check, FolderPen, LoaderCircle } from 'lucide-react';
+import { Check } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { useTranslation } from '@/i18n/useTranslation';
@@ -80,25 +80,22 @@ export function PackageEditModal({
   const isEditing = pkg !== null;
 
   return (
-    <Modal open={open} onClose={onClose} titleId={titleId}>
-      <div className="package-modal">
-        <header className="package-modal__header">
-          <div className="package-modal__header-icon" aria-hidden="true">
-            <FolderPen size={19} />
-          </div>
-          <div>
-            <h2 id={titleId}>{isEditing ? t('packages.modal.editTitle') : t('packages.create')}</h2>
-            <p>
-              {isEditing
-                ? t('packages.modal.editDesc')
-                : t('packages.modal.createDesc')}
-            </p>
-          </div>
+    <Modal open={open} onClose={onClose} titleId={titleId} size="md">
+      <div className="fm-root pkg-modal">
+        <header className="fm-head">
+          <span className="fm-eyebrow">{t('packages.kind')}</span>
+          <h2 id={titleId} className="fm-title">
+            {isEditing ? t('packages.modal.editTitle') : t('packages.create')}
+          </h2>
+          <p className="fm-hint">
+            {isEditing ? t('packages.modal.editDesc') : t('packages.modal.createDesc')}
+          </p>
         </header>
 
-        <label className="package-modal__field">
+        <label className="fm-field">
           <span>{t('packages.modal.name')}</span>
           <input
+            className="fm-input"
             type="text"
             value={name}
             placeholder={t('packages.modal.namePlaceholder')}
@@ -106,38 +103,40 @@ export function PackageEditModal({
           />
         </label>
 
-        <section className="package-modal__members" aria-labelledby={`${titleId}-members`}>
-          <div className="package-modal__members-head">
+        <section className="pkg-modal__members" aria-labelledby={`${titleId}-members`}>
+          <div className="pkg-modal__members-head">
             <span id={`${titleId}-members`}>{t('packages.modal.accounts')}</span>
-            <span>{t('packages.modal.selectedCount', { count: selectedIds.length })}</span>
+            <span className="rk-chip rk-chip--sm u-num">
+              {t('packages.modal.selectedCount', { count: selectedIds.length })}
+            </span>
           </div>
 
           {accounts.length === 0 ? (
-            <p className="package-modal__no-accounts">
-              {t('packages.modal.noAccounts')}
-            </p>
+            <p className="fm-hint pkg-modal__no-accounts">{t('packages.modal.noAccounts')}</p>
           ) : (
-            <div className="package-modal__list">
+            <div className="rk-panel pkg-modal__list">
               {accounts.map((account) => {
                 const label = displayAccount(account);
                 const isSelected = selected.has(account.id);
                 return (
                   <label
                     key={account.id}
-                    className={`package-modal__account${isSelected ? ' is-selected' : ''}`}
+                    className={`rk-row pkg-modal__account${isSelected ? ' is-selected' : ''}`}
                   >
-                    <span className="package-modal__account-avatar" aria-hidden="true">
+                    <span className="rk-row__gutter">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleAccount(account.id)}
+                      />
+                    </span>
+                    <span className="pkg-avatar" aria-hidden="true">
                       {label.slice(0, 1).toUpperCase() || '?'}
                     </span>
-                    <span className="package-modal__account-copy">
-                      <strong>{label}</strong>
-                      <small>@{account.username}</small>
+                    <span className="rk-row__main">
+                      <strong className="rk-row__title">{label}</strong>
+                      <small className="rk-row__meta">@{account.username}</small>
                     </span>
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleAccount(account.id)}
-                    />
                   </label>
                 );
               })}
@@ -145,9 +144,13 @@ export function PackageEditModal({
           )}
         </section>
 
-        {error ? <p className="package-modal__error" role="alert">{error}</p> : null}
+        {error ? (
+          <p className="fm-error" role="alert">
+            {error}
+          </p>
+        ) : null}
 
-        <footer className="package-modal__footer">
+        <footer className="fm-footer">
           <Button variant="secondary" onClick={onClose} disabled={saving}>
             {t('common.cancel')}
           </Button>
@@ -157,7 +160,7 @@ export function PackageEditModal({
             disabled={saving || name.trim().length === 0}
           >
             {saving ? (
-              <LoaderCircle className="package-modal__saving" size={15} aria-hidden="true" />
+              <span className="rk-spin" aria-hidden="true" />
             ) : (
               <Check size={15} aria-hidden="true" />
             )}

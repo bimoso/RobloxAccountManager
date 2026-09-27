@@ -1,0 +1,63 @@
+/* ============================================================================
+ * Card — a thin wrapper over the `.rk-panel` primitive.
+ *
+ * Everything structural (hairline, radius, surface, padding) comes from
+ * `.rk-panel` + `.rk-panel__body` in styles/rackline.css; this file only adds
+ * what a panel cannot express on its own: the positioning context for the
+ * selection control, and the selected ring.
+ *
+ * The inline `transition: border-color …, box-shadow …` this component used to
+ * set on every card is gone. Because it was applied as an element style it
+ * overrode any transition a page stylesheet declared for its own card class,
+ * which silently killed page-authored hover transitions across the app.
+ * ==========================================================================*/
+
+.rk-card {
+  position: relative;
+  box-sizing: border-box;
+  color: var(--t1);
+}
+
+.rk-card[data-selected='true'] {
+  border-color: var(--ac);
+  box-shadow: 0 0 0 1px var(--ac);
+}
+
+/* The selection control sits in the card's top-right corner and never covers
+   the card's own status affordances. */
+.card-check {
+  position: absolute;
+  top: var(--sp-2);
+  right: var(--sp-2);
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1.5px var(--line-strong);
+  color: var(--t1);
+  font-size: var(--fs-xs);
+  line-height: 1;
+  cursor: pointer;
+  place-items: center;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    border-color var(--dur-micro) var(--ease-out);
+}
+
+.card-check:hover {
+  background: var(--surf-3);
+}
+
+.card-check[aria-checked='true'] {
+  border-color: var(--ac);
+  background: var(--ac);
+  color: var(--on-accent);
+}
+
+.card-check:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: 1px;
+}

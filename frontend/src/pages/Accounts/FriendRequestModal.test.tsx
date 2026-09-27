@@ -43,11 +43,11 @@ describe('FriendRequestModal', () => {
     );
 
     expect(container.querySelector('.friend-request-modal')).toBeInTheDocument();
-    await user.type(screen.getByLabelText(/User ID o enlace de perfil/i), 'usuario123');
-    await user.click(screen.getByRole('button', { name: 'Enviar solicitud' }));
+    await user.type(screen.getByLabelText(/User ID or profile link/i), 'usuario123');
+    await user.click(screen.getByRole('button', { name: 'Send request' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'Escribe un User ID o pega un perfil oficial de Roblox.',
+      'Enter a User ID or paste an official Roblox profile.',
     );
     expect(sendRequest).not.toHaveBeenCalled();
   });
@@ -69,15 +69,15 @@ describe('FriendRequestModal', () => {
     );
 
     await user.type(
-      screen.getByLabelText(/User ID o enlace de perfil/i),
+      screen.getByLabelText(/User ID or profile link/i),
       'https://www.roblox.com/users/123456/profile',
     );
-    await user.click(screen.getByRole('button', { name: 'Enviar solicitud' }));
+    await user.click(screen.getByRole('button', { name: 'Send request' }));
 
-    expect(await screen.findByText('Lote completado con alertas')).toBeInTheDocument();
-    expect(screen.getByText('1 de 2 aceptadas')).toBeInTheDocument();
+    expect(await screen.findByText('Batch finished with warnings')).toBeInTheDocument();
+    expect(screen.getByText('1 of 2 accepted')).toBeInTheDocument();
     expect(screen.getByText('Friend request is pending.')).toBeInTheDocument();
-    expect(screen.getByText('Enviada')).toBeInTheDocument();
+    expect(screen.getByText('Sent')).toBeInTheDocument();
     expect(sendRequest.mock.calls).toEqual([
       ['cookie-1', '123456'],
       ['cookie-2', '123456'],
@@ -100,22 +100,22 @@ describe('FriendRequestModal', () => {
       />,
     );
 
-    await user.type(screen.getByLabelText(/User ID o enlace de perfil/i), '123456');
-    await user.click(screen.getByRole('button', { name: 'Enviar solicitud' }));
+    await user.type(screen.getByLabelText(/User ID or profile link/i), '123456');
+    await user.click(screen.getByRole('button', { name: 'Send request' }));
 
-    expect(await screen.findByText(/Enviando desde/i)).toHaveTextContent('Nebula');
-    expect(screen.getByRole('progressbar', { name: /Progreso del envío/i })).toHaveAttribute(
+    expect(await screen.findByText(/Sending from/i)).toHaveTextContent('Nebula');
+    expect(screen.getByRole('progressbar', { name: /Send progress/i })).toHaveAttribute(
       'aria-valuenow',
       '1',
     );
-    expect(screen.getByRole('button', { name: 'Cerrar' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
 
     await act(async () => {
       resolveRequest?.({ ok: true });
     });
 
     await waitFor(() => {
-      expect(screen.getByText('Solicitudes enviadas')).toBeInTheDocument();
+      expect(screen.getByText('Requests sent')).toBeInTheDocument();
     });
   });
 });

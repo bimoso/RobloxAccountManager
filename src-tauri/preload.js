@@ -83,6 +83,8 @@
     removeAccount: (id) => invoke('accounts_remove', { id }),
     updateAccount: (id, data) => invoke('accounts_update', { id, data }),
     reorderAccounts: (ids) => invoke('accounts_reorder', { ids }),
+    exportAccountsEncrypted: (passphrase) => invoke('accounts_export_encrypted', { passphrase }),
+    importAccountsEncrypted: (passphrase) => invoke('accounts_import_encrypted', { passphrase }),
 
     // ── Packages ──
     loadPackages: () => invoke('packages_load'),
@@ -114,7 +116,12 @@
     launchRoblox: (id, cookie, target) =>
       invoke('roblox_launch', { accountId: id, cookie, target }),
     openExternal: (url) => invoke('open_external', { url }),
-    getRobloxClientsSnapshot: () => invoke('roblox_clients_snapshot'),
+    openLogsFolder: () => invoke('logs_open_folder'),
+    // Without `fresh` the backend answers from its cached sweep (memory, then
+    // the copy persisted by the previous session) and verifies in the
+    // background; `fresh: true` waits for a full registry + disk walk.
+    getRobloxClientsSnapshot: (fresh) =>
+      invoke('roblox_clients_snapshot', { fresh: fresh === true }),
     scanRobloxInstallations: () => invoke('roblox_installations_scan'),
     addRobloxCustomPreset: (path, displayName) =>
       invoke('roblox_custom_preset_add', {
@@ -142,6 +149,10 @@
       on('roblox://deployment-progress', (e) => cb(e.payload)),
     // Fires when something outside this app rewrites the roblox:// handlers.
     onRobloxProtocolChanged: (cb) => on('roblox://protocol-changed', () => cb()),
+    // Fires when a background verification of the cached client sweep finds
+    // the installed clients changed (one added, removed or moved).
+    onRobloxInstallationsChanged: (cb) =>
+      on('roblox://installations-changed', () => cb()),
 
     // ── Settings_Store ──
     loadSettings: () => invoke('settings_load'),
@@ -221,6 +232,7 @@
     openAccountBrowser: (id) => invoke('browser_open', { accountId: id }),
     openAccountBrowsers: (ids) => invoke('browser_open_batch', { accountIds: ids }),
     copyAccountCookie: (id) => invoke('browser_copy_cookie', { accountId: id }),
+    copyAccountCookiesBulk: (ids) => invoke('browser_copy_cookies_bulk', { accountIds: ids }),
     getWayfernStatus: () => invoke('browser_wayfern_status'),
     installWayfern: () => invoke('browser_wayfern_install'),
     onWayfernProgress: (cb) => on('wayfern://download-progress', (e) => cb(e.payload)),

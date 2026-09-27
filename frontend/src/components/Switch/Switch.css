@@ -1,61 +1,81 @@
+/* ============================================================================
+ * Switch — the on/off toggle used by every setting row.
+ *
+ * A 38×22 pill with a floating knob. Off reads as a recessed well, on reads as
+ * the accent; the knob keeps a soft shadow so it looks like it sits on top.
+ * ==========================================================================*/
+
 .ram-switch {
   position: relative;
   display: inline-flex;
+  width: 38px;
+  height: 22px;
+  flex: 0 0 38px;
   align-items: center;
-  width: 42px;
-  height: 24px;
   padding: 0;
-  flex: 0 0 42px;
-  border: 1px solid var(--bd2);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.065);
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--s4);
+  box-shadow: inset 0 1px 2px color-mix(in srgb, #000 30%, transparent);
   cursor: pointer;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.28);
-  transition: background 180ms var(--smooth), border-color 180ms var(--smooth),
-    box-shadow 180ms var(--smooth);
+  transition:
+    background var(--dur-quick) var(--ease-out),
+    box-shadow var(--dur-quick) var(--ease-out);
 }
 
 .ram-switch > span {
   position: absolute;
-  top: 50%;
+  top: 3px;
   left: 3px;
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--t2);
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.36);
-  transform: translate(0, -50%);
-  transition: transform 220ms var(--spring), background 180ms var(--smooth);
-}
-
-.ram-switch.is-checked {
-  border-color: color-mix(in srgb, var(--ac) 62%, white 8%);
-  background: color-mix(in srgb, var(--ac) 72%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 0 0 3px color-mix(in srgb, var(--ac) 9%, transparent);
-}
-
-.ram-switch.is-checked > span {
   background: #fff;
-  transform: translate(19px, -50%);
+  box-shadow:
+    0 1px 3px color-mix(in srgb, #000 35%, transparent),
+    0 0 0 0.5px color-mix(in srgb, #000 10%, transparent);
+  transform: translateX(0);
+  transition: transform var(--dur-fast) var(--spring);
 }
 
 .ram-switch:hover:not(:disabled) {
-  border-color: var(--bd2);
+  background: color-mix(in srgb, var(--s4) 80%, var(--t3));
+}
+
+.ram-switch.is-checked {
+  background: var(--ac);
+  box-shadow:
+    inset 0 1px 2px color-mix(in srgb, #000 18%, transparent),
+    0 0 12px -2px color-mix(in srgb, var(--ac) 70%, transparent);
+}
+
+.ram-switch.is-checked:hover:not(:disabled) {
+  background: var(--ac-h);
+}
+
+.ram-switch.is-checked > span {
+  transform: translateX(16px);
+}
+
+.ram-switch:active:not(:disabled) > span {
+  width: 19px;
+}
+
+.ram-switch.is-checked:active:not(:disabled) > span {
+  transform: translateX(13px);
 }
 
 .ram-switch:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  outline: 0;
+  box-shadow: var(--focus-ring);
 }
 
 .ram-switch:disabled {
   cursor: not-allowed;
-  opacity: 0.44;
+  opacity: 0.42;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .ram-switch,
-  .ram-switch > span {
-    transition: none;
-  }
+body.light .ram-switch:not(.is-checked) {
+  background: var(--s4);
 }
+

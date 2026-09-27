@@ -1,15 +1,16 @@
 import {
   createElement,
   useEffect,
+  useLayoutEffect,
   useRef,
+  useState,
   type CSSProperties,
   type ComponentType,
   type ReactNode,
 } from 'react';
 import {
-  AnimatePresence,
   motion,
-  useIsPresent,
+  useAnimationControls,
   useReducedMotion,
   type Transition,
 } from 'framer-motion';
@@ -18,12 +19,14 @@ import { useNavigationStore, type PageId } from '@/stores/navigationStore';
 import { useTranslation } from '@/i18n/useTranslation';
 import { AccountsContainer } from '@/pages/Accounts/AccountsContainer';
 import { PackagesPage } from '@/pages/Packages';
+import { GamesPage } from '@/pages/Games';
 import ChartsPage from '@/pages/Charts';
 import WeaoPage from '@/pages/Weao';
 import Generator from '@/pages/Generator';
 import { Settings } from '@/pages/Settings';
 import { LogsPage } from '@/pages/Logs';
 import { CreditsPage } from '@/pages/Credits';
+import { PageActivityContext } from './pageActivity';
 
 /**
  * Base duration (ms) of a page transition. Sits inside the 200–320ms range
@@ -41,6 +44,7 @@ const PAGE_DURATION_MS = 240;
 const PAGE_COMPONENTS: Record<PageId, ComponentType> = {
   accounts: AccountsContainer,
   packages: PackagesPage,
+  games: GamesPage,
   charts: ChartsPage,
   weao: WeaoPage,
   generator: Generator,
@@ -49,35 +53,37 @@ const PAGE_COMPONENTS: Record<PageId, ComponentType> = {
   credits: CreditsPage,
 };
 
+/** The resting pose every page settles into. */
+const CENTER_POSE = { x: 0, y: 0, opacity: 1 };
+
 /**
- * Motion variants for a page transition. The previous full-viewport sweep made
- * a desktop tool feel like a slow carousel. A short directional drift keeps
+ * Where an incoming page starts. The previous full-viewport sweep made a
+ * desktop tool feel like a slow carousel. A short directional drift keeps
  * spatial continuity without making the user's eyes cross the whole window.
  * Only transforms and opacity animate, so the compositor can keep the motion
- * responsive while the destination page mounts.
+ * responsive while the destination page paints.
  *
- * Direction (from {@link navDirection}) decides which side the incoming page
- * enters from and, symmetrically, which side the outgoing page leaves toward:
- * - `'from-left'` (forward) enters from a small negative offset.
- * - `'from-right'` (backward) enters from a small positive offset.
+ * The incoming page never fades. Both layers occupy the same box during a
+ * transition, so a semi-transparent arrival lets the outgoing page's headings
+ * and rows read straight through it. Entering fully opaque, on top, it simply
+ * slides over the page it replaces, which is both cleaner and cheaper.
  */
-const pageVariants = {
-  enter: (direction: NavDirection) => ({
+function enterPose(direction: NavDirection) {
+  return {
     x: direction === 'from-left' ? -26 : direction === 'from-right' ? 26 : 0,
     y: 4,
-    opacity: 0,
-  }),
-  center: {
-    x: 0,
-    y: 0,
     opacity: 1,
-  },
-  exit: (direction: NavDirection) => ({
+  };
+}
+
+/** Where an outgoing page drifts to while it dissolves, underneath. */
+function exitPose(direction: NavDirection) {
+  return {
     x: direction === 'from-left' ? 14 : direction === 'from-right' ? -14 : 0,
     y: -2,
     opacity: 0,
-  }),
-};
+  };
+}
 
 /** The transition area fills the available content region and clips the small
  * directional drift so no transient scrollbars appear. */
@@ -89,11 +95,18 @@ const routerStyle: CSSProperties = {
 };
 
 /** Each page is absolutely positioned to fill the transition area so outgoing
- * and incoming content can crossfade without reflowing the shell. */
+ * and incoming content can crossfade without reflowing the shell.
+ *
+ * The opaque background is load-bearing, not decoration: both layers are
+ * stacked in the same box during a transition, and with transparent backgrounds
+ * you read the outgoing page's text straight through the incoming one — two
+ * headings and two toolbars overlapping for the length of the animation. An
+ * opaque surface makes the crossfade read as one page replacing another. */
 const pageStyle: CSSProperties = {
   position: 'absolute',
   inset: 0,
   overflow: 'auto',
+  background: 'var(--canvas)',
 };
 
 /**
@@ -110,63 +123,116 @@ export interface PageRouterProps {
 }
 
 /**
- * One presence-aware page layer. Exiting content becomes inert immediately so
- * a fading page cannot receive a ghost click or retain keyboard focus.
+ * One kept-alive page layer.
+ *
+ * A layer is mounted the first time its page is visited and never unmounted
+ * again: leaving a page only animates it out and parks it with
+ * `visibility: hidden` (which keeps its scroll position, unlike
+ * `display: none`), so coming back restores exactly what the user left. While
+ * parked the layer is inert and `aria-hidden`, so a hidden page can neither
+ * receive a ghost click nor retain keyboard focus, and it tells its content it
+ * is inactive through {@link PageActivityContext}.
  */
-function TransitionPage({
+function PageLayer({
+  active,
+  direction,
   content,
   transition,
-  shouldFocus,
   pageLabel,
 }: {
-  /** Concrete page content rendered inside the animated layer. */
+  /** Whether this layer's page is the one on screen. */
+  active: boolean;
+  /** Direction of the navigation that changed `active` (`'none'` at mount). */
+  direction: NavDirection;
+  /** Concrete page content rendered inside the layer. */
   content: ReactNode;
   /** Motion transition shared with the router. */
   transition: Transition;
-  /** Moves focus into the destination after a genuine navigation. */
-  shouldFocus: boolean;
-  /** Human-readable active-page label. */
+  /** Human-readable page label. */
   pageLabel: string;
 }): JSX.Element {
-  const isPresent = useIsPresent();
+  const controls = useAnimationControls();
   const layerRef = useRef<HTMLDivElement>(null);
+  // Parked layers keep their box (and scroll offset) but are not painted.
+  const [parked, setParked] = useState(!active);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const animatedOnceRef = useRef(false);
 
   useEffect(() => {
     const layer = layerRef.current;
     if (!layer) return;
-    if (isPresent) layer.removeAttribute('inert');
+    if (active) layer.removeAttribute('inert');
     else layer.setAttribute('inert', '');
-  }, [isPresent]);
+  }, [active]);
+
+  // Before paint: an arriving page is posed at its entry offset and slid to
+  // rest; a leaving page drifts out and is parked once the drift finishes.
+  useLayoutEffect(() => {
+    if (active) {
+      setParked(false);
+      const firstShow = !animatedOnceRef.current;
+      animatedOnceRef.current = true;
+      if (firstShow && direction === 'none') {
+        controls.set(CENTER_POSE);
+        return;
+      }
+      controls.set(enterPose(direction));
+      void controls.start(CENTER_POSE, transition);
+      return;
+    }
+    animatedOnceRef.current = true;
+    void controls.start(exitPose(direction), transition).then(() => {
+      // The page may have been re-activated mid-exit; never park it then.
+      if (!activeRef.current) setParked(true);
+    });
+    // Only an activity change starts a transition; `direction` and
+    // `transition` describe that same navigation and must not restart it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   useEffect(() => {
-    if (!isPresent || !shouldFocus) return;
+    if (!active || direction === 'none') return;
     const frame = window.requestAnimationFrame(() => {
       layerRef.current?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [isPresent, shouldFocus]);
+    // Focus follows a genuine navigation into this page, not later re-renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   return (
-    <motion.div
-      ref={layerRef}
-      style={{ ...pageStyle, pointerEvents: isPresent ? 'auto' : 'none', outline: 'none' }}
-      variants={pageVariants}
-      initial="enter"
-      animate="center"
-      exit="exit"
-      transition={transition}
-      role="main"
-      aria-label={pageLabel}
-      aria-hidden={isPresent ? undefined : true}
-      tabIndex={-1}
-    >
-      {content}
-    </motion.div>
+    <PageActivityContext.Provider value={active}>
+      <motion.div
+        ref={layerRef}
+        style={{
+          ...pageStyle,
+          visibility: parked ? 'hidden' : 'visible',
+          pointerEvents: active ? 'auto' : 'none',
+          zIndex: active ? 1 : 0,
+          outline: 'none',
+        }}
+        initial={false}
+        animate={controls}
+        role="main"
+        aria-label={pageLabel}
+        aria-hidden={active ? undefined : true}
+        data-page-active={active ? 'true' : 'false'}
+        tabIndex={-1}
+      >
+        {content}
+      </motion.div>
+    </PageActivityContext.Provider>
   );
 }
 
 /**
- * Renders the active navigation page and animates transitions between pages.
+ * Renders the navigation pages and animates transitions between them.
+ *
+ * Pages are kept alive: the first visit mounts a page's layer and later
+ * navigations only toggle which layer is active, so a page's scroll position,
+ * filters, selection and in-flight work all survive a round trip. Pages never
+ * visited are never mounted, so startup cost does not grow with the sidebar.
  *
  * The active page and its 1-based ordinal index come from the
  * `navigationStore`. The previous ordinal is retained across renders in a ref
@@ -175,17 +241,12 @@ function TransitionPage({
  * where the active page changes, the ref still holds the previous ordinal, and
  * an effect advances it afterwards.
  *
- * Transitions run through framer-motion's `AnimatePresence` in its default
- * (synchronous) mode, so navigating again mid-transition does not queue behind
- * the in-flight one — the outgoing page keeps animating out from its current
- * position while the new page animates in, and `AnimatePresence` removes each
- * page from the DOM only once its exit completes, never leaving a page stuck
- * (Requirement 4.6). `initial={false}` suppresses any animation on the very
- * first mount so only genuine navigations animate.
- *
- * Every transition animates only transform and opacity over a short spring,
- * collapsing to 0ms when the user prefers reduced motion so the destination
- * appears immediately (Requirement 6.2).
+ * Navigating again mid-transition does not queue: the outgoing layer keeps
+ * drifting out from its current pose while the new layer arrives, and a layer
+ * re-activated before its exit finished is simply slid back in (Requirement
+ * 4.6). Every transition animates only transform and opacity over a short
+ * spring, collapsing to 0ms when the user prefers reduced motion so the
+ * destination appears immediately (Requirement 6.2).
  */
 export function PageRouter({ pages }: PageRouterProps): JSX.Element {
   const activePage = useNavigationStore((state) => state.activePage);
@@ -201,6 +262,15 @@ export function PageRouter({ pages }: PageRouterProps): JSX.Element {
     previousIndexRef.current = activeIndex;
   }, [activeIndex]);
 
+  // Every page visited so far, in first-visit order. Appended during render so
+  // the destination paints in the same commit as the navigation; the list is
+  // append-only, which keeps this write idempotent across re-renders.
+  const visitedRef = useRef<PageId[]>([activePage]);
+  if (!visitedRef.current.includes(activePage)) {
+    visitedRef.current = [...visitedRef.current, activePage];
+  }
+  const visited = visitedRef.current;
+
   const reducedMotion = useReducedMotion() ?? false;
   const duration = motionDuration(PAGE_DURATION_MS, reducedMotion) / 1000;
   const transition: Transition = reducedMotion
@@ -211,30 +281,21 @@ export function PageRouter({ pages }: PageRouterProps): JSX.Element {
         opacity: { duration: Math.min(duration, 0.16), ease: [0.2, 0, 0, 1] },
       };
 
-  const content =
-    pages?.[activePage] ?? createElement(PAGE_COMPONENTS[activePage]);
-  const pageLabel = t('router.pageAria', { page: t(`nav.${activePage}`) });
-
   return (
     <div style={routerStyle}>
-      {/*
-        `mode` is left at its default ("sync"): the outgoing page keeps
-        animating while the incoming one enters, which is what makes an
-        interrupted navigation resume from the current position (Requirement
-        4.6). `custom` feeds the current direction to the exit variant of the
-        page currently leaving.
-      */}
-      <AnimatePresence initial={false} custom={direction}>
-        <TransitionPage
-          key={activePage}
-          content={content}
+      {visited.map((pageId) => (
+        <PageLayer
+          key={pageId}
+          active={pageId === activePage}
+          direction={direction}
+          content={pages?.[pageId] ?? createElement(PAGE_COMPONENTS[pageId])}
           transition={transition}
-          shouldFocus={direction !== 'none'}
-          pageLabel={pageLabel}
+          pageLabel={t('router.pageAria', { page: t(`nav.${pageId}`) })}
         />
-      </AnimatePresence>
+      ))}
     </div>
   );
 }
 
 export default PageRouter;
+

@@ -3,6 +3,8 @@ import {
   useId,
   useRef,
   useState,
+  type CSSProperties,
+  type KeyboardEvent,
 } from 'react';
 import {
   AtSign,
@@ -17,6 +19,7 @@ import { Modal } from '@/components/Modal';
 import { Switch } from '@/components/Switch';
 import { ipc } from '@/lib/ipc';
 import { getPersisted, PERSISTENCE_KEYS, setPersisted } from '@/lib/persistence';
+import { useTranslation } from '@/i18n/useTranslation';
 import type { Account } from '@/types/models';
 import type { WayfernProgress } from '@/types/models';
 import type { ChromeDownloadProgress, UnlistenFn } from '@/types/window';
@@ -111,6 +114,30 @@ function batchTone(summary: BatchSummary | CredentialSummary): 'clean' | 'mixed'
 }
 
 /**
+ * Roving-tabindex arithmetic for the `.acc-seg` tab strip: horizontal and
+ * vertical arrows wrap around, Home/End jump to the ends. Returns `null` for a
+ * key the strip does not own, so that event stays unhandled and reaches the
+ * dialog. Kept module-local (rather than exported to LaunchModal) so this file
+ * only exports components; the shared part of the strip is its CSS recipe.
+ */
+function rovingTarget(count: number, index: number, key: string): number | null {
+  if (count === 0) return null;
+  if (key === 'ArrowRight' || key === 'ArrowDown') return (index + 1) % count;
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return (index - 1 + count) % count;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  return null;
+}
+
+/**
+ * Meter fill expressed as a `--fill` scale factor for `.acc-meter__fill`, which
+ * animates `transform: scaleX()` rather than `width`.
+ */
+function meterStyle(ratio: number): CSSProperties {
+  return { '--fill': Math.max(0, Math.min(1, ratio)) } as CSSProperties;
+}
+
+/**
  * Modal for adding an account through one of three methods:
  *
  * - **Iniciar sesión con Roblox** — invokes `roblox_open_login`, shows the
@@ -122,7 +149,7 @@ function batchTone(summary: BatchSummary | CredentialSummary): 'clean' | 'mixed'
  * - **User : Pass** — bulk `username:password` combos, each driven through the
  *   humanized auto-login (`roblox_login_credentials`) sequentially, with per-combo
  *   progress and a cancel that stops cleanly between combos (delegated to
- *   {@link processCombos}).
+ *   {@link processCredentials}).
  */
 export function AddAccountModal({
   open,
@@ -132,7 +159,10 @@ export function AddAccountModal({
   onUpdate,
 }: AddAccountModalProps): JSX.Element {
   const titleId = useId();
+  const tabPrefix = useId();
   const [mode, setMode] = useState<AddMode>('login');
+  const { t } = useTranslation();
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [acceptModerated, setAcceptModerated] = useState(
     () => getPersisted<boolean>(PERSISTENCE_KEYS.acceptModerated) === true,
   );
@@ -374,248 +404,284 @@ export function AddAccountModal({
     });
   };
 
+  const activeIndex = TABS.findIndex((entry) => entry.id === mode);
+  const panelId = `${tabPrefix}-panel`;
+  const activeTabId = `${tabPrefix}-${mode}`;
+
+  const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    const next = rovingTarget(TABS.length, activeIndex, event.key);
+    if (next === null) return;
+    event.preventDefault();
+    setMode(TABS[next].id);
+    tabRefs.current[next]?.focus();
+  };
+
+  const cookieCount = parseCookieLines(cookieText).length;
+  const comboCount = parseCredentialLines(comboText).length;
+
   return (
-    <Modal open={open} onClose={onClose} titleId={titleId}>
-      <div className="addacc">
-        <div className="addacc__head">
-          <span className="addacc__eyebrow">Provisioning / Accounts</span>
-          <h2 id={titleId} className="addacc__title">
+    <Modal open={open} onClose={onClose} titleId={titleId} size="md">
+      <div className="fm-root addacc">
+        <div className="fm-head">
+          <h2 id={titleId} className="fm-title">
             Añadir cuenta
           </h2>
-          <p className="addacc__subtitle">
+          <p className="fm-hint">
             Elige cómo quieres importar la cuenta: sesión, cookie o credenciales.
           </p>
         </div>
 
-        <div className="addacc__tabs" role="tablist" aria-label="Método para añadir cuenta">
-          {TABS.map(({ id, label, Icon }) => (
+        <div
+          className="acc-seg"
+          role="tablist"
+          aria-label={t('accounts.add.methodAria')}
+          onKeyDown={onTabKeyDown}
+        >
+          {TABS.map(({ id, label, Icon }, index) => (
             <button
               key={id}
+              id={`${tabPrefix}-${id}`}
+              ref={(node) => {
+                tabRefs.current[index] = node;
+              }}
               type="button"
               role="tab"
               aria-selected={mode === id}
-              className="addacc__tab"
+              aria-controls={panelId}
+              tabIndex={mode === id ? 0 : -1}
+              className="acc-seg__tab"
               onClick={() => setMode(id)}
             >
-              <Icon size={16} aria-hidden="true" />
-              <span>{label}</span>
+              <Icon size={15} aria-hidden="true" />
+              <span className="acc-seg__copy">
+                <strong>{label}</strong>
+              </span>
             </button>
           ))}
         </div>
 
-        {mode !== 'login' && (
-          <label className="addacc__moderated">
-            <Switch
-              checked={acceptModerated}
-              onChange={toggleModerated}
-              aria-label="Aceptar cuentas moderadas"
-            />
-            <span>
-              <strong>Aceptar cuentas moderadas</strong>
-              <small>Añade la cuenta aunque Roblox la marque como moderada.</small>
-            </span>
-          </label>
-        )}
-
-        {mode === 'login' && (
-          <div className="addacc__panel">
-            <p className="addacc__hint">
-              <Info size={15} aria-hidden="true" />
-              Inicia sesión con Roblox en una ventana de navegador; la cookie se captura
-              automáticamente.
-            </p>
-            {loginStarted && (
-              <div className="addacc__progress">
-                <div className="addacc__track" aria-hidden="true">
-                  <div className="addacc__fill" style={{ width: `${Math.max(0, Math.min(100, progressPercent))}%` }} />
-                </div>
-                <p className="addacc__progress-label">
-                  {loginPhase === 'downloading'
-                    ? `Descargando navegador… ${Math.round(progressPercent)}%`
-                    : 'Esperando a que inicies sesión…'}
-                </p>
-              </div>
-            )}
-            {loginError && (
-              <p className="addacc__error">
-                <CircleAlert size={15} aria-hidden="true" />
-                {loginError}
-              </p>
-            )}
-            <div className="addacc__footer">
-              {loginStarted ? (
-                <Button variant="secondary" onClick={cancelLogin}>
-                  Cancelar
-                </Button>
-              ) : (
-                <>
-                  <Button variant="secondary" onClick={onClose}>
-                    Cerrar
-                  </Button>
-                  <Button variant="primary" onClick={() => void startLogin()}>
-                    Iniciar sesión con Roblox
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-
-        {mode === 'cookies' && (
-          <div className="addacc__panel">
-            <label className="addacc__field">
-              Cookie(s) de Roblox
-              <textarea
-                className="addacc__textarea"
-                value={cookieText}
-                placeholder={'Pega una cookie, o varias separadas por línea…'}
-                onChange={(event) => setCookieText(event.target.value)}
-                disabled={cookiesRunning}
+        <div
+          id={panelId}
+          role="tabpanel"
+          aria-labelledby={activeTabId}
+          className="addacc__panel"
+        >
+          {mode !== 'login' && (
+            <label className="rk-panel addacc__moderated">
+              <Switch
+                checked={acceptModerated}
+                onChange={toggleModerated}
+                aria-label={t('accounts.add.moderatedAria')}
               />
+              <span>
+                <strong>Aceptar cuentas moderadas</strong>
+                <small>Añade la cuenta aunque Roblox la marque como moderada.</small>
+              </span>
             </label>
+          )}
 
-            {!cookiesRunning && !cookiesSummary && parseCookieLines(cookieText).length > 0 && (
-              <p className="addacc__progress-label">
-                <span className="addacc__count">{parseCookieLines(cookieText).length}</span>{' '}
-                {parseCookieLines(cookieText).length === 1 ? 'cookie detectada.' : 'cookies detectadas.'}
+          {mode === 'login' && (
+            <>
+              <p className="fm-hint acc-note">
+                <Info size={15} aria-hidden="true" />
+                Inicia sesión con Roblox en una ventana de navegador; la cookie se captura
+                automáticamente.
               </p>
-            )}
-
-            {cookiesRunning && cookiesProgress && (
-              <div className="addacc__progress">
-                <div className="addacc__track" aria-hidden="true">
-                  <div
-                    className="addacc__fill"
-                    style={{
-                      width: `${cookiesProgress.total > 0 ? (cookiesProgress.index / cookiesProgress.total) * 100 : 0}%`,
-                    }}
-                  />
+              {loginStarted && (
+                <div className="acc-meter">
+                  <div className="acc-meter__track" aria-hidden="true">
+                    <div className="acc-meter__fill" style={meterStyle(progressPercent / 100)} />
+                  </div>
+                  <p className="acc-meter__label">
+                    {loginPhase === 'downloading'
+                      ? `Descargando navegador… ${Math.round(progressPercent)}%`
+                      : 'Esperando a que inicies sesión…'}
+                  </p>
                 </div>
-                <p className="addacc__progress-label">
-                  Procesando cookie <strong>{cookiesProgress.index + 1}</strong> de {cookiesProgress.total} (
-                  {cookiesProgress.phase === 'validating' ? 'validando' : 'añadiendo'})…
+              )}
+              {loginError && (
+                <p className="fm-error">
+                  <CircleAlert size={15} aria-hidden="true" />
+                  {loginError}
                 </p>
-              </div>
-            )}
-
-            {cookiesSummary && (
-              <div className="addacc__summary" data-tone={batchTone(cookiesSummary)}>
-                <div className="addacc__summary-head">
-                  {cookiesSummary.failures.length === 0 ? <Check size={16} /> : <CircleAlert size={16} />}
-                  Se añadieron {cookiesSummary.added} de {cookiesSummary.total} cuentas.
-                </div>
-                {cookiesSummary.failures.length > 0 && (
-                  <ul className="addacc__failures">
-                    {cookiesSummary.failures.map((failure) => (
-                      <li key={failure.index}>{failure.reason}</li>
-                    ))}
-                  </ul>
+              )}
+              <div className="fm-footer">
+                {loginStarted ? (
+                  <Button variant="secondary" onClick={cancelLogin}>
+                    Cancelar
+                  </Button>
+                ) : (
+                  <>
+                    <Button variant="secondary" onClick={onClose}>
+                      Cerrar
+                    </Button>
+                    <Button variant="primary" onClick={() => void startLogin()}>
+                      Iniciar sesión con Roblox
+                    </Button>
+                  </>
                 )}
               </div>
-            )}
+            </>
+          )}
 
-            <div className="addacc__footer">
-              <Button variant="secondary" onClick={onClose} disabled={cookiesRunning}>
-                {cookiesSummary ? 'Cerrar' : 'Cancelar'}
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => void submitCookies()}
-                disabled={cookiesRunning || parseCookieLines(cookieText).length === 0}
-              >
-                {cookiesRunning
-                  ? 'Procesando…'
-                  : parseCookieLines(cookieText).length === 1
-                    ? 'Añadir cuenta'
-                    : 'Añadir cuentas'}
-              </Button>
-            </div>
-          </div>
-        )}
+          {mode === 'cookies' && (
+            <>
+              <label className="fm-field">
+                Cookie(s) de Roblox
+                <textarea
+                  className="fm-textarea"
+                  value={cookieText}
+                  placeholder={t('accounts.add.cookiePlaceholder')}
+                  onChange={(event) => setCookieText(event.target.value)}
+                  disabled={cookiesRunning}
+                />
+              </label>
 
-        {mode === 'combo' && (
-          <div className="addacc__panel">
-            <label className="addacc__field">
-              Credenciales (user:pass o user:pass:cookie, una por línea)
-              <textarea
-                className="addacc__textarea"
-                value={comboText}
-                placeholder={'usuario1:contraseña1\nusuario2:contraseña2:_|WARNING:-DO-NOT-SHARE…'}
-                onChange={(event) => setComboText(event.target.value)}
-                disabled={comboRunning}
-              />
-            </label>
-
-            <p className="addacc__hint">
-              <Info size={15} aria-hidden="true" />
-              Sin cookie: se abrirá una ventana por cuenta y las credenciales se escribirán con un
-              ritmo humanizado (resuelve el captcha/2FA si aparece), aunque la cuenta ya exista.
-              Con cookie, se valida y se actualiza o añade directo.
-            </p>
-
-            {!comboRunning && !comboSummary && parseCredentialLines(comboText).length > 0 && (
-              <p className="addacc__progress-label">
-                <span className="addacc__count">{parseCredentialLines(comboText).length}</span>{' '}
-                cuenta(s) detectada(s).
-              </p>
-            )}
-
-            {comboRunning && comboProgress && (
-              <div className="addacc__progress">
-                <div className="addacc__track" aria-hidden="true">
-                  <div
-                    className="addacc__fill"
-                    style={{
-                      width: `${comboProgress.total > 0 ? (comboProgress.index / comboProgress.total) * 100 : 0}%`,
-                    }}
-                  />
-                </div>
-                <p className="addacc__progress-label">
-                  Cuenta <strong>{comboProgress.index + 1}</strong> de {comboProgress.total} —{' '}
-                  <strong>{comboProgress.username}</strong> (
-                  {comboProgress.phase === 'resolving' ? 'verificando' : 'guardando'})…
+              {!cookiesRunning && !cookiesSummary && cookieCount > 0 && (
+                <p className="acc-meter__label">
+                  <span className="addacc__count u-num">{cookieCount}</span>{' '}
+                  {cookieCount === 1 ? 'cookie detectada.' : 'cookies detectadas.'}
                 </p>
-              </div>
-            )}
+              )}
 
-            {comboSummary && (
-              <div className="addacc__summary" data-tone={batchTone(comboSummary)}>
-                <div className="addacc__summary-head">
-                  {comboSummary.failures.length === 0 ? <Check size={16} /> : <CircleAlert size={16} />}
-                  Se procesaron {comboSummary.saved} de {comboSummary.total} cuentas.
+              {cookiesRunning && cookiesProgress && (
+                <div className="acc-meter">
+                  <div className="acc-meter__track" aria-hidden="true">
+                    <div
+                      className="acc-meter__fill"
+                      style={meterStyle(
+                        cookiesProgress.total > 0 ? cookiesProgress.index / cookiesProgress.total : 0,
+                      )}
+                    />
+                  </div>
+                  <p className="acc-meter__label">
+                    Procesando cookie <strong className="u-num">{cookiesProgress.index + 1}</strong> de{' '}
+                    <span className="u-num">{cookiesProgress.total}</span> (
+                    {cookiesProgress.phase === 'validating' ? 'validando' : 'añadiendo'})…
+                  </p>
                 </div>
-                {comboSummary.failures.length > 0 && (
-                  <ul className="addacc__failures">
-                    {comboSummary.failures.map((failure) => (
-                      <li key={failure.index}>{failure.reason}</li>
-                    ))}
-                  </ul>
+              )}
+
+              {cookiesSummary && (
+                <div className="rk-panel acc-summary" data-tone={batchTone(cookiesSummary)}>
+                  <div className="acc-summary__head">
+                    {cookiesSummary.failures.length === 0 ? <Check size={16} /> : <CircleAlert size={16} />}
+                    Se añadieron {cookiesSummary.added} de {cookiesSummary.total} cuentas.
+                  </div>
+                  {cookiesSummary.failures.length > 0 && (
+                    <ul className="acc-summary__failures">
+                      {cookiesSummary.failures.map((failure) => (
+                        <li key={failure.index}>{failure.reason}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              <div className="fm-footer">
+                <Button variant="secondary" onClick={onClose} disabled={cookiesRunning}>
+                  {cookiesSummary ? 'Cerrar' : 'Cancelar'}
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => void submitCookies()}
+                  disabled={cookiesRunning || cookieCount === 0}
+                >
+                  {cookiesRunning
+                    ? 'Procesando…'
+                    : cookieCount === 1
+                      ? 'Añadir cuenta'
+                      : 'Añadir cuentas'}
+                </Button>
+              </div>
+            </>
+          )}
+
+          {mode === 'combo' && (
+            <>
+              <label className="fm-field">
+                Credenciales (user:pass o user:pass:cookie, una por línea)
+                <textarea
+                  className="fm-textarea"
+                  value={comboText}
+                  placeholder={t('accounts.add.comboPlaceholder')}
+                  onChange={(event) => setComboText(event.target.value)}
+                  disabled={comboRunning}
+                />
+              </label>
+
+              <p className="fm-hint acc-note">
+                <Info size={15} aria-hidden="true" />
+                Sin cookie: se abrirá una ventana por cuenta y las credenciales se escribirán con un
+                ritmo humanizado (resuelve el captcha/2FA si aparece), aunque la cuenta ya exista.
+                Con cookie, se valida y se actualiza o añade directo.
+              </p>
+
+              {!comboRunning && !comboSummary && comboCount > 0 && (
+                <p className="acc-meter__label">
+                  <span className="addacc__count u-num">{comboCount}</span>{' '}
+                  cuenta(s) detectada(s).
+                </p>
+              )}
+
+              {comboRunning && comboProgress && (
+                <div className="acc-meter">
+                  <div className="acc-meter__track" aria-hidden="true">
+                    <div
+                      className="acc-meter__fill"
+                      style={meterStyle(
+                        comboProgress.total > 0 ? comboProgress.index / comboProgress.total : 0,
+                      )}
+                    />
+                  </div>
+                  <p className="acc-meter__label">
+                    Cuenta <strong className="u-num">{comboProgress.index + 1}</strong> de{' '}
+                    <span className="u-num">{comboProgress.total}</span> —{' '}
+                    <strong>{comboProgress.username}</strong> (
+                    {comboProgress.phase === 'resolving' ? 'verificando' : 'guardando'})…
+                  </p>
+                </div>
+              )}
+
+              {comboSummary && (
+                <div className="rk-panel acc-summary" data-tone={batchTone(comboSummary)}>
+                  <div className="acc-summary__head">
+                    {comboSummary.failures.length === 0 ? <Check size={16} /> : <CircleAlert size={16} />}
+                    Se procesaron {comboSummary.saved} de {comboSummary.total} cuentas.
+                  </div>
+                  {comboSummary.failures.length > 0 && (
+                    <ul className="acc-summary__failures">
+                      {comboSummary.failures.map((failure) => (
+                        <li key={failure.index}>{failure.reason}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              <div className="fm-footer">
+                {comboRunning ? (
+                  <Button variant="secondary" onClick={cancelCombo}>
+                    Cancelar
+                  </Button>
+                ) : (
+                  <>
+                    <Button variant="secondary" onClick={onClose}>
+                      {comboSummary ? 'Cerrar' : 'Cancelar'}
+                    </Button>
+                    <Button
+                      variant="primary"
+                      onClick={() => void submitCombo()}
+                      disabled={comboCount === 0}
+                    >
+                      Procesar credenciales
+                    </Button>
+                  </>
                 )}
               </div>
-            )}
-
-            <div className="addacc__footer">
-              {comboRunning ? (
-                <Button variant="secondary" onClick={cancelCombo}>
-                  Cancelar
-                </Button>
-              ) : (
-                <>
-                  <Button variant="secondary" onClick={onClose}>
-                    {comboSummary ? 'Cerrar' : 'Cancelar'}
-                  </Button>
-                  <Button
-                    variant="primary"
-                    onClick={() => void submitCombo()}
-                    disabled={parseCredentialLines(comboText).length === 0}
-                  >
-                    Procesar credenciales
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </div>
     </Modal>
   );

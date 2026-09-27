@@ -1,197 +1,134 @@
+/* TitleBar — the chrome strip along the top of the window.
+ *
+ * Laid out as rail | centre | tools. The first cell is exactly as wide as the
+ * navigation rail (--rail-w, set on .app-shell), so the brand always shares a
+ * left edge with the navigation under it, collapsed or not. The bar paints no
+ * background of its own: it is part of the window frame, and the canvas below
+ * is the only raised surface.
+ *
+ * Dragging is Tauri's data-tauri-drag-region, applied in the component to the
+ * bar and its empty cells.
+ */
+
 .ram-titlebar {
   position: relative;
-  display: flex;
+  z-index: 20;
+  display: grid;
+  height: var(--tb);
   align-items: center;
-  height: var(--tb, 58px);
-  padding: 0 10px 0 12px;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--bd);
-  background: linear-gradient(180deg, rgba(10, 14, 27, 0.82), rgba(7, 10, 18, 0.56));
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-app-region: drag;
+  grid-template-columns: var(--rail-w, var(--rail)) minmax(0, 1fr) auto;
+  background: transparent;
+  user-select: none;
+  transition: grid-template-columns var(--dur-fast) var(--ease-out);
 }
 
-.ram-titlebar::after {
-  content: '';
-  position: absolute;
-  right: 56px;
-  bottom: -1px;
-  left: 56px;
-  height: 1px;
-  pointer-events: none;
-  background: linear-gradient(90deg, transparent, var(--ac), var(--acB), transparent);
-  opacity: 0.42;
-}
-
+/* ── Brand ──────────────────────────────────────────────────────────────── */
 .ram-titlebar__brand {
   display: flex;
+  min-width: 0;
+  height: 100%;
   align-items: center;
   gap: 10px;
-  min-width: var(--sb, 236px);
-  height: 100%;
-  flex: 0 0 var(--sb, 236px);
-}
-
-.ram-titlebar__logo {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
+  padding: 0 var(--sp-3) 0 18px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 11px;
-  background: var(--grad);
-  color: var(--on-accent, #080b13);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.5),
-    0 8px 22px -10px var(--ac3);
 }
 
-.ram-titlebar__logo::after {
-  content: '';
-  position: absolute;
-  inset: -45% 55% 55% -45%;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.52);
-  filter: blur(7px);
+.ram-titlebar__wordmark {
+  transition: opacity var(--dur-quick) var(--ease-out);
 }
 
-.ram-titlebar__brand-copy {
+/* Tauri only starts a window drag when the pressed element itself carries
+   data-tauri-drag-region, so the mark and wordmark let presses fall through
+   to the brand cell that does. */
+.ram-titlebar__brand > * {
+  pointer-events: none;
+}
+
+.app-shell[data-rail='collapsed'] .ram-titlebar__wordmark {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── Centre: the command bar ────────────────────────────────────────────── */
+.ram-titlebar__center {
   display: flex;
   min-width: 0;
-  flex-direction: column;
+  height: 100%;
+  align-items: center;
   justify-content: center;
-  gap: 1px;
+  padding: 0 var(--sp-4);
 }
 
-.ram-titlebar__name {
-  overflow: hidden;
-  color: var(--t1);
-  font-family: var(--font-head);
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  line-height: 1.1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ram-titlebar__kicker {
-  color: var(--t3);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 8px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  line-height: 1.2;
-  text-transform: uppercase;
+/* ── Tools ──────────────────────────────────────────────────────────────── */
+.ram-titlebar__tools {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  gap: var(--sp-2);
 }
 
 .ram-titlebar__telemetry {
   display: flex;
   align-items: center;
-  gap: 8px;
-  pointer-events: none;
+  gap: var(--sp-2);
 }
 
-.ram-titlebar__version,
-.ram-titlebar__running {
+.ram-titlebar__live,
+.ram-titlebar__version {
   display: inline-flex;
+  height: 26px;
   align-items: center;
-  min-height: 27px;
-  border: 1px solid var(--bd);
-  border-radius: 9px;
-  background: rgba(14, 20, 36, 0.58);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  color: var(--t2);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
+  gap: 7px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-medium);
   white-space: nowrap;
 }
 
-.ram-titlebar__version {
-  gap: 8px;
-  max-width: 250px;
-  padding: 0 10px 0 8px;
+.ram-titlebar__live {
+  background: var(--ok-fill);
+  color: var(--green);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--green) 28%, transparent);
 }
 
-.ram-titlebar__version > span {
-  color: var(--acB);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
+.ram-titlebar__version {
+  color: var(--t3);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .ram-titlebar__version code {
-  overflow: hidden;
   color: var(--t2);
-  font: inherit;
-  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
 }
 
-.ram-titlebar__running {
-  gap: 7px;
-  padding: 0 10px;
-  color: var(--t1);
-}
-
-.ram-titlebar__running::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--green);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--green) 65%, transparent);
-}
-
-.ram-titlebar__drag {
-  height: 100%;
-  min-width: 20px;
-  flex: 1;
-}
-
-.ram-titlebar__controls {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: 3px;
-  -webkit-app-region: no-drag;
-}
-
-/* ── Language switcher (EN | ES segmented pill) ── */
+/* Language switcher: a compact segmented control. */
 .ram-titlebar__lang {
-  display: inline-flex;
+  position: relative;
+  display: flex;
+  height: 28px;
   align-items: center;
   gap: 2px;
-  height: 30px;
-  margin-right: 5px;
   padding: 3px;
-  border: 1px solid var(--bd);
-  border-radius: 10px;
-  background: rgba(14, 20, 36, 0.58);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  -webkit-app-region: no-drag;
+  border-radius: var(--r-sm);
+  background: var(--hover-fill);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 
 .ram-titlebar__lang-opt {
   position: relative;
-  display: inline-grid;
-  place-items: center;
-  min-width: 32px;
+  display: grid;
   height: 100%;
-  padding: 0 7px;
+  min-width: 28px;
+  padding: 0 6px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--r-xs);
   background: transparent;
   color: var(--t3);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.09em;
   cursor: pointer;
-  transition: color var(--dur-quick, 150ms) var(--ease-smooth-out, ease);
+  place-items: center;
+  transition: color var(--dur-micro) var(--ease-out);
 }
 
 .ram-titlebar__lang-opt:hover {
@@ -199,11 +136,11 @@
 }
 
 .ram-titlebar__lang-opt.active {
-  color: var(--on-accent, #07101b);
+  color: var(--t1);
 }
 
 .ram-titlebar__lang-opt:focus-visible {
-  outline: 2px solid var(--ring, var(--ac));
+  outline: var(--focus-outline);
   outline-offset: 1px;
 }
 
@@ -211,75 +148,104 @@
   position: absolute;
   inset: 0;
   z-index: 0;
-  border-radius: 7px;
-  background: var(--grad);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    0 6px 14px -8px var(--ac3);
+  border-radius: var(--r-xs);
+  background: var(--card-hi);
+  box-shadow: var(--elev-1);
 }
 
 .ram-titlebar__lang-code {
   position: relative;
   z-index: 1;
+  font-size: var(--fs-xs);
+  font-weight: var(--w-semibold);
+  letter-spacing: 0.02em;
 }
 
-body.light .ram-titlebar__lang {
-  background: rgba(255, 255, 255, 0.56);
-}
-
+/* Theme toggle. */
 .ram-titlebar__btn {
-  display: inline-grid;
-  place-items: center;
-  width: 34px;
-  height: 32px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 9px;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border: 0;
+  border-radius: var(--r-sm);
   background: transparent;
-  color: var(--t3);
+  color: var(--t2);
   cursor: pointer;
-  -webkit-app-region: no-drag;
-  transition: color 180ms var(--smooth), background 180ms var(--smooth),
-    border-color 180ms var(--smooth), transform 120ms var(--smooth);
+  place-items: center;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
 }
 
 .ram-titlebar__btn:hover {
-  border-color: var(--bd);
-  background: rgba(255, 255, 255, 0.055);
+  background: var(--hover-fill);
   color: var(--t1);
 }
 
 .ram-titlebar__btn:active {
-  transform: scale(0.94);
+  background: var(--press-fill);
 }
 
 .ram-titlebar__btn:focus-visible {
-  outline: 2px solid var(--ring, var(--ac));
-  outline-offset: 1px;
+  outline: var(--focus-outline);
+  outline-offset: -2px;
 }
 
-.ram-titlebar__btn.is-close:hover {
-  border-color: color-mix(in srgb, var(--red) 42%, transparent);
-  background: var(--rd);
-  color: var(--red);
+/* Windows caption buttons: full-height, flush with the corner. */
+.ram-titlebar__controls {
+  display: flex;
+  height: 100%;
+  align-items: stretch;
+  margin-left: var(--sp-1);
 }
 
-body.light .ram-titlebar {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(245, 247, 252, 0.58));
+.ram-titlebar__cap {
+  display: grid;
+  width: 46px;
+  border: 0;
+  background: transparent;
+  color: var(--t2);
+  cursor: pointer;
+  place-items: center;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
 }
 
-body.light .ram-titlebar__version,
-body.light .ram-titlebar__running {
-  background: rgba(255, 255, 255, 0.56);
+.ram-titlebar__cap:hover {
+  background: var(--hover-fill);
+  color: var(--t1);
 }
 
-@media (max-width: 1040px) {
-  .ram-titlebar__brand {
-    min-width: 196px;
-    flex-basis: 196px;
-  }
+.ram-titlebar__cap:active {
+  background: var(--press-fill);
+}
 
+.ram-titlebar__cap:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: -3px;
+}
+
+.ram-titlebar__cap.is-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.ram-titlebar__cap.is-close:active {
+  background: #c50f1f;
+  color: #fff;
+}
+
+/* Narrow windows keep the essentials: the version chip goes first. */
+@media (max-width: 1080px) {
   .ram-titlebar__version {
-    max-width: 190px;
+    display: none;
+  }
+}
+
+@media (max-width: 940px) {
+  .ram-titlebar__live {
+    padding: 0 8px;
   }
 }

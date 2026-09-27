@@ -83,6 +83,10 @@ export const ipc = {
   updateAccount: (id: string, data: Partial<Account>) =>
     call('updateAccount', [id, data], true),
   reorderAccounts: (ids: string[]) => call('reorderAccounts', [ids], true),
+  exportAccountsEncrypted: (passphrase: string) =>
+    call('exportAccountsEncrypted', [passphrase], true),
+  importAccountsEncrypted: (passphrase: string) =>
+    call('importAccountsEncrypted', [passphrase], true),
 
   // ── Packages ──
   loadPackages: () => call('loadPackages', [], true),
@@ -117,9 +121,11 @@ export const ipc = {
   launchRoblox: (id: string, cookie: string, target: string) =>
     call('launchRoblox', [id, cookie, target], true),
   openExternal: (url: string) => call('openExternal', [url], true),
+  openLogsFolder: () => call('openLogsFolder', [], true),
   // The Clients deck's one-sweep read. User-initiated: the deck surfaces the
   // failure inline, and a silent failure would leave it blank with no clue why.
-  getRobloxClientsSnapshot: () => call('getRobloxClientsSnapshot', [], true),
+  getRobloxClientsSnapshot: (fresh?: boolean) =>
+    call('getRobloxClientsSnapshot', [fresh], true),
   scanRobloxInstallations: () => call('scanRobloxInstallations', [], false),
   addRobloxCustomPreset: (path: string, displayName?: string | null) =>
     call('addRobloxCustomPreset', [path, displayName], true),
@@ -144,6 +150,8 @@ export const ipc = {
   // Event subscription: registered during setup, not a user action.
   onRobloxProtocolChanged: (cb: () => void) =>
     call('onRobloxProtocolChanged', [cb], false),
+  onRobloxInstallationsChanged: (cb: () => void) =>
+    call('onRobloxInstallationsChanged', [cb], false),
 
   // ── Settings_Store ──
   loadSettings: () => call('loadSettings', [], true),
@@ -214,6 +222,8 @@ export const ipc = {
   openAccountBrowsers: (ids: string[]) =>
     call('openAccountBrowsers', [ids], true),
   copyAccountCookie: (id: string) => call('copyAccountCookie', [id], true),
+  copyAccountCookiesBulk: (ids: string[]) =>
+    call('copyAccountCookiesBulk', [ids], true),
   getWayfernStatus: () => call('getWayfernStatus', [], false),
   installWayfern: () => call('installWayfern', [], true),
   onWayfernProgress: (cb: (payload: WayfernProgress) => void) =>

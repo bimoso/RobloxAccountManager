@@ -1,130 +1,108 @@
+/* ============================================================================
+ * BloxGenSettingsPanel — the local BloxGen credential editor.
+ *
+ * RACKLINE: the surface, head and body are the shared `.rk-panel` recipe; the
+ * eyebrow is `.rk-eyebrow`, the configured badge is `.rk-chip[data-tone]`, and
+ * the label is `.fm-label`. What is left here is the credential field itself
+ * (the one field recipe, carried on the wrapper so the reveal toggle can share
+ * the shell) and the two-column footer.
+ *
+ * Gone with the rewrite: the accent gradient wash and the gradient hairline
+ * `::before`, the `--shadow-card` lift on a panel that should rest flat, the
+ * 8px/9.5px type, the `font-weight: 750` lies, and the per-file
+ * reduced-motion block that global.css now covers.
+ * ==========================================================================*/
+
 .bloxgen-settings {
-  position: relative;
   display: flex;
   min-width: 0;
-  padding: 18px;
   flex-direction: column;
-  gap: 12px;
-  border: 1px solid var(--card-edge);
-  border-radius: 15px;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--ac) 5%, transparent), transparent 42%),
-    color-mix(in srgb, var(--glass-card) 88%, transparent);
-  box-shadow: var(--shadow-card);
 }
 
-.bloxgen-settings::before {
-  position: absolute;
-  top: -1px;
-  right: 18px;
-  left: 18px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--ac), var(--acB), transparent);
-  opacity: 0.72;
-  content: '';
-}
-
-.bloxgen-settings__heading {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
+/* ── Head ────────────────────────────────────────────────────────────────── */
+.bloxgen-settings__head {
   align-items: center;
-  gap: 10px;
 }
 
 .bloxgen-settings__icon {
   display: grid;
   width: 36px;
   height: 36px;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--ac) 34%, var(--bd));
+  flex: 0 0 36px;
   border-radius: 11px;
-  background: color-mix(in srgb, var(--ac) 11%, transparent);
-  color: var(--ac-h);
+  background: var(--ac2);
+  color: var(--ac-text);
+  place-items: center;
 }
 
-.bloxgen-settings__eyebrow {
-  display: block;
-  margin-bottom: 3px;
-  color: var(--acB);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 8px;
-  font-weight: 750;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+.bloxgen-settings__titles {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
 }
 
-.bloxgen-settings h3 {
-  margin: 0;
-  color: var(--t1);
-  font-family: var(--font-head);
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.bloxgen-settings__status {
-  display: inline-flex;
-  min-height: 27px;
-  padding: 0 9px;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--bd);
-  border-radius: 999px;
-  color: var(--t3);
-  font-size: 9.5px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.bloxgen-settings__status[data-state='ready'] {
-  border-color: color-mix(in srgb, var(--green) 28%, var(--bd));
-  background: color-mix(in srgb, var(--green) 7%, transparent);
-  color: var(--green);
+/* ── Body ────────────────────────────────────────────────────────────────── */
+.bloxgen-settings__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
 }
 
 .bloxgen-settings__copy {
-  max-width: 640px;
-  margin: 0;
-  color: var(--t2);
-  font-size: 11.5px;
-  line-height: 1.55;
+  max-width: 72ch;
+  margin: 0 0 var(--sp-1);
+  color: var(--t3);
+  font-size: var(--fs-md);
+  line-height: var(--lh);
 }
 
 .bloxgen-settings__label {
-  color: var(--t2);
-  font-size: 10px;
-  font-weight: 700;
+  gap: 0;
 }
 
+/* ── The credential field ────────────────────────────────────────────────────
+ * The shared field recipe — height --row-lg, radius --r-sm, a 1px
+ * --line-strong hairline on --surf-2, focus of `border-color: var(--ac)` +
+ * var(--focus-ring) — carried on the wrapper because the reveal toggle lives
+ * inside the same shell.
+ * ==========================================================================*/
 .bloxgen-settings__field {
   display: grid;
-  min-height: 44px;
-  grid-template-columns: minmax(0, 1fr) 42px;
   overflow: hidden;
-  border: 1px solid var(--bd2);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--bg) 74%, var(--s1));
+  height: var(--row-lg);
+  grid-template-columns: minmax(0, 1fr) var(--row-lg);
+  border: 0;
+  border-radius: var(--r);
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--line);
   transition:
-    border-color 180ms var(--smooth),
-    box-shadow 180ms var(--smooth);
+    box-shadow var(--dur-quick) var(--ease-out),
+    background var(--dur-quick) var(--ease-out);
 }
 
 .bloxgen-settings__field:focus-within {
-  border-color: color-mix(in srgb, var(--ring) 72%, var(--bd2));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 12%, transparent);
+  background: var(--card);
+  box-shadow:
+    inset 0 0 0 1px var(--ac3),
+    var(--focus-ring);
 }
 
-.bloxgen-settings__field[data-invalid='true'] {
-  border-color: color-mix(in srgb, var(--red) 65%, var(--bd2));
+.bloxgen-settings__field[data-invalid] {
+  box-shadow: inset 0 0 0 1px var(--red);
 }
 
 .bloxgen-settings__field input {
   min-width: 0;
-  padding: 0 13px;
+  padding: 0 var(--sp-3);
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--t1);
-  font: 12px/1.2 'JetBrains Mono', monospace;
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  letter-spacing: 0;
 }
 
 .bloxgen-settings__field input::placeholder {
@@ -133,64 +111,75 @@
 
 .bloxgen-settings__reveal {
   display: grid;
-  width: 42px;
   border: 0;
-  border-left: 1px solid var(--bd);
-  place-items: center;
+  border-left: 1px solid var(--line-soft);
   background: transparent;
   color: var(--t3);
   cursor: pointer;
-  transition: color 150ms var(--smooth), background-color 150ms var(--smooth);
+  place-items: center;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
 }
 
-.bloxgen-settings__reveal:hover,
-.bloxgen-settings__reveal:focus-visible {
-  outline: 0;
-  background: color-mix(in srgb, var(--ac) 9%, transparent);
+.bloxgen-settings__reveal:hover {
+  background: var(--hover-fill);
   color: var(--t1);
 }
 
+.bloxgen-settings__reveal:active {
+  background: var(--press-fill);
+}
+
+.bloxgen-settings__reveal:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: -2px;
+}
+
+.bloxgen-settings__reveal[aria-pressed='true'] {
+  color: var(--ac-text);
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────────── */
 .bloxgen-settings__footer {
   display: flex;
+  min-height: var(--row-lg);
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
 }
 
-.bloxgen-settings__footer p {
+.bloxgen-settings__help {
+  overflow: hidden;
+  min-width: 0;
   margin: 0;
   color: var(--t3);
-  font-size: 10px;
-}
-
-.bloxgen-settings__footer p[data-invalid='true'] {
-  color: var(--red);
-}
-
-.bloxgen-settings__save {
-  min-height: 36px;
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-@media (max-width: 680px) {
-  .bloxgen-settings__heading {
-    grid-template-columns: 36px minmax(0, 1fr);
-  }
+.bloxgen-settings__help[data-invalid] {
+  color: var(--red);
+  font-family: var(--font);
+  font-size: var(--fs-sm);
+  white-space: normal;
+}
 
-  .bloxgen-settings__status {
-    grid-column: 2;
-    justify-self: start;
+.bloxgen-settings__save {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* At narrow widths the badge drops under the title and the footer stacks, so
+   neither the chip nor the save button is ever squeezed out of the panel. */
+@media (max-width: 680px) {
+  .bloxgen-settings__head {
+    flex-wrap: wrap;
   }
 
   .bloxgen-settings__footer {
     align-items: stretch;
     flex-direction: column;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .bloxgen-settings__field,
-  .bloxgen-settings__reveal {
-    transition-duration: 0.01ms;
   }
 }

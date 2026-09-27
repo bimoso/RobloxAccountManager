@@ -1,72 +1,129 @@
+/* ============================================================================
+ * Button — the single pressable primitive (.ram-btn).
+ *
+ * Softly rounded, on the shared control heights. The primary variant is the one
+ * lit surface in a toolbar: an accent fill with an inner highlight and a glow,
+ * so the main action is always the brightest thing on screen. Press feedback is
+ * a small scale dip driven by the component (disabled under reduced motion).
+ * ==========================================================================*/
+
 .ram-btn {
   position: relative;
   display: inline-flex;
+  height: var(--row);
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 0 17px;
-  overflow: hidden;
-  border: 1px solid transparent;
-  border-radius: 11px;
+  gap: 7px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--t1);
   font: inherit;
-  font-size: 12.5px;
-  font-weight: 700;
+  font-size: var(--fs-md);
+  font-weight: var(--w-semibold);
+  letter-spacing: -0.005em;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
-  transition: color 180ms var(--smooth), background 180ms var(--smooth),
-    border-color 180ms var(--smooth), box-shadow 180ms var(--smooth);
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    box-shadow var(--dur-quick) var(--ease-out),
+    color var(--dur-micro) var(--ease-out),
+    filter var(--dur-micro) var(--ease-out);
 }
 
-.ram-btn::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(110deg, transparent 22%, rgba(255, 255, 255, 0.24) 50%, transparent 76%);
-  opacity: 0;
-  transform: translateX(-55%);
-  transition: opacity 180ms var(--smooth), transform 360ms var(--smooth);
+.ram-btn--sm {
+  height: var(--row-sm);
+  gap: 6px;
+  padding: 0 11px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
 }
 
-.ram-btn:hover:not(:disabled)::after {
-  opacity: 0.55;
-  transform: translateX(55%);
+.ram-btn--lg {
+  height: var(--row-lg);
+  padding: 0 18px;
+}
+
+.ram-btn--icon {
+  width: var(--row);
+  padding: 0;
+}
+
+.ram-btn--sm.ram-btn--icon {
+  width: var(--row-sm);
+}
+
+.ram-btn--lg.ram-btn--icon {
+  width: var(--row-lg);
+}
+
+.ram-btn > svg {
+  flex: 0 0 auto;
 }
 
 .ram-btn:focus-visible {
-  outline: 2px solid var(--ring, var(--ac));
-  outline-offset: 2px;
+  outline: 0;
+  box-shadow: var(--focus-ring), inset 0 0 0 1px var(--ring);
 }
 
 .ram-btn:disabled {
   cursor: not-allowed;
-  opacity: 0.44;
+  opacity: 0.45;
 }
 
+/* ── Variants ─────────────────────────────────────────────────────────────── */
+
 .ram-btn--primary {
-  border-color: color-mix(in srgb, var(--ac) 48%, white 10%);
-  background: var(--grad);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, #fff 16%, transparent), transparent 60%),
+    var(--ac);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 26%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--ac) 70%, #000),
+    0 8px 20px -10px color-mix(in srgb, var(--ac) 90%, transparent);
   color: var(--on-accent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), 0 10px 24px -15px var(--ac3);
 }
 
 .ram-btn--primary:hover:not(:disabled) {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.44), 0 14px 30px -15px var(--ac3);
+  filter: brightness(1.08) saturate(1.05);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #fff 30%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--ac) 70%, #000),
+    0 10px 26px -10px color-mix(in srgb, var(--ac) 100%, transparent);
+}
+
+.ram-btn--primary:active:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.ram-btn--primary:focus-visible {
+  box-shadow:
+    var(--focus-ring),
+    inset 0 1px 0 color-mix(in srgb, #fff 26%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--ac) 70%, #000);
 }
 
 .ram-btn--secondary {
-  border-color: var(--bd2);
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--card-hi);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent);
   color: var(--t1);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055);
 }
 
 .ram-btn--secondary:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--ac) 34%, var(--bd2));
-  background: color-mix(in srgb, var(--ac) 9%, transparent);
+  background: color-mix(in srgb, var(--card-hi) 70%, var(--s4));
+  box-shadow:
+    inset 0 0 0 1px var(--line-strong),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+.ram-btn--secondary:active:not(:disabled) {
+  background: var(--s4);
 }
 
 .ram-btn--ghost {
@@ -75,29 +132,42 @@
 }
 
 .ram-btn--ghost:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--hover-fill);
   color: var(--t1);
 }
 
+.ram-btn--ghost:active:not(:disabled) {
+  background: var(--press-fill);
+}
+
 .ram-btn--danger {
-  border-color: color-mix(in srgb, var(--red) 40%, transparent);
-  background: color-mix(in srgb, var(--red) 14%, transparent);
-  color: color-mix(in srgb, var(--red) 78%, white);
+  background: var(--red-fill);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 30%, transparent);
+  color: var(--red);
 }
 
 .ram-btn--danger:hover:not(:disabled) {
-  background: var(--red);
-  color: #fff;
-  box-shadow: 0 12px 26px -16px color-mix(in srgb, var(--red) 60%, transparent);
+  background: color-mix(in srgb, var(--red) 22%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 50%, transparent);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .ram-btn,
-  .ram-btn::after {
-    transition-duration: 0.01ms;
-  }
-
-  .ram-btn:hover:not(:disabled)::after {
-    opacity: 0;
-  }
+/* The primary button catches the pointer's light (see lib/aliveSurface.ts). */
+.ram-btn--primary::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    120px circle at var(--mx, 50%) var(--my, -60%),
+    color-mix(in srgb, #fff 22%, transparent),
+    transparent 70%
+  );
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
+
+.ram-btn--primary:hover:not(:disabled)::after {
+  opacity: 1;
+}
+

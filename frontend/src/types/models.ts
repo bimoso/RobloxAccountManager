@@ -131,6 +131,12 @@ export interface Settings {
    * launch. Absent means the backend default (4000).
    */
   launchSpawnGapMs?: number;
+  /**
+   * Remove the Roblox client's per-session traces (cookie jar, web storage,
+   * Player logs, per-user folder) when an account closes and before a client
+   * is spawned onto an idle machine. Absent means enabled.
+   */
+  clearTracesOnClose?: boolean;
   /** Catch-all preserving any unrecognized/legacy field on round-trip. */
   [key: string]: unknown;
 }
@@ -280,6 +286,13 @@ export type AccountsView = 'grid' | 'list';
 
 /** Accounts page filter (Requirement 9). */
 export type AccountFilter = 'all' | 'running' | 'idle' | 'valid-first' | 'invalid-first';
+
+/**
+ * Accounts page ordering (client-side only). `manual` keeps the backend
+ * order (drag-reorder), `name` sorts by display name, `lastUsed` by most
+ * recent activity with never-used accounts last.
+ */
+export type AccountSort = 'manual' | 'name' | 'lastUsed';
 
 /**
  * One generation-history entry, as persisted by `genhistory_read` /

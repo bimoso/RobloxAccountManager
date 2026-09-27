@@ -1,7 +1,8 @@
 // pages/Settings/index.tsx
 //
 // Settings page (design.md → Requirement 21). Owns the tab structure — General
-// (implemented here), Themes and Sounds — and renders the General panel:
+// (implemented here), Clients, Mixer, Themes and Sounds — and renders the
+// General panel:
 //
 // - App info: number of saved accounts (from the Account_Store) and the
 //   detected Roblox version (`roblox_get_version`) — Requirement 21.1.
@@ -20,10 +21,16 @@
 //   ConfirmDialog that, on confirmation, removes every saved account —
 //   Requirement 21.6.
 //
+// RACKLINE: the page renders the mandatory `.rk-page` skeleton (head / toolbar
+// / one scroll port), the tab strip lives in the shared `.rk-toolbar` with a
+// roving tabindex, and every individual setting is a `.rk-row` inside a
+// `.rk-panel` — label and description on the left, control right-aligned. The
+// gutter tick is not decoration: it reports whether the setting is on, so a
+// column of toggles can be read without parsing every label.
+//
 // Runtime tuning is delegated to {@link MixerTab}, Themes to {@link ThemesTab}
 // and Sounds to {@link SoundsTab}. Keeping these panels local to Settings
-// preserves the no-cross-page-import boundary (Requirement 1.1) and leaves a
-// clean General grid where additional credential panels can be composed.
+// preserves the no-cross-page-import boundary (Requirement 1.1).
 
 import {
   useCallback,
@@ -38,6 +45,7 @@ import {
   AudioWaveform,
   Check,
   CircleGauge,
+  DatabaseBackup,
   Download,
   Globe2,
   KeyRound,
@@ -48,12 +56,14 @@ import {
   SlidersHorizontal,
   Trash2,
   Volume2,
+  Upload,
   Zap,
   Boxes,
   type LucideIcon,
 } from 'lucide-react';
 import { Button } from '@/components/Button';
 import { Switch } from '@/components/Switch';
+import { BackupPassphraseModal, type BackupMode } from './BackupPassphraseModal';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { BloxGenSettingsPanel } from '@/components/BloxGenSettingsPanel';
 import { ipc } from '@/lib/ipc';
@@ -107,22 +117,23 @@ export function Settings(): JSX.Element {
   };
 
   return (
-    <div className="settings-page">
-      <header className="settings-page-header">
-        <div>
-          <span className="settings-page-kicker">{t('settings.kicker')}</span>
-          <h1 className="settings-title">{t('settings.title')}</h1>
-          <p>{t('settings.subtitle')}</p>
+    <div className="rk-page settings-page">
+      <header className="rk-page__head">
+        <div className="rk-page__titles">
+          <h1>{t('settings.title')}</h1>
+          <span className="rk-page__sub">{t('settings.subtitle')}</span>
         </div>
-        <span className="settings-local-badge">
-          <ShieldCheck size={14} aria-hidden="true" />
-          {t('settings.localBadge')}
-        </span>
+        <div className="rk-page__actions">
+          <span className="rk-chip" data-tone="ok">
+            <ShieldCheck size={12} aria-hidden="true" />
+            {t('settings.localBadge')}
+          </span>
+        </div>
       </header>
 
-      <LayoutGroup id="settings-sections">
-        <div className="settings-tabs-wrap">
-          <div className="settings-tab-bar" role="tablist" aria-label={t('settings.tabsAria')}>
+      <div className="rk-toolbar">
+        <LayoutGroup id="settings-sections">
+          <div className="set-tabs" role="tablist" aria-label={t('settings.tabsAria')}>
             {SETTINGS_TABS.map((tab, index) => {
               const Icon = tab.icon;
               const selected = tab.id === activeTab;
@@ -138,15 +149,14 @@ export function Settings(): JSX.Element {
                   aria-selected={selected}
                   aria-controls={`settings-panel-${tab.id}`}
                   tabIndex={selected ? 0 : -1}
-                  className={`settings-tab-btn${selected ? ' active' : ''}`}
+                  className="set-tab"
                   onClick={() => setActiveTab(tab.id)}
                   onKeyDown={(event) => onTabKeyDown(event, index)}
                 >
-                  <Icon size={15} strokeWidth={1.9} aria-hidden="true" />
-                  <span>{label}</span>
+                  {/* Rendered first so the label paints above the moving fill. */}
                   {selected ? (
                     <motion.span
-                      className="settings-tab-signal"
+                      className="set-tab__signal"
                       layoutId="settings-tab-signal"
                       transition={reducedMotion
                         ? { duration: 0 }
@@ -154,40 +164,43 @@ export function Settings(): JSX.Element {
                       aria-hidden="true"
                     />
                   ) : null}
+                  <Icon size={14} strokeWidth={1.9} aria-hidden="true" />
+                  <span>{label}</span>
                 </button>
               );
             })}
           </div>
-        </div>
-      </LayoutGroup>
+        </LayoutGroup>
+      </div>
 
-      <AnimatePresence initial={false} mode="popLayout">
-        <motion.div
-          key={activeTab}
-          id={`settings-panel-${activeTab}`}
-          className="settings-panel"
-          role="tabpanel"
-          aria-labelledby={`settings-tab-${activeTab}`}
-          initial={reducedMotion ? false : { opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={reducedMotion
-            ? { opacity: 1 }
-            : {
-                opacity: 0,
-                y: -3,
-                transition: { duration: 0.12, ease: [0.4, 0, 1, 1] },
-              }}
-          transition={reducedMotion
-            ? { duration: 0 }
-            : { duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-        >
-          {activeTab === 'general' && <GeneralTab />}
-          {activeTab === 'clients' && <ClientsTab />}
-          {activeTab === 'mixer' && <MixerTab />}
-          {activeTab === 'themes' && <ThemesTab />}
-          {activeTab === 'sounds' && <SoundsTab />}
-        </motion.div>
-      </AnimatePresence>
+      <div className="rk-page__body">
+        <AnimatePresence initial={false} mode="popLayout">
+          <motion.div
+            key={activeTab}
+            id={`settings-panel-${activeTab}`}
+            role="tabpanel"
+            aria-labelledby={`settings-tab-${activeTab}`}
+            initial={reducedMotion ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={reducedMotion
+              ? { opacity: 1 }
+              : {
+                  opacity: 0,
+                  y: -3,
+                  transition: { duration: 0.12, ease: [0.4, 0, 1, 1] },
+                }}
+            transition={reducedMotion
+              ? { duration: 0 }
+              : { duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {activeTab === 'general' && <GeneralTab />}
+            {activeTab === 'clients' && <ClientsTab />}
+            {activeTab === 'mixer' && <MixerTab />}
+            {activeTab === 'themes' && <ThemesTab />}
+            {activeTab === 'sounds' && <SoundsTab />}
+          </motion.div>
+        </AnimatePresence>
+      </div>
     </div>
   );
 }
@@ -242,6 +255,9 @@ function GeneralTab(): JSX.Element {
   // ── Encryption key control (Requirement 21.2) ──
   const [encKey, setEncKey] = useState('');
   const [savingKey, setSavingKey] = useState(false);
+
+  // ── Encrypted backup (.rambak) flow ──
+  const [backupMode, setBackupMode] = useState<BackupMode | null>(null);
 
   // ── Account browser (standalone Wayfern; the only provider) ──
   const [wayfernStatus, setWayfernStatus] = useState<WayfernStatus | null>(cached?.wayfernStatus ?? null);
@@ -398,50 +414,62 @@ function GeneralTab(): JSX.Element {
         ? t('common.enabled')
         : t('common.disabled');
 
+  const wayfernPercent = Math.round(wayfernProgress?.percent ?? 0);
+  // The extract stage reports no byte percentage, so the meter is pinned full
+  // while the archive unpacks rather than snapping back to zero.
+  const wayfernFill = wayfernProgress?.stage === 'extracting' ? 100 : wayfernPercent;
+  const wayfernLabel = installingWayfern
+    ? wayfernProgress?.stage === 'extracting'
+      ? t('settings.wayfern.extracting')
+      : t('settings.wayfern.downloading')
+    : wayfernStatus?.installed
+      ? t('settings.wayfern.installed', { version: wayfernStatus.version ?? '' }).replace(/\s{2,}/g, ' ')
+      : t('settings.wayfern.notInstalled');
+
   return (
-    <div className="settings-general">
-      <section className="settings-card settings-card--overview">
-        <div className="settings-card-heading">
-          <div className="settings-card-title-group">
-            <span className="settings-card-icon"><CircleGauge size={17} /></span>
-            <div>
-              <span className="settings-eyebrow">{t('settings.overview.eyebrow')}</span>
-              <h2 className="settings-card-title">{t('settings.overview.title')}</h2>
-            </div>
+    <div className="set-stack settings-general">
+      {/* ── Overview (Requirement 21.1) ── */}
+      <section className="rk-panel set-panel">
+        <div className="rk-panel__head">
+          <span className="set-icon" aria-hidden="true"><CircleGauge size={15} /></span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('settings.overview.eyebrow')}</span>
+            <h2 className="rk-panel__title">{t('settings.overview.title')}</h2>
           </div>
-          <span className="settings-status-badge settings-status-badge--on">
-            <Activity size={11} /> {t('settings.overview.ready')}
+          <span className="rk-chip" data-tone="ok">
+            <Activity size={11} aria-hidden="true" /> {t('settings.overview.ready')}
           </span>
         </div>
-        <div className="settings-metric-grid">
-          <div className="settings-metric">
-            <span>{t('settings.overview.savedAccounts')}</span>
-            <strong>{accountCount}</strong>
-            <small>{t('settings.overview.encryptedLocally')}</small>
+        <div className="rk-stats">
+          <div className="rk-stat">
+            <span className="rk-stat__label">{t('settings.overview.savedAccounts')}</span>
+            <span className="rk-stat__value u-num">{accountCount}</span>
+            <span className="set-stat__note">{t('settings.overview.encryptedLocally')}</span>
           </div>
-          <div className="settings-metric settings-metric--version">
-            <span>{t('settings.overview.robloxClient')}</span>
-            <strong title={robloxVersion ?? t('common.unknown')}>{robloxVersion ?? t('common.unknown')}</strong>
-            <small>{t('settings.overview.detectedInstall')}</small>
+          <div className="rk-stat">
+            <span className="rk-stat__label">{t('settings.overview.robloxClient')}</span>
+            <span className="rk-stat__value u-num" title={robloxVersion ?? t('common.unknown')}>
+              {robloxVersion ?? t('common.unknown')}
+            </span>
+            <span className="set-stat__note">{t('settings.overview.detectedInstall')}</span>
           </div>
         </div>
       </section>
 
-      <section className="settings-card settings-card--language">
-        <div className="settings-card-heading">
-          <div className="settings-card-title-group">
-            <span className="settings-card-icon"><Languages size={17} /></span>
-            <div>
-              <span className="settings-eyebrow">{t('settings.language.eyebrow')}</span>
-              <h2 className="settings-card-title">{t('settings.language.title')}</h2>
-            </div>
+      {/* ── Interface language ── */}
+      <section className="rk-panel set-panel">
+        <div className="rk-panel__head">
+          <span className="set-icon" aria-hidden="true"><Languages size={15} /></span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('settings.language.eyebrow')}</span>
+            <h2 className="rk-panel__title">{t('settings.language.title')}</h2>
           </div>
-          <span className="settings-status-badge settings-status-badge--on">
-            <Globe2 size={11} /> {language.toUpperCase()}
+          <span className="rk-chip" data-tone="accent">
+            <Globe2 size={11} aria-hidden="true" /> {language.toUpperCase()}
           </span>
         </div>
-        <p className="settings-hint">{t('settings.language.hint')}</p>
-        <div className="settings-provider-grid" role="radiogroup" aria-label={t('settings.language.groupAria')}>
+        <p className="set-hint">{t('settings.language.hint')}</p>
+        <div className="set-rows" role="radiogroup" aria-label={t('settings.language.groupAria')}>
           {LANGUAGES.map((lang) => {
             const selected = language === lang;
             return (
@@ -451,174 +479,242 @@ function GeneralTab(): JSX.Element {
                 role="radio"
                 aria-label={t(`lang.${lang}`)}
                 aria-checked={selected}
-                className={`settings-provider-option${selected ? ' selected' : ''}`}
+                data-interactive="true"
+                className="rk-row set-row"
                 onClick={() => setLanguage(lang)}
               >
-                <span className="settings-provider-icon"><Languages size={18} strokeWidth={1.9} /></span>
-                <span className="settings-provider-copy">
-                  <strong>{t(`lang.${lang}`)}</strong>
-                  <small>{t(lang === 'en' ? 'settings.language.enDesc' : 'settings.language.esDesc')}</small>
+                <span className="rk-row__gutter">
+                  <i className="rk-row__tick" data-tone={selected ? 'accent' : undefined} />
                 </span>
-                <span className="settings-provider-check"><Check size={14} strokeWidth={2.4} /></span>
+                <span className="rk-row__main">
+                  <span className="rk-row__title">{t(`lang.${lang}`)}</span>
+                  <span className="rk-row__meta">
+                    {t(lang === 'en' ? 'settings.language.enDesc' : 'settings.language.esDesc')}
+                  </span>
+                </span>
+                <span className="set-row__control">
+                  {selected ? <Check size={15} strokeWidth={2.4} aria-hidden="true" /> : null}
+                </span>
               </button>
             );
           })}
         </div>
       </section>
 
-      <section className="settings-card settings-card--security">
-        <div className="settings-card-heading">
-          <div className="settings-card-title-group">
-            <span className="settings-card-icon"><KeyRound size={17} /></span>
-            <div>
-              <span className="settings-eyebrow">{t('settings.security.eyebrow')}</span>
-              <h2 className="settings-card-title">{t('settings.security.title')}</h2>
-            </div>
+      {/* ── Encryption key (Requirement 21.2) ── */}
+      <section className="rk-panel set-panel">
+        <div className="rk-panel__head">
+          <span className="set-icon" aria-hidden="true"><KeyRound size={15} /></span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('settings.security.eyebrow')}</span>
+            <h2 className="rk-panel__title">{t('settings.security.title')}</h2>
           </div>
         </div>
-        <p className="settings-hint">{t('settings.security.hint')}</p>
-        <label className="settings-field-label" htmlFor="settings-enc-key">{t('settings.security.newKeyLabel')}</label>
-        <div className="settings-field-row">
-          <input
-            id="settings-enc-key"
-            className="settings-input"
-            type="password"
-            autoComplete="new-password"
-            placeholder={t('settings.security.newKeyLabel')}
-            aria-label={t('settings.security.newKeyLabel')}
-            value={encKey}
-            onChange={(event) => setEncKey(event.target.value)}
-          />
+        <p className="set-hint">{t('settings.security.hint')}</p>
+        <div className="set-rows">
+          <div className="rk-row set-row">
+            <span className="rk-row__gutter">
+              <i className="rk-row__tick" data-tone="accent" />
+            </span>
+            <span className="rk-row__main">
+              <label className="rk-row__title" htmlFor="settings-enc-key">
+                {t('settings.security.newKeyLabel')}
+              </label>
+              <span className="set-field-row">
+                <input
+                  id="settings-enc-key"
+                  className="fm-input set-input set-input--grow"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={t('settings.security.newKeyLabel')}
+                  aria-label={t('settings.security.newKeyLabel')}
+                  value={encKey}
+                  onChange={(event) => setEncKey(event.target.value)}
+                />
+              </span>
+            </span>
+            <span className="set-row__control">
+              <Button
+                variant="primary"
+                size="lg"
+                onClick={() => void onSaveKey()}
+                disabled={savingKey}
+                aria-label={t('settings.security.saveKeyAria')}
+              >
+                {savingKey ? t('common.saving') : t('settings.security.saveKey')}
+              </Button>
+            </span>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Encrypted backup ── */}
+      <section className="rk-panel set-panel">
+        <div className="rk-panel__head">
+          <span className="set-icon" aria-hidden="true"><DatabaseBackup size={15} /></span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('settings.backup.eyebrow')}</span>
+            <h2 className="rk-panel__title">{t('settings.backup.title')}</h2>
+          </div>
+        </div>
+        <p className="set-hint">{t('settings.backup.hint')}</p>
+        <div className="set-actions">
           <Button
-            variant="primary"
-            onClick={() => void onSaveKey()}
-            disabled={savingKey}
-            aria-label={t('settings.security.saveKeyAria')}
+            variant="secondary"
+            onClick={() => setBackupMode('export')}
+            aria-label={t('settings.backup.exportAria')}
           >
-            {savingKey ? t('common.saving') : t('settings.security.saveKey')}
+            <Download size={15} aria-hidden="true" />
+            {t('settings.backup.export')}
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => setBackupMode('import')}
+            aria-label={t('settings.backup.importAria')}
+          >
+            <Upload size={15} aria-hidden="true" />
+            {t('settings.backup.import')}
           </Button>
         </div>
       </section>
 
-      <section className="settings-card settings-card--wide settings-browser-card">
-        <div className="settings-card-heading">
-          <div className="settings-card-title-group">
-            <span className="settings-card-icon settings-card-icon--feature"><RadioTower size={18} /></span>
-            <div>
-              <span className="settings-eyebrow">{t('settings.provider.eyebrow')}</span>
-              <h2 className="settings-card-title">{t('settings.provider.title')}</h2>
-            </div>
+      {/* ── Account browser (Wayfern) ── */}
+      <section className="rk-panel set-panel settings-browser-card">
+        <div className="rk-panel__head">
+          <span className="set-icon" data-tone="accent" aria-hidden="true"><RadioTower size={15} /></span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('settings.provider.eyebrow')}</span>
+            <h2 className="rk-panel__title">{t('settings.provider.title')}</h2>
           </div>
-          <span className="settings-status-badge settings-status-badge--on">
+          <span className="rk-chip" data-tone={wayfernStatus?.installed ? 'ok' : 'neutral'}>
             Wayfern
           </span>
         </div>
-        <p className="settings-hint">
-          {t('settings.provider.hint')}
-        </p>
-
-        <div className="settings-wayfern-status">
-          <div>
-            <strong>
-              {installingWayfern
-                ? wayfernProgress?.stage === 'extracting'
-                  ? t('settings.wayfern.extracting')
-                  : t('settings.wayfern.downloading')
-                : wayfernStatus?.installed
-                  ? t('settings.wayfern.installed', { version: wayfernStatus.version ?? '' }).replace(/\s{2,}/g, ' ')
-                  : t('settings.wayfern.notInstalled')}
-            </strong>
-            <small>
-              {t('settings.wayfern.buildNote')}
-            </small>
+        <p className="set-hint">{t('settings.provider.hint')}</p>
+        <div className="set-rows">
+          <div className="rk-row set-row">
+            <span className="rk-row__gutter">
+              <i
+                className="rk-row__tick"
+                data-tone={
+                  installingWayfern
+                    ? 'accent'
+                    : wayfernStatus?.updateAvailable
+                      ? 'warn'
+                      : wayfernStatus?.installed
+                        ? 'ok'
+                        : undefined
+                }
+              />
+            </span>
+            <span className="rk-row__main">
+              <span className="rk-row__title">{wayfernLabel}</span>
+              <span className="rk-row__meta">{t('settings.wayfern.buildNote')}</span>
+            </span>
+            <span className="set-row__control">
+              <Button
+                variant="primary"
+                onClick={() => void installWayfern()}
+                disabled={installingWayfern}
+              >
+                {installingWayfern
+                  ? <span className="rk-spin" aria-hidden="true" />
+                  : <Download size={15} strokeWidth={2} aria-hidden="true" />}
+                {installingWayfern
+                  ? `${wayfernPercent}%`
+                  : wayfernStatus?.updateAvailable
+                    ? t('settings.wayfern.update')
+                    : wayfernStatus?.installed
+                      ? t('settings.wayfern.recheck')
+                      : t('settings.wayfern.download')}
+              </Button>
+            </span>
           </div>
-          <Button
-            variant="primary"
-            onClick={() => void installWayfern()}
-            disabled={installingWayfern}
-          >
-            <Download size={15} strokeWidth={2} aria-hidden="true" />
-            {installingWayfern
-              ? `${Math.round(wayfernProgress?.percent ?? 0)}%`
-              : wayfernStatus?.updateAvailable
-                ? t('settings.wayfern.update')
-                : wayfernStatus?.installed
-                  ? t('settings.wayfern.recheck')
-                  : t('settings.wayfern.download')}
-          </Button>
         </div>
         {installingWayfern ? (
           <div
-            className="settings-download-track"
+            className="set-meter"
             role="progressbar"
             aria-label={t('settings.wayfern.progressAria')}
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-valuenow={Math.round(wayfernProgress?.percent ?? 0)}
+            aria-valuenow={wayfernPercent}
           >
-            <span style={{ width: `${wayfernProgress?.stage === 'extracting' ? 100 : wayfernProgress?.percent ?? 0}%` }} />
+            {/* Spec motion #6: scaleX from a left origin, never an animated width. */}
+            <span className="set-meter__fill" style={{ transform: `scaleX(${wayfernFill / 100})` }} />
           </div>
         ) : null}
       </section>
 
-      <section className="settings-card settings-card--runtime settings-card--wide">
-        <div className="settings-card-heading">
-          <div className="settings-card-title-group">
-            <span className="settings-card-icon"><Zap size={17} /></span>
-            <div>
-              <span className="settings-eyebrow">{t('settings.runtime.eyebrow')}</span>
-              <h2 className="settings-card-title">{t('settings.runtime.title')}</h2>
-            </div>
+      {/* ── Runtime / Anti-AFK (Requirement 21.5) ── */}
+      <section className="rk-panel set-panel">
+        <div className="rk-panel__head">
+          <span className="set-icon" aria-hidden="true"><Zap size={15} /></span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('settings.runtime.eyebrow')}</span>
+            <h2 className="rk-panel__title">{t('settings.runtime.title')}</h2>
           </div>
-          <span
-            className={`settings-status-badge${
-              multiInstance ? ' settings-status-badge--on' : ''
-            }`}
-          >
+          <span className="rk-chip" data-tone={multiInstance ? 'ok' : 'neutral'}>
             {multiInstanceLabel}
           </span>
         </div>
-        <div className="settings-toggle-row">
-          <span>
-            <strong>{t('sidebar.antiAfk')}</strong>
-            <small>{t('settings.runtime.antiAfkHint')}</small>
-          </span>
-          <Switch
-            checked={antiAfk ?? false}
-            onChange={(next) => void onToggleAntiAfk(next)}
-            disabled={antiAfk === null || savingAntiAfk}
-            aria-label="Anti-AFK"
-          />
+        <div className="set-rows">
+          <div className="rk-row set-row">
+            <span className="rk-row__gutter">
+              <i className="rk-row__tick" data-tone={antiAfk ? 'ok' : undefined} />
+            </span>
+            <span className="rk-row__main">
+              <span className="rk-row__title">{t('sidebar.antiAfk')}</span>
+              <span className="rk-row__meta">{t('settings.runtime.antiAfkHint')}</span>
+            </span>
+            <span className="set-row__control">
+              <Switch
+                checked={antiAfk ?? false}
+                onChange={(next) => void onToggleAntiAfk(next)}
+                disabled={antiAfk === null || savingAntiAfk}
+                aria-label="Anti-AFK"
+              />
+            </span>
+          </div>
         </div>
       </section>
 
       <SessionAutomationCard />
 
-      <BloxGenSettingsPanel className="settings-card--wide" />
+      <BloxGenSettingsPanel />
 
-      <section className="settings-card settings-card--wide settings-card--danger">
-        <div className="settings-card-heading">
-          <div className="settings-card-title-group">
-            <span className="settings-card-icon settings-card-icon--danger"><Trash2 size={17} /></span>
-            <div>
-              <span className="settings-eyebrow">{t('settings.danger.eyebrow')}</span>
-              <h2 className="settings-card-title">{t('settings.danger.title')}</h2>
-            </div>
+      {/* ── Danger zone (Requirement 21.6) ── */}
+      <section className="rk-panel set-panel">
+        <div className="rk-panel__head">
+          <span className="set-icon" data-tone="danger" aria-hidden="true"><Trash2 size={15} /></span>
+          <div className="set-head__text">
+            <span className="rk-eyebrow">{t('settings.danger.eyebrow')}</span>
+            <h2 className="rk-panel__title">{t('settings.danger.title')}</h2>
           </div>
         </div>
-        <div className="settings-field-row settings-field-row--between">
-          <p className="settings-hint">
-            {t(accountCount === 1 ? 'settings.danger.hintOne' : 'settings.danger.hintMany', { count: accountCount })}
-          </p>
-          <Button
-            variant="danger"
-            onClick={() => setDeleteAllOpen(true)}
-            disabled={deletingAll || accountCount === 0}
-            aria-label={t('settings.danger.deleteAllAria')}
-          >
-            <Trash2 size={15} strokeWidth={2} aria-hidden="true" />
-            {t('settings.danger.deleteAll')}
-          </Button>
+        <div className="set-rows">
+          <div className="rk-row set-row">
+            <span className="rk-row__gutter">
+              <i className="rk-row__tick" data-tone="danger" />
+            </span>
+            <span className="rk-row__main">
+              <span className="rk-row__title">{t('settings.danger.deleteAll')}</span>
+              <span className="rk-row__meta">
+                {t(accountCount === 1 ? 'settings.danger.hintOne' : 'settings.danger.hintMany', { count: accountCount })}
+              </span>
+            </span>
+            <span className="set-row__control">
+              <Button
+                variant="danger"
+                onClick={() => setDeleteAllOpen(true)}
+                disabled={deletingAll || accountCount === 0}
+                aria-label={t('settings.danger.deleteAllAria')}
+              >
+                <Trash2 size={15} strokeWidth={2} aria-hidden="true" />
+                {t('settings.danger.deleteAll')}
+              </Button>
+            </span>
+          </div>
         </div>
       </section>
 
@@ -631,6 +727,10 @@ function GeneralTab(): JSX.Element {
         onConfirm={() => void onConfirmDeleteAll()}
         onCancel={() => setDeleteAllOpen(false)}
       />
+
+      {backupMode !== null && (
+        <BackupPassphraseModal mode={backupMode} onClose={() => setBackupMode(null)} />
+      )}
     </div>
   );
 }

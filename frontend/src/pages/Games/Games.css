@@ -1,0 +1,424 @@
+/* ============================================================================
+ * Games — the saved-games library.
+ *
+ * Built from the RACKLINE primitives: the page frame, stat tiles, the
+ * segmented view switch, the search field, panels and hairline rows. This file
+ * adds only what a library of games with nested private servers needs: the
+ * game block (identity row + server rows), the thumbnail sizes, the metadata
+ * strip, the "add server" dashed row and the two dialogs' preview strips.
+ * ==========================================================================*/
+
+.games-page {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+/* ── Summary tiles ───────────────────────────────────────────────────────── */
+.gm-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.gm-stats .rk-stat__label svg {
+  color: var(--ac-text);
+}
+
+/* ── Toolbar ─────────────────────────────────────────────────────────────── */
+.gm-toolbar {
+  flex-wrap: nowrap;
+}
+
+.gm-toolbar .rk-seg > button > svg {
+  flex: 0 0 auto;
+}
+
+.gm-toolbar__count {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--r-pill);
+  background: var(--hover-fill);
+  color: var(--t3);
+  font-size: var(--fs-micro);
+  line-height: 16px;
+  text-align: center;
+}
+
+.rk-seg > button[aria-pressed='true'] .gm-toolbar__count {
+  background: var(--ac2);
+  color: var(--ac-text);
+}
+
+.gm-search {
+  min-width: 180px;
+  max-width: 420px;
+  flex: 1 1 auto;
+}
+
+.gm-search__clear {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--press-fill);
+  color: var(--t2);
+  cursor: pointer;
+  place-items: center;
+}
+
+.gm-search__clear:hover {
+  color: var(--t1);
+}
+
+.gm-search__clear:focus-visible {
+  outline: var(--focus-outline);
+  outline-offset: -1px;
+}
+
+/* ── Shared bits ─────────────────────────────────────────────────────────── */
+.gm-thumb {
+  display: grid;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: var(--hover-fill);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--t3);
+  object-fit: cover;
+  place-items: center;
+}
+
+.gm-thumb--md {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+}
+
+.gm-thumb--sm {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+}
+
+/* Metadata strip: inline facts separated by a middle dot, wrapping freely. */
+.gm-meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 6px;
+  row-gap: 2px;
+  color: var(--t3);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.gm-meta > * + *::before {
+  content: '\00b7';
+  margin-right: 6px;
+  color: var(--line-strong);
+}
+
+.gm-meta__accounts {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--t2);
+}
+
+/* ── The list of game blocks ─────────────────────────────────────────────── */
+.gm-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.gm-game {
+  overflow: hidden;
+}
+
+.gm-game__head {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+}
+
+.gm-game__titles {
+  display: flex;
+  min-width: 220px;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gm-game__name {
+  overflow: hidden;
+  margin: 0;
+  color: var(--t1);
+  font-size: var(--fs-lg);
+  font-weight: var(--w-semibold);
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gm-game__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.gm-game__remove:hover {
+  color: var(--red) !important;
+}
+
+.gm-game__launch {
+  min-width: 104px;
+}
+
+/* ── Private servers under a game ────────────────────────────────────────── */
+.gm-game__servers {
+  padding: 0 var(--sp-2) var(--sp-2);
+  border-top: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--field) 55%, transparent);
+}
+
+.gm-game__servers-head {
+  display: flex;
+  height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--sp-2);
+  color: var(--t3);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-semibold);
+}
+
+.gm-server {
+  --cols: 32px minmax(0, 1fr) auto auto;
+  min-height: 46px;
+  padding-left: 4px;
+  border-radius: var(--r-sm);
+}
+
+.gm-server .rk-row__gutter {
+  width: 32px;
+}
+
+.gm-server__icon {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--hover-fill);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--t2);
+  place-items: center;
+}
+
+.gm-server__tools {
+  justify-content: flex-end;
+}
+
+.gm-server__delete:hover {
+  color: var(--red) !important;
+}
+
+.gm-server:hover .gm-server__launch {
+  background: var(--ac);
+  box-shadow: inset 0 0 0 1px var(--ac);
+  color: var(--on-accent);
+}
+
+/* A dashed row inviting the first private server. */
+.gm-server--new {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--t3);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--w-semibold);
+  cursor: pointer;
+  outline: 1.5px dashed var(--line-strong);
+  outline-offset: -1.5px;
+  transition:
+    background var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out);
+}
+
+.gm-server--new:hover {
+  background: var(--hover-fill);
+  color: var(--t1);
+  outline-color: var(--ac3);
+}
+
+.gm-server--new:focus-visible {
+  outline: var(--focus-outline);
+}
+
+/* ── Recent launches ─────────────────────────────────────────────────────── */
+.gm-recent {
+  display: flex;
+  flex-direction: column;
+  padding: 2px;
+  border-radius: var(--r-lg);
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.gm-recent__row {
+  --cols: 44px minmax(0, 1fr) auto auto auto;
+  min-height: 52px;
+  padding-left: 6px;
+  border-radius: var(--r);
+}
+
+.gm-recent__row .rk-row__gutter {
+  width: 44px;
+}
+
+.gm-recent__tools {
+  justify-content: flex-end;
+}
+
+/* ── Empty states ────────────────────────────────────────────────────────── */
+.gm-empty__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  color: var(--t3);
+  font-size: var(--fs-xs);
+}
+
+/* ── Dialogs ─────────────────────────────────────────────────────────────── */
+.gm-modal {
+  --fm-w: min(500px, 92vw);
+}
+
+.gm-modal__hint {
+  color: var(--t3);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-normal);
+  line-height: var(--lh);
+}
+
+.gm-modal__hint[data-tone='danger'] {
+  color: var(--red);
+}
+
+.gm-modal__detected {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.gm-modal__server > label {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.gm-preview {
+  display: flex;
+  min-height: var(--row-xl);
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--t2);
+  font-size: var(--fs-sm);
+}
+
+.gm-preview__thumb {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  overflow: hidden;
+  border-radius: 11px;
+  background: var(--hover-fill);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--t3);
+  object-fit: cover;
+  place-items: center;
+}
+
+.gm-preview__copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.gm-preview__copy small {
+  color: var(--t3);
+  font-size: var(--fs-xs);
+  font-weight: var(--w-medium);
+}
+
+.gm-preview__copy strong {
+  overflow: hidden;
+  color: var(--t1);
+  font-size: var(--fs-md);
+  font-weight: var(--w-semibold);
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gm-preview__copy > span {
+  overflow: hidden;
+  color: var(--t3);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Narrow window ───────────────────────────────────────────────────────── */
+@media (max-width: 980px) {
+  .gm-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .gm-game__actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .gm-game__launch {
+    margin-left: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .gm-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .gm-search {
+    max-width: none;
+  }
+
+  .gm-recent__row {
+    --cols: 44px minmax(0, 1fr) auto auto;
+  }
+
+  .gm-recent__tools {
+    display: none;
+  }
+}

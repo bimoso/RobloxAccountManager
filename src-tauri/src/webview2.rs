@@ -29,11 +29,11 @@
 /// WebView2 runtime cannot be found (Requirement 12.7). It names the missing
 /// dependency, gives the official download URL, and tells the user what to do
 /// next (install, then relaunch).
-pub const WEBVIEW2_MISSING_MESSAGE: &str = "The Microsoft Edge WebView2 runtime is required to run RobloxAccountManager but was not found.\n\nInstall the WebView2 runtime from https://developer.microsoft.com/microsoft-edge/webview2/ and relaunch RobloxAccountManager.";
+pub const WEBVIEW2_MISSING_MESSAGE: &str = "The Microsoft Edge WebView2 runtime is required to run RAM (Roblox Account Manager) but was not found.\n\nInstall the WebView2 runtime from https://developer.microsoft.com/microsoft-edge/webview2/ and relaunch RAM.";
 
 /// Title/caption used for the native error dialog surfaced on Windows when the
 /// WebView2 runtime is missing.
-pub const WEBVIEW2_MISSING_TITLE: &str = "RobloxAccountManager - WebView2 runtime missing";
+pub const WEBVIEW2_MISSING_TITLE: &str = "RAM - WebView2 runtime missing";
 
 /// Detects whether the WebView2 (WebView) runtime is present.
 ///

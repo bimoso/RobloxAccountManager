@@ -1,5 +1,5 @@
 {
-  "productName": "RobloxAccountManager",
+  "productName": "RAM",
   "version": "1.0.0",
   "identifier": "com.robloxaccountmanager.app",
   "build": {
@@ -18,11 +18,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.png", "icons/icon.ico"],
-    "resources": {
-      "../native-helper/RobloxNative.exe": "RobloxNative.exe",
-      "../native-helper/RobloxNative.cs": "RobloxNative.cs"
-    }
+    "icon": ["icons/icon.png", "icons/icon.ico"]
   }
 }

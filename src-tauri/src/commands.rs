@@ -80,7 +80,11 @@ const SETTINGS_LOAD_STRIPPED_KEYS: [&str; 5] = [
 /// as an empty/default object (Requirement 11.7). `keySet` / the configured flag
 /// are computed from the ORIGINAL loaded settings, before stripping.
 #[tauri::command]
-pub fn settings_load(app: AppHandle) -> Result<Value, String> {
+pub async fn settings_load(app: AppHandle) -> Result<Value, String> {
+    crate::run_blocking(move || settings_load_blocking(app)).await
+}
+
+fn settings_load_blocking(app: AppHandle) -> Result<Value, String> {
     crate::logging::log_command_result("settings_load", (|| {
         let dir = accounts::store_dir(&app)?;
         let settings = settings::load_from_dir(&dir).map_err(|e| e.to_string())?;
@@ -146,7 +150,11 @@ pub fn redact_settings_for_load(settings: &Settings) -> Result<Value, String> {
 /// wired in when that module lands — noted below so the parity gap is explicit.
 /// Returns `true`, matching the handler.
 #[tauri::command]
-pub fn settings_save(app: AppHandle, data: Map<String, Value>) -> Result<bool, String> {
+pub async fn settings_save(app: AppHandle, data: Map<String, Value>) -> Result<bool, String> {
+    crate::run_blocking(move || settings_save_blocking(app, data)).await
+}
+
+fn settings_save_blocking(app: AppHandle, data: Map<String, Value>) -> Result<bool, String> {
     crate::logging::log_command_result("settings_save", (|| {
     let dir = accounts::store_dir(&app)?;
     settings::save_to_dir(&dir, &data).map_err(|e| e.to_string())?;
@@ -177,19 +185,13 @@ pub fn settings_save(app: AppHandle, data: Map<String, Value>) -> Result<bool, S
         crate::window_layout::schedule_layout_pass(&app, 0);
     }
 
-    // Launch-plan side effect: the cached installation sweep is what the launch
-    // path maps `robloxLaunchPresetId` against, so a change to either key must
-    // not be answered from a sweep taken under the previous selection.
-    const LAUNCH_PLAN_KEYS: [&str; 2] = ["robloxLaunchPresetId", "robloxLaunchMode"];
-    if LAUNCH_PLAN_KEYS.iter().any(|k| data.contains_key(*k)) {
-        crate::roblox_installations::invalidate_install_scan_for(&app);
-    }
+    // The launch preset / route keys need no cache invalidation: the cached
+    // installation sweep describes the clients on disk, and the selection is
+    // applied on top of it at launch time from freshly loaded settings.
 
-    // NOTE (Task 9 / native_helper.rs): the legacy handler also starts/stops the
-    // Native_Helper mutex holder on `multiInstance` and the anti-AFK loop on
-    // `antiAfk` / `antiAfkInterval` here. Those side effects are wired in when
-    // `native_helper.rs` is implemented; the persisted setting itself is already
-    // written above, so the stored state matches the legacy JS build now.
+    // NOTE: settings_save deliberately persists without side effects. The
+    // multi-instance and anti-AFK toggles apply through dedicated native_helper
+    // commands invoked from the Settings UI, never from this persistence path.
 
     Ok(true)
     })())
@@ -234,10 +236,11 @@ pub struct SaveDonutTokenResult {
 /// as the empty string, exactly like the legacy JS runtime `typeof token === 'string'`
 /// guard.
 #[tauri::command]
-pub fn settings_save_donut_token(
-    app: AppHandle,
-    token: Option<String>,
-) -> Result<SaveDonutTokenResult, String> {
+pub async fn settings_save_donut_token(app: AppHandle, token: Option<String>) -> Result<SaveDonutTokenResult, String> {
+    crate::run_blocking(move || settings_save_donut_token_blocking(app, token)).await
+}
+
+fn settings_save_donut_token_blocking(app: AppHandle, token: Option<String>) -> Result<SaveDonutTokenResult, String> {
     let dir = accounts::store_dir(&app)?;
     let CryptoContext {
         passphrase_mode,
@@ -310,7 +313,11 @@ pub struct EncSetKeyResult {
 /// error-surfacing path is [`settings_load`] (Requirement 11.7). This is a pure
 /// read: it never mutates key-session or device-key state.
 #[tauri::command]
-pub fn enc_status(app: AppHandle) -> Result<EncStatus, String> {
+pub async fn enc_status(app: AppHandle) -> Result<EncStatus, String> {
+    crate::run_blocking(move || enc_status_blocking(app)).await
+}
+
+fn enc_status_blocking(app: AppHandle) -> Result<EncStatus, String> {
     crate::logging::log_command_result("enc_status", (|| {
         let dir = accounts::store_dir(&app)?;
         // Swallow a read failure to defaults, matching `passphraseMode()`'s try/catch.
@@ -351,7 +358,11 @@ pub fn enc_status(app: AppHandle) -> Result<EncStatus, String> {
 /// read failure is swallowed to defaults (an absent verifier => reject), matching
 /// `verifyPass`'s reliance on `loadSettings()`'s try/catch.
 #[tauri::command]
-pub fn enc_unlock(app: AppHandle, pass: Option<String>) -> Result<EncUnlockResult, String> {
+pub async fn enc_unlock(app: AppHandle, pass: Option<String>) -> Result<EncUnlockResult, String> {
+    crate::run_blocking(move || enc_unlock_blocking(app, pass)).await
+}
+
+fn enc_unlock_blocking(app: AppHandle, pass: Option<String>) -> Result<EncUnlockResult, String> {
     crate::logging::log_command_result("enc_unlock", (|| {
         let pass = pass.unwrap_or_default();
         if pass.is_empty() {
@@ -419,7 +430,11 @@ pub fn enc_unlock(app: AppHandle, pass: Option<String>) -> Result<EncUnlockResul
 /// returns `Err`: like the legacy JS runtime `try/catch`, every failure resolves to
 /// `{ ok:false, error }` so the Renderer_UI branch on `r.ok` works unchanged.
 #[tauri::command]
-pub fn enc_set_key(app: AppHandle, pass: Option<String>) -> Result<EncSetKeyResult, String> {
+pub async fn enc_set_key(app: AppHandle, pass: Option<String>) -> Result<EncSetKeyResult, String> {
+    crate::run_blocking(move || enc_set_key_blocking(app, pass)).await
+}
+
+fn enc_set_key_blocking(app: AppHandle, pass: Option<String>) -> Result<EncSetKeyResult, String> {
     match enc_set_key_inner(&app, pass) {
         Ok(()) => Ok(EncSetKeyResult {
             ok: true,
@@ -490,7 +505,11 @@ fn enc_set_key_inner(app: &AppHandle, pass: Option<String>) -> Result<(), String
 /// matching the handler's `catch { return [] }`). Delegates to
 /// [`settings::read_gen_history`].
 #[tauri::command]
-pub fn genhistory_read(app: AppHandle) -> Result<Vec<Value>, String> {
+pub async fn genhistory_read(app: AppHandle) -> Result<Vec<Value>, String> {
+    crate::run_blocking(move || genhistory_read_blocking(app)).await
+}
+
+fn genhistory_read_blocking(app: AppHandle) -> Result<Vec<Value>, String> {
     crate::logging::log_command_result("genhistory_read", (|| {
         let dir = accounts::store_dir(&app)?;
         Ok(settings::read_gen_history(&dir))
@@ -504,7 +523,11 @@ pub fn genhistory_read(app: AppHandle) -> Result<Vec<Value>, String> {
 /// typed `Vec<Value>` parameter — a malformed payload is rejected at
 /// deserialization, which `invoke()` surfaces as a rejected promise.
 #[tauri::command]
-pub fn genhistory_write(app: AppHandle, list: Vec<Value>) -> Result<bool, String> {
+pub async fn genhistory_write(app: AppHandle, list: Vec<Value>) -> Result<bool, String> {
+    crate::run_blocking(move || genhistory_write_blocking(app, list)).await
+}
+
+fn genhistory_write_blocking(app: AppHandle, list: Vec<Value>) -> Result<bool, String> {
     crate::logging::log_command_result("genhistory_write", (|| {
         let dir = accounts::store_dir(&app)?;
         Ok(settings::write_gen_history(&dir, &list))
@@ -515,7 +538,11 @@ pub fn genhistory_write(app: AppHandle, list: Vec<Value>) -> Result<bool, String
 /// `true`/`false`, matching the handler. Delegates to
 /// [`settings::clear_gen_history`].
 #[tauri::command]
-pub fn genhistory_clear(app: AppHandle) -> Result<bool, String> {
+pub async fn genhistory_clear(app: AppHandle) -> Result<bool, String> {
+    crate::run_blocking(move || genhistory_clear_blocking(app)).await
+}
+
+fn genhistory_clear_blocking(app: AppHandle) -> Result<bool, String> {
     crate::logging::log_command_result("genhistory_clear", (|| {
         let dir = accounts::store_dir(&app)?;
         Ok(settings::clear_gen_history(&dir))
@@ -529,7 +556,11 @@ pub fn genhistory_clear(app: AppHandle) -> Result<bool, String> {
 /// Delegates to [`settings::read_fflags`], which resolves the Roblox client path
 /// itself (independent of the Settings_Store), so no app-data dir is needed.
 #[tauri::command]
-pub fn fflag_read() -> Result<Map<String, Value>, String> {
+pub async fn fflag_read() -> Result<Map<String, Value>, String> {
+    crate::run_blocking(move || fflag_read_blocking()).await
+}
+
+fn fflag_read_blocking() -> Result<Map<String, Value>, String> {
     Ok(settings::read_fflags())
 }
 
@@ -537,7 +568,11 @@ pub fn fflag_read() -> Result<Map<String, Value>, String> {
 /// returning `true`/`false`, matching the handler. Delegates to
 /// [`settings::write_fflags`] (creates the `ClientSettings` dir as needed).
 #[tauri::command]
-pub fn fflag_write(flags: Value) -> Result<bool, String> {
+pub async fn fflag_write(flags: Value) -> Result<bool, String> {
+    crate::run_blocking(move || fflag_write_blocking(flags)).await
+}
+
+fn fflag_write_blocking(flags: Value) -> Result<bool, String> {
     Ok(settings::write_fflags(&flags))
 }
 
@@ -559,7 +594,11 @@ pub struct FpsWriteResult {
 /// matching the handler. Delegates to the [`settings::fps_read`] core (which
 /// resolves the Roblox settings path itself).
 #[tauri::command]
-pub fn fps_read() -> Result<i64, String> {
+pub async fn fps_read() -> Result<i64, String> {
+    crate::run_blocking(move || fps_read_blocking()).await
+}
+
+fn fps_read_blocking() -> Result<i64, String> {
     Ok(settings::fps_read())
 }
 
@@ -570,7 +609,11 @@ pub fn fps_read() -> Result<i64, String> {
 /// update-in-place-or-insert semantics). The `cap` parameter is `f64` to mirror
 /// the legacy JS runtime `Number(cap)` coercion.
 #[tauri::command]
-pub fn fps_write(cap: f64) -> Result<FpsWriteResult, String> {
+pub async fn fps_write(cap: f64) -> Result<FpsWriteResult, String> {
+    crate::run_blocking(move || fps_write_blocking(cap)).await
+}
+
+fn fps_write_blocking(cap: f64) -> Result<FpsWriteResult, String> {
     match settings::fps_write(cap) {
         Ok(()) => Ok(FpsWriteResult {
             ok: true,

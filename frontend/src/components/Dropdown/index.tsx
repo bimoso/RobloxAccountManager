@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, useReducedMotion } from 'framer-motion';
@@ -37,6 +38,11 @@ export interface DropdownProps<T extends string = string> {
   id?: string;
   /** Accessible name for the combobox trigger. */
   'aria-label'?: string;
+  /**
+   * Optional decorative icon rendered at the start of the trigger, so a
+   * toolbar filter can say what it filters without a loose glyph beside it.
+   */
+  icon?: ReactNode;
 }
 
 /** Viewport coordinates calculated for the portaled listbox. */
@@ -65,6 +71,7 @@ export function Dropdown<T extends string = string>({
   disabled = false,
   id,
   'aria-label': ariaLabel,
+  icon,
 }: DropdownProps<T>): JSX.Element {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -96,7 +103,7 @@ export function Dropdown<T extends string = string>({
     const trigger = triggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
-    const popupHeight = listRef.current?.offsetHeight ?? Math.min(options.length * 34 + 8, 292);
+    const popupHeight = listRef.current?.offsetHeight ?? Math.min(options.length * 28 + 8, 292);
     const width = Math.max(190, rect.width);
     const left = Math.min(
       Math.max(VIEWPORT_GUTTER, rect.left),
@@ -286,12 +293,17 @@ export function Dropdown<T extends string = string>({
         aria-controls={listboxId}
         aria-expanded={open}
         disabled={disabled}
-        className="ui-dropdown__trigger"
+        className={`ui-dropdown__trigger${icon ? ' has-icon' : ''}`}
         onClick={() => (open ? close() : show())}
         onKeyDown={handleTriggerKeyDown}
-        whileTap={reducedMotion || disabled ? undefined : { scale: 0.985 }}
-        transition={{ type: 'spring', stiffness: 520, damping: 36, mass: 0.5 }}
+        whileTap={disabled ? undefined : { opacity: 0.82 }}
+        transition={{ duration: reducedMotion ? 0 : 0.08 }}
       >
+        {icon ? (
+          <span className="ui-dropdown__icon" aria-hidden="true">
+            {icon}
+          </span>
+        ) : null}
         <span className="ui-dropdown__value">{selected?.label ?? value}</span>
         <ChevronsUpDown className="ui-dropdown__chevrons" size={14} aria-hidden="true" />
       </motion.button>

@@ -126,6 +126,11 @@ pub mod humanize;
 /// and verified managed deployment installation.
 pub mod roblox_installations;
 
+/// Per-session cleanup of the Roblox client's shared local state (cookie jar,
+/// web storage, Player logs, per-user folders) so accounts launched one after
+/// another never inherit each other's leftovers.
+pub mod roblox_traces;
+
 /// WEAO (whatexpsare.online) client: published Roblox client versions and the
 /// executor status catalog. Runs server-side because weao.xyz rejects any
 /// request without `User-Agent: WEAO-3PService`, a header the webview `fetch`
@@ -187,6 +192,22 @@ pub mod webview2;
 pub struct CachedToken {
     pub value: String,
     pub cached_at: i64,
+}
+
+/// Run blocking work (disk I/O, registry reads, key derivation) on the tokio
+/// blocking pool and hand its result back to an async command.
+///
+/// A plain `fn` Tauri command executes on the main thread and freezes the
+/// window for its whole duration; every store/crypto command therefore is an
+/// `async fn` that delegates its body here.
+pub async fn run_blocking<T, F>(work: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|error| format!("The background task could not complete: {error}"))?
 }
 
 /// The session-scoped parameters a successful launch was made with, remembered
@@ -317,6 +338,17 @@ pub struct AppState {
     /// commands (`roblox_custom_preset_add` / `_remove`) are synchronous `pub fn`
     /// and so cannot await the mutex.
     pub install_scan_epoch: Arc<std::sync::atomic::AtomicU64>,
+
+    /// Whether a background verification sweep of the installed clients is in
+    /// flight (`roblox_installations::spawn_install_verification` runs at most
+    /// one at a time).
+    pub install_verify_running: Arc<AtomicBool>,
+
+    /// The `roblox://` and `roblox-player:` handler commands the protocol
+    /// watcher last observed. This app's own activate/restore commands write
+    /// what they applied here, so the watcher only reports changes made by
+    /// something else.
+    pub protocol_watch_baseline: Arc<Mutex<Option<(Option<String>, Option<String>)>>>,
 }
 
 impl Default for AppState {
@@ -344,6 +376,8 @@ impl Default for AppState {
             weao_cache: Arc::new(AsyncMutex::new(HashMap::new())),
             install_scan: Arc::new(AsyncMutex::new(None)),
             install_scan_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            install_verify_running: Arc::new(AtomicBool::new(false)),
+            protocol_watch_baseline: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -393,7 +427,7 @@ pub fn run() {
             // than auto-created from config. Requirements 10.1, 10.2, 10.3.
             use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
             let win = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("RobloxAccountManager")
+                .title("RAM")
                 .inner_size(1120.0, 760.0)
                 .min_inner_size(900.0, 680.0)
                 .resizable(true)
@@ -420,6 +454,10 @@ pub fn run() {
             // launch and update. Watching for that keeps the Clients deck from
             // advertising a protocol binding that no longer exists.
             roblox_installations::spawn_protocol_watcher(app.handle().clone());
+            // Adopt the last persisted client sweep right away and verify it
+            // on a blocking worker, so the first launch and the Clients deck
+            // never wait for the registry/disk walk.
+            roblox_installations::spawn_install_cache_warmup(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -428,6 +466,8 @@ pub fn run() {
             accounts::accounts_update,
             accounts::accounts_remove,
             accounts::accounts_reorder,
+            accounts::accounts_export_encrypted,
+            accounts::accounts_import_encrypted,
             commands::settings_load,
             commands::settings_save,
             commands::settings_save_donut_token,
@@ -468,6 +508,7 @@ pub fn run() {
             browser_launcher::browser_open,
             browser_launcher::browser_open_batch,
             browser_launcher::browser_copy_cookie,
+            browser_launcher::browser_copy_cookies_bulk,
             wayfern::browser_wayfern_status,
             wayfern::browser_wayfern_install,
             roblox_installations::roblox_clients_snapshot,
@@ -492,6 +533,7 @@ pub fn run() {
             window::window_maximize,
             window::window_close,
             window::open_external,
+            logging::logs_open_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the RobloxAccountManager Tauri application");

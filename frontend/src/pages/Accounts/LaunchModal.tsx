@@ -1,16 +1,23 @@
-import { useEffect, useId, useMemo, useState, type FormEvent } from 'react';
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import type { LucideIcon } from 'lucide-react';
 import {
+  BookmarkPlus,
+  Check,
   Home,
   Clock3,
   KeyRound,
-  Link2,
-  LoaderCircle,
   MapPin,
   RadioTower,
   Rocket,
-  Server,
   Star,
   UserRoundSearch,
   X,
@@ -18,9 +25,17 @@ import {
 import { Button } from '@/components/Button';
 import { Modal } from '@/components/Modal';
 import { ipc } from '@/lib/ipc';
+import { parsePrivateServerLink } from '@/lib/privateServers';
+import { useTranslation } from '@/i18n/useTranslation';
 import type { Account } from '@/types/models';
 import type { GameDetails } from '@/types/window';
-import { usePlaceLibraryStore, type PlaceSeed } from '@/stores/placeLibraryStore';
+import type { LaunchSeed } from '@/stores/launchIntentStore';
+import {
+  findPrivateServerByLink,
+  listPrivateServers,
+  usePlaceLibraryStore,
+} from '@/stores/placeLibraryStore';
+import { useToastStore } from '@/stores/toastStore';
 import {
   EMPTY_LAUNCH_INPUTS,
   buildLaunchTarget,
@@ -31,6 +46,9 @@ import {
   type LaunchOutcome,
   type LaunchTab,
 } from './launch';
+// `.acc-head` (the dialog head row) and `.acc-seg` (THE segmented tab strip,
+// shared with AddAccountModal) are declared once, in that dialog's stylesheet.
+import './AddAccountModal.css';
 import './LaunchModal.css';
 
 export interface LaunchModalProps {
@@ -40,8 +58,12 @@ export interface LaunchModalProps {
   onLaunched?: (accountId: string) => void;
   launch?: (account: Account, target: string) => Promise<unknown>;
   fetchGameDetails?: (placeId: string, cookie: string) => Promise<GameDetails>;
-  /** Explicit destination handed off by Charts; takes precedence over account history. */
-  seed?: PlaceSeed;
+  /**
+   * Explicit destination handed off by Charts or the Games library; takes
+   * precedence over account history. A seed carrying `privateServer` opens
+   * the Private tab with that link.
+   */
+  seed?: LaunchSeed;
 }
 
 interface DestinationTab {
@@ -89,6 +111,21 @@ function shortenToken(value: string): string {
   return `${token.slice(0, 9)}…${token.slice(-6)}`;
 }
 
+/**
+ * Roving-tabindex arithmetic for the `.acc-seg` tab strip (see
+ * AddAccountModal.css, which declares the strip's one shared treatment):
+ * horizontal and vertical arrows wrap around, Home/End jump to the ends, and
+ * any other key is left unhandled so it reaches the dialog.
+ */
+function rovingTarget(count: number, index: number, key: string): number | null {
+  if (count === 0) return null;
+  if (key === 'ArrowRight' || key === 'ArrowDown') return (index + 1) % count;
+  if (key === 'ArrowLeft' || key === 'ArrowUp') return (index - 1 + count) % count;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  return null;
+}
+
 function launchErrorMessage(error: unknown): string | null {
   if (error instanceof Error && error.message.trim()) return error.message.trim();
   if (typeof error === 'string' && error.trim()) return error.trim();
@@ -107,6 +144,8 @@ export function LaunchModal({
   const titleId = useId();
   const tabIdPrefix = useId();
   const reducedMotion = useReducedMotion() ?? false;
+  const { t } = useTranslation();
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [tab, setTab] = useState<LaunchTab>('home');
   const [inputs, setInputs] = useState<LaunchInputs>(EMPTY_LAUNCH_INPUTS);
   const [preview, setPreview] = useState<GameDetails | null>(null);
@@ -114,15 +153,37 @@ export function LaunchModal({
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [libraryView, setLibraryView] = useState<'favorites' | 'recent'>('favorites');
+  const [privateName, setPrivateName] = useState('');
   const placeLibrary = usePlaceLibraryStore((state) => state.entries);
   const toggleFavorite = usePlaceLibraryStore((state) => state.toggleFavorite);
   const recordPlaceLaunch = usePlaceLibraryStore((state) => state.recordLaunch);
+  const addPrivateServer = usePlaceLibraryStore((state) => state.addPrivateServer);
+  const recordPrivateServerLaunch = usePlaceLibraryStore(
+    (state) => state.recordPrivateServerLaunch,
+  );
+  const showSuccess = useToastStore((state) => state.showSuccess);
 
   const doLaunch = launch ?? ((account: Account, target: string) =>
     ipc.launchRoblox(account.id, account.cookie, target));
   const getDetails = fetchGameDetails ?? ipc.getGameDetails;
   const cookie = useMemo(() => previewCookie(accounts), [accounts]);
   const target = buildLaunchTarget(tab, inputs);
+  const seedPrivateLink = seed?.privateServer?.link;
+  const privateLink = inputs.privateLink.trim();
+  const privateParsed = useMemo(() => parsePrivateServerLink(privateLink), [privateLink]);
+  const savedPrivate = useMemo(
+    () => (privateLink ? findPrivateServerByLink(placeLibrary, privateLink) : undefined),
+    [placeLibrary, privateLink],
+  );
+  const savedServers = useMemo(() => listPrivateServers(placeLibrary), [placeLibrary]);
+  // The Place whose details the preview strip shows: the Place field on the
+  // Place tab, or the game a private link names on the Private tab.
+  const previewPlace =
+    tab === 'place'
+      ? inputs.place.trim()
+      : tab === 'private' && privateParsed?.kind === 'private'
+        ? privateParsed.placeId
+        : '';
 
   useEffect(() => {
     if (!open) return;
@@ -130,8 +191,14 @@ export function LaunchModal({
     setError(null);
     setPreview(null);
     setPreviewLoading(false);
+    setPrivateName('');
 
     if (seed?.placeId) {
+      if (seedPrivateLink) {
+        setTab('private');
+        setInputs({ ...EMPTY_LAUNCH_INPUTS, privateLink: seedPrivateLink });
+        return;
+      }
       setTab('place');
       setInputs({ ...EMPTY_LAUNCH_INPUTS, place: seed.placeId });
       return;
@@ -155,16 +222,16 @@ export function LaunchModal({
 
     setTab('home');
     setInputs(EMPTY_LAUNCH_INPUTS);
-  }, [open, accounts, seed?.placeId]);
+  }, [open, accounts, seed?.placeId, seedPrivateLink]);
 
   useEffect(() => {
-    if (!open || tab !== 'place') {
+    if (!open || (tab !== 'place' && tab !== 'private')) {
       setPreview(null);
       setPreviewLoading(false);
       return;
     }
 
-    const place = inputs.place.trim();
+    const place = previewPlace;
     if (!place) {
       setPreview(null);
       setPreviewLoading(false);
@@ -191,7 +258,7 @@ export function LaunchModal({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [open, tab, inputs.place, cookie, getDetails]);
+  }, [open, tab, previewPlace, cookie, getDetails]);
 
   const setField = (field: keyof LaunchInputs, value: string): void => {
     setError(null);
@@ -217,6 +284,29 @@ export function LaunchModal({
             ? 'Para usar Job ID, escribe un Place ID o una URL /games/ válida.'
             : null;
   const canLaunch = target !== undefined && !launching && n > 0 && !jobIdIssue;
+  // A `/games/<id>?privateServerLinkCode=` link can be filed under its game
+  // from here; a share link does not name its game, so it is saved from the
+  // Games page where the user picks the game explicitly.
+  const canSavePrivate = privateParsed?.kind === 'private' && !savedPrivate && !launching;
+
+  const savePrivateLink = (): void => {
+    if (!privateParsed || privateParsed.kind !== 'private') return;
+    const result = addPrivateServer(
+      {
+        placeId: privateParsed.placeId,
+        name: preview?.name || (seed?.placeId === privateParsed.placeId ? seed.name : undefined),
+        iconUrl: preview?.iconUrl || undefined,
+        creator: preview?.creator || undefined,
+      },
+      { name: privateName, link: privateParsed.url },
+    );
+    if (!result.ok) {
+      setError(result.reason === 'duplicate' ? t('launch.privateDuplicate') : t('launch.privateInvalid'));
+      return;
+    }
+    setPrivateName('');
+    showSuccess(t('launch.privateSavedToast'));
+  };
 
   const routeSummary = (() => {
     switch (tab) {
@@ -235,7 +325,11 @@ export function LaunchModal({
       case 'private':
         return {
           label: 'Servidor privado',
-          value: inputs.privateLink.trim() ? 'Enlace listo' : 'Añade un enlace',
+          value: savedPrivate
+            ? `${savedPrivate.server.name} · ${savedPrivate.entry.name}`
+            : privateLink
+              ? 'Enlace listo'
+              : 'Añade un enlace',
         };
     }
   })();
@@ -260,14 +354,34 @@ export function LaunchModal({
 
     const succeeded = outcomes.filter((outcome) => outcome.ok);
     succeeded.forEach((outcome) => onLaunched?.(outcome.account.id));
+    const launchedIds = succeeded.map((outcome) => outcome.account.id);
 
     if (succeeded.length > 0 && tab === 'place' && placeId) {
-      recordPlaceLaunch({
-        placeId,
-        name: preview?.name || (seed?.placeId === placeId ? seed.name : undefined),
-        iconUrl: preview?.iconUrl || (seed?.placeId === placeId ? seed.iconUrl : undefined),
-        creator: preview?.creator || (seed?.placeId === placeId ? seed.creator : undefined),
-      });
+      recordPlaceLaunch(
+        {
+          placeId,
+          name: preview?.name || (seed?.placeId === placeId ? seed.name : undefined),
+          iconUrl: preview?.iconUrl || (seed?.placeId === placeId ? seed.iconUrl : undefined),
+          creator: preview?.creator || (seed?.placeId === placeId ? seed.creator : undefined),
+        },
+        launchedIds,
+      );
+    }
+
+    if (succeeded.length > 0 && tab === 'private') {
+      if (savedPrivate) {
+        recordPrivateServerLaunch(savedPrivate.entry.placeId, savedPrivate.server.id, launchedIds);
+      } else if (privateParsed?.kind === 'private') {
+        recordPlaceLaunch(
+          {
+            placeId: privateParsed.placeId,
+            name: preview?.name || undefined,
+            iconUrl: preview?.iconUrl || undefined,
+            creator: preview?.creator || undefined,
+          },
+          launchedIds,
+        );
+      }
     }
 
     if (succeeded.length === outcomes.length) {
@@ -298,311 +412,449 @@ export function LaunchModal({
     void handleLaunch();
   };
 
-  return (
-    <Modal open={open && n > 0} onClose={requestClose} titleId={titleId}>
-      <form className="launch-modal" onSubmit={submit}>
-        <header className="launch-modal__header">
-          <div className="launch-modal__beacon" aria-hidden="true">
-            <span className="launch-modal__beacon-ring" />
-            <Rocket size={21} strokeWidth={2} />
+  const previewStrip = (
+    <>
+      {previewLoading && (
+        <div className="rk-panel launch-modal__preview" aria-live="polite">
+          <span className="rk-spin" aria-hidden="true" />
+          <span>{t('launch.locating')}</span>
+        </div>
+      )}
+
+      {!previewLoading && preview && (
+        <div className="rk-panel launch-modal__preview">
+          {preview.iconUrl ? (
+            <img className="launch-modal__thumb" src={preview.iconUrl} alt="" />
+          ) : (
+            <span className="launch-modal__thumb">
+              <MapPin size={15} aria-hidden="true" />
+            </span>
+          )}
+          <div className="launch-modal__preview-copy">
+            <small>{t('launch.detected')}</small>
+            <strong>{preview.name ?? t('launch.fallbackGame')}</strong>
+            <span>
+              {preview.creator
+                ? t('launch.byCreator', { name: preview.creator })
+                : t('launch.creatorMissing')}
+              {typeof preview.playing === 'number' ? (
+                <>
+                  {' · '}
+                  <span className="u-num">
+                    {t('launch.playing', { count: preview.playing.toLocaleString() })}
+                  </span>
+                </>
+              ) : null}
+            </span>
           </div>
-          <div className="launch-modal__heading">
-            <span className="launch-modal__eyebrow">Session launcher / ready</span>
-            <h2 id={titleId}>{n === 1 ? 'Lanzar Roblox' : `Lanzar ${n} cuentas`}</h2>
-            <p>
+          {tab === 'place' && jobId && !jobIdIssue && (
+            <span className="rk-chip" data-tone="accent">
+              <RadioTower size={11} aria-hidden="true" /> {t('launch.exactChip')}
+            </span>
+          )}
+          {tab === 'private' && (
+            <span className="rk-chip" data-tone="accent">
+              <KeyRound size={11} aria-hidden="true" /> {t('launch.privateTitle')}
+            </span>
+          )}
+        </div>
+      )}
+    </>
+  );
+
+  const activeIndex = TABS.findIndex((entry) => entry.dest === tab);
+  const panelId = `${tabIdPrefix}-panel`;
+  const activeTabId = `${tabIdPrefix}-${tab}`;
+
+  const selectTab = (dest: LaunchTab): void => {
+    setError(null);
+    setTab(dest);
+  };
+
+  const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    const next = rovingTarget(TABS.length, activeIndex, event.key);
+    if (next === null) return;
+    event.preventDefault();
+    selectTab(TABS[next].dest);
+    tabRefs.current[next]?.focus();
+  };
+
+  return (
+    <Modal open={open && n > 0} onClose={requestClose} titleId={titleId} size="lg">
+      <form className="fm-root launch-modal" onSubmit={submit}>
+        <div className="acc-head">
+          <div className="fm-head">
+            <h2 id={titleId} className="fm-title">
+              {n === 1 ? t('launch.titleOne') : t('launch.titleMany', { count: n })}
+            </h2>
+            <p className="fm-hint">
               <strong>{who}</strong>
-              <span>{n === 1 ? ' · Configura el destino de esta sesión.' : ' · Un destino compartido.'}</span>
+              <span>{n === 1 ? t('launch.subOne') : t('launch.subShared')}</span>
             </p>
           </div>
-          <button
-            className="launch-modal__close"
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
             type="button"
-            aria-label="Cerrar"
+            aria-label={t('launch.close')}
             disabled={launching}
             onClick={requestClose}
           >
-            <X size={17} />
-          </button>
-        </header>
+            <X size={16} aria-hidden="true" />
+          </Button>
+        </div>
 
-        <div className="launch-modal__tabs" role="tablist" aria-label="Destino de lanzamiento">
-          {TABS.map(({ dest, label, caption, Icon }) => {
-            const active = tab === dest;
-            const tabId = `${tabIdPrefix}-${dest}`;
-            return (
-              <button
-                id={tabId}
-                key={dest}
-                className="launch-modal__tab"
-                type="button"
-                role="tab"
-                aria-selected={active}
-                aria-controls={`${tabId}-panel`}
-                data-active={active || undefined}
-                onClick={() => {
-                  setError(null);
-                  setTab(dest);
-                }}
-              >
-                {active && (
-                  <motion.span
-                    className="launch-modal__tab-active"
-                    layoutId="launch-modal-active-route"
-                    transition={reducedMotion ? { duration: 0 } : { type: 'spring', stiffness: 430, damping: 34 }}
-                  />
-                )}
-                <span className="launch-modal__tab-icon"><Icon size={16} /></span>
-                <span className="launch-modal__tab-copy">
-                  <strong>{label}</strong>
-                  <small>{caption}</small>
-                </span>
-              </button>
-            );
-          })}
+        <div
+          className="acc-seg"
+          role="tablist"
+          aria-label={t('launch.tabsAria')}
+          onKeyDown={onTabKeyDown}
+        >
+          {TABS.map(({ dest, label, caption, Icon }, index) => (
+            <button
+              key={dest}
+              id={`${tabIdPrefix}-${dest}`}
+              ref={(node) => {
+                tabRefs.current[index] = node;
+              }}
+              className="acc-seg__tab"
+              type="button"
+              role="tab"
+              aria-selected={tab === dest}
+              aria-controls={panelId}
+              tabIndex={tab === dest ? 0 : -1}
+              onClick={() => selectTab(dest)}
+            >
+              <Icon size={15} aria-hidden="true" />
+              <span className="acc-seg__copy">
+                <strong>{label}</strong>
+                <small>{caption}</small>
+              </span>
+            </button>
+          ))}
         </div>
 
         <AnimatePresence mode="wait" initial={false}>
           <motion.section
             key={tab}
-            id={`${tabIdPrefix}-${tab}-panel`}
+            id={panelId}
             className="launch-modal__panel"
             role="tabpanel"
-            aria-labelledby={`${tabIdPrefix}-${tab}`}
-            initial={reducedMotion ? false : { opacity: 0, y: 8 }}
+            aria-labelledby={activeTabId}
+            initial={reducedMotion ? false : { opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={reducedMotion ? { opacity: 1 } : { opacity: 0, y: -6 }}
-            transition={{ duration: reducedMotion ? 0 : 0.17, ease: [0.22, 1, 0.36, 1] }}
+            exit={reducedMotion ? { opacity: 1 } : { opacity: 0 }}
+            transition={{ duration: reducedMotion ? 0 : 0.15, ease: [0.22, 1, 0.36, 1] }}
           >
             {tab === 'home' && (
-              <div className="launch-modal__empty-state">
-                <span className="launch-modal__empty-icon"><Home size={23} /></span>
-                <div>
-                  <span>Open client</span>
-                  <h3>Inicio de Roblox</h3>
-                  <p>Abre la aplicación sin forzar experiencia, jugador o servidor.</p>
+              <div className="rk-empty">
+                <span className="rk-empty__icon">
+                  <Home size={18} aria-hidden="true" />
+                </span>
+                <div className="launch-modal__empty-copy">
+                  <h3 className="rk-empty__title">{t('launch.homeTitle')}</h3>
+                  <p className="rk-empty__text">{t('launch.homeDesc')}</p>
                 </div>
-                <span className="launch-modal__mode-chip">Libre</span>
+                <span className="rk-chip" data-tone="accent">{t('launch.chipFree')}</span>
               </div>
             )}
 
             {tab === 'place' && (
-              <div className="launch-modal__place-grid">
-                <div className="launch-modal__panel-intro launch-modal__place-intro">
-                  <span className="launch-modal__panel-icon"><MapPin size={18} /></span>
-                  <div>
-                    <h3>Entrar a una experiencia</h3>
-                    <p>Elige el Place y, si lo necesitas, apunta a una instancia pública exacta.</p>
-                  </div>
+              <>
+                <div className="launch-modal__intro">
+                  <h3>{t('launch.placeTitle')}</h3>
+                  <p>{t('launch.placeDesc')}</p>
                 </div>
 
-                <div className="launch-modal__field launch-modal__field--place">
-                  <label htmlFor={`${titleId}-place`}>Place ID o enlace</label>
-                  <span className="launch-modal__input-shell">
-                    <Link2 size={16} aria-hidden="true" />
-                    <input
-                      id={`${titleId}-place`}
-                      type="text"
-                      value={inputs.place}
-                      placeholder="920587237 o roblox.com/games/..."
-                      autoComplete="off"
-                      onChange={(event) => setField('place', event.target.value)}
-                    />
-                  </span>
-                  <small>La vista previa usa este Place; no modifica el Job ID.</small>
+                <div className="fm-field">
+                  <label htmlFor={`${titleId}-place`}>{t('launch.placeLabel')}</label>
+                  <input
+                    id={`${titleId}-place`}
+                    className="fm-input"
+                    type="text"
+                    value={inputs.place}
+                    placeholder={t('launch.placePlaceholder')}
+                    autoComplete="off"
+                    onChange={(event) => setField('place', event.target.value)}
+                  />
+                  <small className="launch-modal__hint">{t('launch.placeHint')}</small>
                 </div>
 
-                <div className="launch-modal__field launch-modal__field--job">
-                  <label className="launch-modal__field-label" htmlFor={`${titleId}-job`}>
+                <div className="fm-field">
+                  <label className="launch-modal__label" htmlFor={`${titleId}-job`}>
                     <span>Job ID</span>
-                    <em>Opcional</em>
+                    <em>{t('launch.jobOptional')}</em>
                   </label>
-                  <span className="launch-modal__input-shell" data-invalid={Boolean(jobIdIssue) || undefined}>
-                    <Server size={16} aria-hidden="true" />
-                    <input
-                      id={`${titleId}-job`}
-                      type="text"
-                      value={inputs.jobId}
-                      placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                      autoComplete="off"
-                      spellCheck={false}
-                      aria-invalid={Boolean(jobIdIssue)}
-                      aria-describedby={jobIdIssue ? `${titleId}-job-error` : `${titleId}-job-help`}
-                      onChange={(event) => setField('jobId', event.target.value)}
-                    />
-                  </span>
-                  <small id={`${titleId}-job-help`}>Vacío entra a cualquier servidor disponible.</small>
+                  <input
+                    id={`${titleId}-job`}
+                    className="fm-input u-num"
+                    type="text"
+                    value={inputs.jobId}
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-invalid={Boolean(jobIdIssue)}
+                    aria-describedby={jobIdIssue ? `${titleId}-job-error` : `${titleId}-job-help`}
+                    onChange={(event) => setField('jobId', event.target.value)}
+                  />
+                  <small className="launch-modal__hint" id={`${titleId}-job-help`}>
+                    {t('launch.jobHelp')}
+                  </small>
                 </div>
 
                 {jobIdIssue && (
-                  <p id={`${titleId}-job-error`} className="launch-modal__field-error" role="alert">
+                  <p id={`${titleId}-job-error`} className="fm-error" role="alert">
                     {jobIdIssue}
                   </p>
                 )}
 
-                {previewLoading && (
-                  <div className="launch-modal__preview launch-modal__preview--loading" aria-live="polite">
-                    <LoaderCircle className="launch-modal__spinner" size={18} />
-                    <span>Localizando experiencia…</span>
-                  </div>
-                )}
+                {previewStrip}
 
-                {!previewLoading && preview && (
-                  <div className="launch-modal__preview">
-                    {preview.iconUrl ? (
-                      <img src={preview.iconUrl} alt="" />
-                    ) : (
-                      <span className="launch-modal__preview-fallback"><MapPin size={20} /></span>
-                    )}
-                    <div className="launch-modal__preview-copy">
-                      <small>Experiencia detectada</small>
-                      <strong>{preview.name ?? 'Juego de Roblox'}</strong>
-                      <span>
-                        {preview.creator ? `por ${preview.creator}` : 'Creador no disponible'}
-                        {typeof preview.playing === 'number' ? ` · ${preview.playing.toLocaleString()} jugando` : ''}
-                      </span>
-                    </div>
-                    {jobId && !jobIdIssue && <span className="launch-modal__exact-chip"><RadioTower size={12} /> Exacto</span>}
-                  </div>
-                )}
-
-                <section className="launch-modal__library" aria-label="Biblioteca de Places">
+                <section className="launch-modal__library" aria-label={t('launch.libraryAria')}>
                   <div className="launch-modal__library-head">
-                    <div>
-                      <span>Place library</span>
-                      <strong>Favoritos e historial</strong>
+                    <div className="launch-modal__library-titles">
+                      <strong>{t('launch.libraryTitle')}</strong>
                     </div>
-                    <div className="launch-modal__library-switch" role="group" aria-label="Vista de biblioteca">
+                    <div
+                      className="launch-modal__library-switch"
+                      role="group"
+                      aria-label={t('launch.viewAria')}
+                    >
                       <button
                         type="button"
                         data-active={libraryView === 'favorites' || undefined}
                         onClick={() => setLibraryView('favorites')}
                       >
-                        <Star size={12} /> Favoritos
+                        <Star size={12} aria-hidden="true" /> {t('launch.favorites')}
                       </button>
                       <button
                         type="button"
                         data-active={libraryView === 'recent' || undefined}
                         onClick={() => setLibraryView('recent')}
                       >
-                        <Clock3 size={12} /> Recientes
+                        <Clock3 size={12} aria-hidden="true" /> {t('launch.recent')}
                       </button>
                     </div>
                   </div>
 
                   {visibleLibrary.length ? (
-                    <div className="launch-modal__library-rail">
+                    <ul className="launch-modal__library-list">
                       {visibleLibrary.map((entry) => (
-                        <div className="launch-modal__place-tile" key={entry.placeId}>
+                        <li className="rk-row" key={entry.placeId}>
+                          <span className="rk-row__gutter">
+                            {entry.iconUrl ? (
+                              <img className="launch-modal__place-thumb" src={entry.iconUrl} alt="" />
+                            ) : (
+                              <span className="launch-modal__place-thumb">
+                                <MapPin size={12} aria-hidden="true" />
+                              </span>
+                            )}
+                          </span>
                           <button
                             type="button"
                             className="launch-modal__place-pick"
-                            title={`Usar ${entry.name}`}
+                            title={t('launch.useTile', { name: entry.name })}
                             onClick={() => {
                               setError(null);
                               setInputs((current) => ({ ...current, place: entry.placeId, jobId: '' }));
                             }}
                           >
-                            {entry.iconUrl ? <img src={entry.iconUrl} alt="" /> : <span><MapPin size={16} /></span>}
-                            <span>
-                              <strong>{entry.name}</strong>
-                              <small>{entry.placeId}{entry.launchCount ? ` · ${entry.launchCount} launch${entry.launchCount === 1 ? '' : 'es'}` : ''}</small>
+                            <span className="rk-row__title">{entry.name}</span>
+                            <span className="rk-row__meta launch-modal__place-meta">
+                              <span className="u-num">{entry.placeId}</span>
+                              {entry.launchCount ? (
+                                <span className="u-num">
+                                  {t('launch.tileCount', { count: entry.launchCount })}
+                                </span>
+                              ) : null}
                             </span>
                           </button>
                           <button
                             type="button"
                             className="launch-modal__place-star"
-                            aria-label={entry.favorite ? `Quitar ${entry.name} de favoritos` : `Añadir ${entry.name} a favoritos`}
+                            aria-label={
+                              entry.favorite
+                                ? t('launch.unfavorite', { name: entry.name })
+                                : t('launch.favorite', { name: entry.name })
+                            }
                             data-active={entry.favorite || undefined}
                             onClick={() => toggleFavorite(entry)}
                           >
                             <Star size={13} fill={entry.favorite ? 'currentColor' : 'none'} />
                           </button>
-                        </div>
+                        </li>
                       ))}
-                    </div>
+                    </ul>
                   ) : (
                     <p className="launch-modal__library-empty">
                       {libraryView === 'favorites'
-                        ? 'Guarda experiencias desde Charts o marca una reciente.'
-                        : 'Los lanzamientos correctos aparecerán aquí; el Job ID no se reutiliza.'}
+                        ? t('launch.emptyFav')
+                        : t('launch.emptyRecent')}
                     </p>
                   )}
                 </section>
-              </div>
+              </>
             )}
 
             {tab === 'player' && (
-              <div className="launch-modal__single-pane">
-                <div className="launch-modal__panel-intro">
-                  <span className="launch-modal__panel-icon"><UserRoundSearch size={18} /></span>
-                  <div>
-                    <h3>Seguir a un jugador</h3>
-                    <p>Roblox intentará entrar a la sesión pública donde esté jugando.</p>
-                  </div>
+              <>
+                <div className="launch-modal__intro">
+                  <h3>{t('launch.playerTitle')}</h3>
+                  <p>{t('launch.playerDesc')}</p>
                 </div>
-                <div className="launch-modal__field">
+                <div className="fm-field">
                   <label htmlFor={`${titleId}-player`}>User ID</label>
-                  <span className="launch-modal__input-shell">
-                    <UserRoundSearch size={16} aria-hidden="true" />
-                    <input
-                      id={`${titleId}-player`}
-                      type="text"
-                      inputMode="numeric"
-                      value={inputs.followUserId}
-                      placeholder="ID numérico del jugador"
-                      autoComplete="off"
-                      onChange={(event) => setField('followUserId', event.target.value)}
-                    />
-                  </span>
+                  <input
+                    id={`${titleId}-player`}
+                    className="fm-input u-num"
+                    type="text"
+                    inputMode="numeric"
+                    value={inputs.followUserId}
+                    placeholder={t('launch.playerPlaceholder')}
+                    autoComplete="off"
+                    onChange={(event) => setField('followUserId', event.target.value)}
+                  />
                 </div>
-              </div>
+              </>
             )}
 
             {tab === 'private' && (
-              <div className="launch-modal__single-pane">
-                <div className="launch-modal__panel-intro">
-                  <span className="launch-modal__panel-icon"><KeyRound size={18} /></span>
-                  <div>
-                    <h3>Servidor privado</h3>
-                    <p>Usa el enlace completo con su código de acceso privado.</p>
-                  </div>
+              <>
+                <div className="launch-modal__intro">
+                  <h3>{t('launch.privateTitle')}</h3>
+                  <p>{t('launch.privateDesc')}</p>
                 </div>
-                <div className="launch-modal__field">
-                  <label htmlFor={`${titleId}-private`}>Enlace privado</label>
-                  <span className="launch-modal__input-shell">
-                    <Link2 size={16} aria-hidden="true" />
+                <div className="fm-field">
+                  <label htmlFor={`${titleId}-private`}>{t('launch.privateLabel')}</label>
+                  <div className="launch-modal__private-row">
                     <input
                       id={`${titleId}-private`}
+                      className="fm-input"
                       type="url"
                       value={inputs.privateLink}
                       placeholder="https://www.roblox.com/games/..."
                       autoComplete="off"
+                      spellCheck={false}
                       onChange={(event) => setField('privateLink', event.target.value)}
                     />
-                  </span>
+                    {savedPrivate ? (
+                      <span className="rk-chip" data-tone="ok">
+                        <Check size={12} aria-hidden="true" /> {t('launch.privateSaved')}
+                      </span>
+                    ) : (
+                      <Button
+                        variant="secondary"
+                        type="button"
+                        disabled={!canSavePrivate}
+                        title={t('launch.privateSave')}
+                        onClick={savePrivateLink}
+                      >
+                        <BookmarkPlus size={14} aria-hidden="true" />
+                        {t('launch.privateSave')}
+                      </Button>
+                    )}
+                  </div>
+                  {privateParsed?.kind === 'share' && !savedPrivate ? (
+                    <small className="launch-modal__hint">{t('launch.privateSaveHint')}</small>
+                  ) : null}
                 </div>
-              </div>
+
+                {canSavePrivate ? (
+                  <div className="fm-field">
+                    <label htmlFor={`${titleId}-private-name`}>{t('launch.privateSaveName')}</label>
+                    <input
+                      id={`${titleId}-private-name`}
+                      className="fm-input"
+                      type="text"
+                      value={privateName}
+                      placeholder="VIP, EU, farm…"
+                      autoComplete="off"
+                      onChange={(event) => setPrivateName(event.target.value)}
+                    />
+                  </div>
+                ) : null}
+
+                {previewStrip}
+
+                <section className="launch-modal__library" aria-label={t('launch.privateSavedTitle')}>
+                  <div className="launch-modal__library-head">
+                    <div className="launch-modal__library-titles">
+                      <strong>{t('launch.privateSavedTitle')}</strong>
+                    </div>
+                  </div>
+                  {savedServers.length ? (
+                    <ul className="launch-modal__library-list">
+                      {savedServers.map(({ entry, server }) => {
+                        const selected = savedPrivate?.server.id === server.id;
+                        return (
+                          <li className="rk-row" key={server.id} data-selected={selected || undefined}>
+                            <span className="rk-row__gutter">
+                              {entry.iconUrl ? (
+                                <img className="launch-modal__place-thumb" src={entry.iconUrl} alt="" />
+                              ) : (
+                                <span className="launch-modal__place-thumb">
+                                  <KeyRound size={12} aria-hidden="true" />
+                                </span>
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              className="launch-modal__place-pick"
+                              title={t('launch.useTile', { name: server.name })}
+                              onClick={() => setField('privateLink', server.link)}
+                            >
+                              <span className="rk-row__title">{server.name}</span>
+                              <span className="rk-row__meta launch-modal__place-meta">
+                                <span>{entry.name}</span>
+                                {server.launchCount ? (
+                                  <span className="u-num">
+                                    {t('launch.tileCount', { count: server.launchCount })}
+                                  </span>
+                                ) : null}
+                              </span>
+                            </button>
+                            <span className="launch-modal__place-check" aria-hidden="true">
+                              {selected ? <Check size={13} /> : null}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <p className="launch-modal__library-empty">{t('launch.privateSavedEmpty')}</p>
+                  )}
+                </section>
+              </>
             )}
           </motion.section>
         </AnimatePresence>
 
-        {error && <p className="launch-modal__error" role="alert">{error}</p>}
+        {error && <p className="fm-error" role="alert">{error}</p>}
 
         <footer className="launch-modal__footer">
-          <div className="launch-modal__route-status" data-ready={canLaunch || undefined}>
-            <span className="launch-modal__route-dot" aria-hidden="true" />
-            <span>
+          <div className="launch-modal__route" data-ready={canLaunch || undefined}>
+            <span
+              className="rk-dot"
+              data-tone={canLaunch ? 'ok' : undefined}
+              aria-hidden="true"
+            />
+            <span className="launch-modal__route-copy">
               <small>{routeSummary.label}</small>
               <strong>{routeSummary.value}</strong>
             </span>
           </div>
-          <div className="launch-modal__actions">
+          <div className="fm-footer">
             <Button variant="secondary" type="button" onClick={requestClose} disabled={launching}>
-              Cancelar
+              {t('launch.cancel')}
             </Button>
             <Button variant="primary" type="submit" disabled={!canLaunch}>
-              {launching ? <LoaderCircle className="launch-modal__spinner" size={16} /> : <Rocket size={16} />}
-              {launching ? 'Iniciando…' : n <= 1 ? 'Lanzar ahora' : `Lanzar ${n}`}
+              {launching ? (
+                <span className="rk-spin" aria-hidden="true" />
+              ) : (
+                <Rocket size={16} aria-hidden="true" />
+              )}
+              {launching ? t('launch.starting') : n <= 1 ? t('launch.goOne') : t('launch.goMany', { count: n })}
             </Button>
           </div>
         </footer>

@@ -5,7 +5,7 @@ import { Modal } from '@/components/Modal';
 import { ipc } from '@/lib/ipc';
 import { displayName } from '@/lib/filters';
 import type { Account } from '@/types/models';
-import './accountModal.css';
+
 
 /**
  * Props for {@link QuickLoginModal}.
@@ -86,25 +86,25 @@ export function QuickLoginModal({
   const label = account ? displayName(account) : '';
 
   return (
-    <Modal open={open && account !== null} onClose={onClose} titleId={titleId}>
-      <div className="acctmodal">
-        <div className="acctmodal__head">
-          <span className="acctmodal__eyebrow">Cuenta</span>
-          <h2 id={titleId} className="acctmodal__title">
+    <Modal open={open && account !== null} onClose={onClose} titleId={titleId} size="sm">
+      <div className="fm-root">
+        <div className="fm-head">
+          <span className="fm-eyebrow">Cuenta</span>
+          <h2 id={titleId} className="fm-title">
             {label ? `Quick login — ${label}` : 'Quick login'}
           </h2>
         </div>
 
-        <p className="acctmodal__hint">
-          <Info size={15} aria-hidden="true" style={{ verticalAlign: '-2px', marginRight: 6 }} />
+        <p className="fm-hint acc-note">
+          <Info size={15} aria-hidden="true" />
           Introduce el código que aparece en la pantalla de inicio de sesión de Roblox del otro
           dispositivo; esta cuenta lo autorizará y ese dispositivo quedará dentro.
         </p>
 
-        <label className="acctmodal__field">
+        <label className="fm-field">
           Código de quick login
           <input
-            className="acctmodal__input"
+            className="fm-input"
             type="text"
             value={code}
             placeholder="p. ej. ABC-DEF"
@@ -114,19 +114,19 @@ export function QuickLoginModal({
         </label>
 
         {error && (
-          <p className="acctmodal__error">
+          <p className="fm-error">
             <CircleAlert size={15} aria-hidden="true" />
             {error}
           </p>
         )}
         {done && !error && (
-          <p className="acctmodal__success">
+          <p className="fm-success">
             <Check size={15} aria-hidden="true" />
             Quick login autorizado.
           </p>
         )}
 
-        <div className="acctmodal__footer">
+        <div className="fm-footer">
           <Button variant="secondary" onClick={onClose} disabled={busy}>
             Cancelar
           </Button>

@@ -19,7 +19,7 @@
 // window has no presence dots to update, so its ticks are skipped and a single
 // catch-up tick runs when the window is shown again.
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { ipc } from '../lib/ipc';
 import { toPresenceInfo, usePresenceStore } from '../stores/presenceStore';
 
@@ -43,23 +43,32 @@ export const DEFAULT_PRESENCE_INTERVAL_MS = 30_000;
  *   response on unmount (or when the inputs change).
  *
  * @param userIds - The account userIds to poll presence for.
- * @param cookie - The authenticated cookie used for the request.
+ * @param cookies - Candidate authenticated cookies; the poller starts on the
+ *   first entry and rotates to the next one whenever a tick fails (a burnt
+ *   cookie must not poison every subsequent poll). With a single entry the
+ *   behaviour is identical to a fixed cookie.
  * @param intervalMs - Polling interval in ms (defaults to
  *   {@link DEFAULT_PRESENCE_INTERVAL_MS}).
  */
 export function usePresencePolling(
   userIds: Array<string | number>,
-  cookie: string,
+  cookies: string[],
   intervalMs: number = DEFAULT_PRESENCE_INTERVAL_MS,
 ): void {
   const applyUpdates = usePresenceStore((state) => state.applyUpdates);
-  // Re-run only when the actual set of ids (not the array identity) changes, so
-  // a caller passing a fresh array of the same ids on every render does not
-  // restart the interval.
+  // Re-run only when the actual set of ids / cookies (not array identity)
+  // changes, so a caller passing fresh arrays of the same values on every
+  // render does not restart the interval.
   const idsKey = userIds.join(',');
+  const cookiesKey = cookies.join(',');
+
+  // Index into `cookies` of the candidate used by the NEXT tick; advanced on
+  // each failed tick so the rotation survives re-renders without restarting
+  // the interval.
+  const candidateRef = useRef(0);
 
   useEffect(() => {
-    if (userIds.length === 0) {
+    if (userIds.length === 0 || cookies.length === 0) {
       return;
     }
 
@@ -73,15 +82,17 @@ export function usePresencePolling(
         return;
       }
       try {
+        const cookie = cookies[candidateRef.current % cookies.length];
         const response = await ipc.getPresence(userIds, cookie);
         if (cancelled) {
           return;
         }
         applyUpdates(response.userPresences.map(toPresenceInfo));
       } catch {
-        // Background poll: `lib/ipc.ts` stays silent (no toast) and we swallow
-        // the error here so a transient failure never crashes the UI. The store
-        // keeps its last known presence and the next tick retries.
+        // Background poll: `lib/ipc.ts` stays silent (no toast). Rotate to the
+        // next candidate cookie — modulo keeps a single-cookie setup pinned to
+        // its only entry — and let the next tick retry with it.
+        candidateRef.current = (candidateRef.current + 1) % cookies.length;
       }
     };
 
@@ -112,5 +123,5 @@ export function usePresencePolling(
     // `idsKey` captures the meaningful change in `userIds`; it is intentionally
     // used in place of the array identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idsKey, cookie, intervalMs, applyUpdates]);
+  }, [idsKey, cookiesKey, intervalMs, applyUpdates]);
 }

@@ -1226,6 +1226,9 @@ impl WatchNotifier for AutoRelaunchNotifier {
         // An instance went away for good: compact the window grid (no-op while
         // the window-layout feature is disabled).
         crate::window_layout::schedule_layout_pass(&self.app, 1_000);
+        // ... and forget what that account left behind in the client's shared
+        // state, so the next account never inherits it.
+        spawn_trace_sweep(self.app.clone(), vec![account_id.to_string()], None);
     }
 
     fn notify_count(&self, count: usize) {
@@ -1234,7 +1237,24 @@ impl WatchNotifier for AutoRelaunchNotifier {
 
     fn notify_all_closed(&self) {
         self.inner.notify_all_closed();
+        spawn_trace_sweep(self.app.clone(), Vec::new(), None);
     }
+}
+
+/// Run the post-close trace cleanup for `account_ids` in the background,
+/// optionally after waiting for a just-killed PID to actually exit (taskkill
+/// returns before the process is gone, and a live client still holds the files).
+fn spawn_trace_sweep(app: AppHandle, account_ids: Vec<String>, wait_for_pid: Option<u32>) {
+    tokio::spawn(async move {
+        if let Some(pid) = wait_for_pid {
+            wait_for_pid_gone(pid, 8_000).await;
+        }
+        let user_ids = account_ids
+            .iter()
+            .filter_map(|account_id| crate::roblox_traces::user_id_for_account(&app, account_id))
+            .collect();
+        crate::roblox_traces::sweep_after_close(&app, user_ids).await;
+    });
 }
 
 /// The background auto-relaunch for one unexpectedly closed account: wait for a
@@ -2483,6 +2503,13 @@ async fn do_launch(
     // (4) Build the roblox-player: URI.
     let roblox_uri = build_roblox_uri(&creds.ticket, &launcher_url);
 
+    // (4.5) An idle machine gets a clean slate: drop the previous session's
+    //       cookie jar / web storage / Player logs so this account never
+    //       starts on top of another account's leftovers. A no-op while any
+    //       client is running (the shared files belong to it) or when the
+    //       user disabled the cleanup.
+    crate::roblox_traces::sweep_before_launch(app).await;
+
     // (5) Respect the selected client preset. Direct official/custom clients
     //     are tracked by their spawned PID; bootstrapper PIDs are deliberately
     //     not recorded because Fishstrap/Bloxstrap subsequently create a
@@ -2490,7 +2517,8 @@ async fn do_launch(
     //     active Windows handler.
     let launch_plan = match crate::accounts::store_dir(app) {
         Ok(dir) => {
-            crate::roblox_installations::resolve_launch_plan_cached(state, &dir, &roblox_uri).await
+            crate::roblox_installations::resolve_launch_plan_cached(app, state, &dir, &roblox_uri)
+                .await
         }
         Err(_) => crate::roblox_installations::RobloxLaunchPlan::Protocol,
     };
@@ -2683,7 +2711,11 @@ pub async fn roblox_kill_all(
 
     let notifier = TauriWatchNotifier::new(app.clone());
     let refresh = RealMutexRefresh { app: &app, state: st };
-    Ok(kill_all(st, &notifier, &refresh).await)
+    let result = kill_all(st, &notifier, &refresh).await;
+    // `kill_all` already waited for a fully-closed state, so the shared files
+    // are free; every previously running account's user folder goes too.
+    spawn_trace_sweep(app.clone(), watched_ids, None);
+    Ok(result)
 }
 
 /// `roblox:killOne` — terminate the Roblox instance launched for one account and
@@ -2735,6 +2767,7 @@ pub async fn roblox_kill_one(
     // Compact the window grid now that this instance is gone (no-op while the
     // window-layout feature is disabled).
     crate::window_layout::schedule_layout_pass(&app, 1_000);
+    spawn_trace_sweep(app.clone(), vec![account_id], pid);
     Ok(result)
 }
 

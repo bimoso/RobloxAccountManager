@@ -65,7 +65,7 @@ afterEach(() => {
 
 describe('usePresencePolling', () => {
   it('polls immediately and again on the interval while visible', () => {
-    renderHook(() => usePresencePolling(USER_IDS, COOKIE));
+    renderHook(() => usePresencePolling(USER_IDS, [COOKIE]));
 
     expect(getPresence).toHaveBeenCalledTimes(1);
     expect(getPresence).toHaveBeenCalledWith(USER_IDS, COOKIE);
@@ -79,7 +79,7 @@ describe('usePresencePolling', () => {
 
   it('makes no request while the document is hidden', () => {
     setHidden(true);
-    renderHook(() => usePresencePolling(USER_IDS, COOKIE));
+    renderHook(() => usePresencePolling(USER_IDS, [COOKIE]));
 
     expect(getPresence).not.toHaveBeenCalled();
 
@@ -92,7 +92,7 @@ describe('usePresencePolling', () => {
 
   it('runs one catch-up tick when the document becomes visible again', () => {
     setHidden(true);
-    renderHook(() => usePresencePolling(USER_IDS, COOKIE));
+    renderHook(() => usePresencePolling(USER_IDS, [COOKIE]));
     expect(getPresence).not.toHaveBeenCalled();
 
     setHidden(false);
@@ -103,7 +103,7 @@ describe('usePresencePolling', () => {
   });
 
   it('does not tick on the visibilitychange that reports going hidden', () => {
-    renderHook(() => usePresencePolling(USER_IDS, COOKIE));
+    renderHook(() => usePresencePolling(USER_IDS, [COOKIE]));
     expect(getPresence).toHaveBeenCalledTimes(1);
 
     setHidden(true);
@@ -113,7 +113,7 @@ describe('usePresencePolling', () => {
   });
 
   it('resumes on the original cadence after a hidden stretch', () => {
-    renderHook(() => usePresencePolling(USER_IDS, COOKIE));
+    renderHook(() => usePresencePolling(USER_IDS, [COOKIE]));
     expect(getPresence).toHaveBeenCalledTimes(1);
 
     // The interval is deliberately left running while hidden, so its ticks are
@@ -132,7 +132,7 @@ describe('usePresencePolling', () => {
   });
 
   it('clears the interval and the visibility listener on unmount', () => {
-    const { unmount } = renderHook(() => usePresencePolling(USER_IDS, COOKIE));
+    const { unmount } = renderHook(() => usePresencePolling(USER_IDS, [COOKIE]));
     expect(getPresence).toHaveBeenCalledTimes(1);
 
     unmount();
@@ -143,5 +143,28 @@ describe('usePresencePolling', () => {
     fireVisibilityChange();
 
     expect(getPresence).toHaveBeenCalledTimes(1);
+  });
+  it('rotates to the next candidate cookie after a failed tick', async () => {
+    const COOKIES = [COOKIE, '.ROBLOSECURITY=backup-cookie'];
+    getPresence.mockRejectedValueOnce(new Error('burnt'));
+    renderHook(() => usePresencePolling(USER_IDS, COOKIES));
+
+    // The first tick authenticated with the first candidate and failed.
+    expect(getPresence).toHaveBeenCalledTimes(1);
+    expect(getPresence).toHaveBeenLastCalledWith(USER_IDS, COOKIE);
+
+    // Let the rejection's catch run so the candidate actually rotates before
+    // the next interval tick.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(DEFAULT_PRESENCE_INTERVAL_MS);
+    });
+
+    // The failed tick advanced the candidate; this tick uses the backup.
+    expect(getPresence).toHaveBeenCalledTimes(2);
+    expect(getPresence).toHaveBeenLastCalledWith(USER_IDS, COOKIES[1]);
   });
 });
